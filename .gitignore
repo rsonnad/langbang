@@ -1,0 +1,19 @@
+# Build outputs
+build/
+.gradle/
+*.apk
+*.aab
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# Local config (contains Azure key)
+local.properties
+
+# Memory (per-project gstack)
+memory/sessions.md
+
+# Misc
+captures/

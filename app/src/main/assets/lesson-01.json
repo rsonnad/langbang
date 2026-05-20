@@ -1,0 +1,387 @@
+{
+  "id": "lesson-01",
+  "title": "Polish pronunciation",
+  "summary": "The sounds and letters that don't exist in English — plus the digraphs that trip everyone up.",
+  "phonemes": [
+    {
+      "letter": "ą",
+      "name": "a-ogonek",
+      "ipa": "/ɔ̃/",
+      "englishApproximation": "Nasal 'o' — like the French 'on' in 'bon'.",
+      "description": "Nasal vowel. At word-end and before fricatives it stays a true nasal /ɔ̃/. Before stops it splits: /ɔm/ before p/b, /ɔn/ before t/d, /ɔŋ/ before k/g.",
+      "examples": [
+        {"pl": "mąż", "en": "husband"},
+        {"pl": "wąż", "en": "snake"},
+        {"pl": "kąt", "en": "corner"},
+        {"pl": "miesiąc", "en": "month"},
+        {"pl": "pieniądze", "en": "money"},
+        {"pl": "ząb", "en": "tooth"},
+        {"pl": "dąb", "en": "oak tree"},
+        {"pl": "sąsiad", "en": "neighbor"},
+        {"pl": "gorąco", "en": "hot"},
+        {"pl": "pociąg", "en": "train"}
+      ]
+    },
+    {
+      "letter": "ę",
+      "name": "e-ogonek",
+      "ipa": "/ɛ̃/",
+      "englishApproximation": "Nasal 'e' — like 'en' in French 'vin' but with an 'e' base.",
+      "description": "Nasal vowel. At word-end it usually denasalizes to plain /ɛ/ in casual speech. Before stops it splits the same way as ą (em / en / eŋ).",
+      "examples": [
+        {"pl": "ręka", "en": "hand"},
+        {"pl": "się", "en": "oneself"},
+        {"pl": "będę", "en": "I will be"},
+        {"pl": "pięć", "en": "five"},
+        {"pl": "język", "en": "language / tongue"},
+        {"pl": "gęś", "en": "goose"},
+        {"pl": "więc", "en": "so / therefore"},
+        {"pl": "dziękuję", "en": "thank you"},
+        {"pl": "częsty", "en": "frequent"},
+        {"pl": "tęsknić", "en": "to miss (someone)"}
+      ]
+    },
+    {
+      "letter": "ó",
+      "name": "o-kreska",
+      "ipa": "/u/",
+      "englishApproximation": "Identical to 'u' — sounds like 'oo' in 'boot'.",
+      "description": "Sounds exactly like the letter u. The two spellings are historical and you just have to memorize which word uses which. Often ó alternates with o in related forms (stół → stoły).",
+      "examples": [
+        {"pl": "król", "en": "king"},
+        {"pl": "mówić", "en": "to speak"},
+        {"pl": "góra", "en": "mountain"},
+        {"pl": "córka", "en": "daughter"},
+        {"pl": "róża", "en": "rose"},
+        {"pl": "mózg", "en": "brain"},
+        {"pl": "pióro", "en": "feather / pen"},
+        {"pl": "róg", "en": "horn / corner"},
+        {"pl": "wróbel", "en": "sparrow"},
+        {"pl": "stół", "en": "table"}
+      ]
+    },
+    {
+      "letter": "y",
+      "name": "y",
+      "ipa": "/ɨ/",
+      "englishApproximation": "Like the 'i' in 'bit' but pulled further back in the mouth.",
+      "description": "A central vowel — not the English 'y'. Position your tongue between 'ee' and 'uh'. It's the default vowel after hard consonants (sz, cz, rz, ż, c, dz, r, ł).",
+      "examples": [
+        {"pl": "ty", "en": "you"},
+        {"pl": "my", "en": "we"},
+        {"pl": "wy", "en": "you (plural)"},
+        {"pl": "syn", "en": "son"},
+        {"pl": "dobry", "en": "good"},
+        {"pl": "nowy", "en": "new"},
+        {"pl": "mysz", "en": "mouse"},
+        {"pl": "czy", "en": "whether (question marker)"},
+        {"pl": "ryba", "en": "fish"},
+        {"pl": "był", "en": "was"}
+      ]
+    },
+    {
+      "letter": "ł",
+      "name": "ł (l-with-stroke)",
+      "ipa": "/w/",
+      "englishApproximation": "Like English 'w' in 'water'.",
+      "description": "Not an L sound at all — it's an English 'w'. A frequent stumbling block: 'było' is 'BIH-woh', not 'BIH-loh'. Historically it was a velarized L, preserved only by some older speakers.",
+      "examples": [
+        {"pl": "łatwy", "en": "easy"},
+        {"pl": "łyżka", "en": "spoon"},
+        {"pl": "mały", "en": "small"},
+        {"pl": "biały", "en": "white"},
+        {"pl": "głowa", "en": "head"},
+        {"pl": "słońce", "en": "sun"},
+        {"pl": "ciepło", "en": "warm / warmth"},
+        {"pl": "miły", "en": "nice / kind"},
+        {"pl": "stół", "en": "table"},
+        {"pl": "był", "en": "was"}
+      ]
+    },
+    {
+      "letter": "w",
+      "name": "w",
+      "ipa": "/v/",
+      "englishApproximation": "Like English 'v' in 'van'.",
+      "description": "Always a V sound — never the English 'w'. Devoices to /f/ at word-end or next to voiceless consonants (e.g. 'w' alone, used as a preposition before voiceless consonants).",
+      "examples": [
+        {"pl": "woda", "en": "water"},
+        {"pl": "wino", "en": "wine"},
+        {"pl": "wiatr", "en": "wind"},
+        {"pl": "wieczór", "en": "evening"},
+        {"pl": "wszystko", "en": "everything"},
+        {"pl": "wesoły", "en": "cheerful"},
+        {"pl": "wielki", "en": "big"},
+        {"pl": "widzieć", "en": "to see"},
+        {"pl": "wracać", "en": "to return"},
+        {"pl": "wnuk", "en": "grandson"}
+      ]
+    },
+    {
+      "letter": "c",
+      "name": "c",
+      "ipa": "/ts/",
+      "englishApproximation": "Like 'ts' in 'cats'.",
+      "description": "Always /ts/ — never the English 'k' or 's'. Before i it palatalizes (see ć).",
+      "examples": [
+        {"pl": "co", "en": "what"},
+        {"pl": "cukier", "en": "sugar"},
+        {"pl": "cena", "en": "price"},
+        {"pl": "noc", "en": "night"},
+        {"pl": "serce", "en": "heart"},
+        {"pl": "praca", "en": "work"},
+        {"pl": "owoce", "en": "fruits"},
+        {"pl": "ojciec", "en": "father"},
+        {"pl": "miesiąc", "en": "month"},
+        {"pl": "cebula", "en": "onion"}
+      ]
+    },
+    {
+      "letter": "ch",
+      "name": "ch (= h)",
+      "ipa": "/x/",
+      "englishApproximation": "Like the German 'ch' in 'Bach' — a raspy back-of-throat H.",
+      "description": "Identical in sound to the letter 'h'. A bit raspier than English H. The two spellings (ch vs h) are historical and must be memorized per word.",
+      "examples": [
+        {"pl": "chleb", "en": "bread"},
+        {"pl": "chłopak", "en": "boy"},
+        {"pl": "chata", "en": "cottage"},
+        {"pl": "chodzić", "en": "to walk"},
+        {"pl": "schody", "en": "stairs"},
+        {"pl": "chory", "en": "sick"},
+        {"pl": "mucha", "en": "fly (insect)"},
+        {"pl": "ucho", "en": "ear"},
+        {"pl": "dach", "en": "roof"},
+        {"pl": "choroba", "en": "illness"}
+      ]
+    },
+    {
+      "letter": "r",
+      "name": "r",
+      "ipa": "/r/",
+      "englishApproximation": "A tapped/trilled R like Spanish or Italian — never the English R.",
+      "description": "A short alveolar trill: the tip of the tongue taps just behind the upper teeth. Most often a single tap; in careful or emphatic speech a full trill.",
+      "examples": [
+        {"pl": "rok", "en": "year"},
+        {"pl": "ranek", "en": "morning"},
+        {"pl": "ryba", "en": "fish"},
+        {"pl": "rower", "en": "bicycle"},
+        {"pl": "brat", "en": "brother"},
+        {"pl": "prawda", "en": "truth"},
+        {"pl": "kura", "en": "hen"},
+        {"pl": "dobry", "en": "good"},
+        {"pl": "środa", "en": "Wednesday"},
+        {"pl": "brzeg", "en": "shore / edge"}
+      ]
+    },
+    {
+      "letter": "ć",
+      "name": "ć / ci",
+      "ipa": "/t͡ɕ/",
+      "englishApproximation": "A very soft, hissy 'ch' — like 'ch' in 'cheese' but with the tongue further forward and softer.",
+      "description": "The 'soft' version of cz. Written ć at end of words or before consonants; written 'ci' before a vowel (cia, cie, cio, ciu) and 'ci' alone when followed by another consonant.",
+      "examples": [
+        {"pl": "być", "en": "to be"},
+        {"pl": "iść", "en": "to go"},
+        {"pl": "pięć", "en": "five"},
+        {"pl": "dziesięć", "en": "ten"},
+        {"pl": "kość", "en": "bone"},
+        {"pl": "miłość", "en": "love"},
+        {"pl": "gość", "en": "guest"},
+        {"pl": "ciało", "en": "body"},
+        {"pl": "ciemny", "en": "dark"},
+        {"pl": "ciocia", "en": "aunt"}
+      ]
+    },
+    {
+      "letter": "ś",
+      "name": "ś / si",
+      "ipa": "/ɕ/",
+      "englishApproximation": "A very soft, hissy 'sh' — like the 'sh' in 'sheep' but more whispery, tongue forward.",
+      "description": "The 'soft' version of sz. Written ś before consonants and at word-end; written 'si' before a vowel (sia, sie, sio, siu).",
+      "examples": [
+        {"pl": "śnieg", "en": "snow"},
+        {"pl": "ślub", "en": "wedding"},
+        {"pl": "świat", "en": "world"},
+        {"pl": "środa", "en": "Wednesday"},
+        {"pl": "ślimak", "en": "snail"},
+        {"pl": "śmiech", "en": "laughter"},
+        {"pl": "święto", "en": "holiday"},
+        {"pl": "ścieżka", "en": "path"},
+        {"pl": "ślad", "en": "trace / footprint"},
+        {"pl": "prosić", "en": "to ask / request"}
+      ]
+    },
+    {
+      "letter": "ń",
+      "name": "ń / ni",
+      "ipa": "/ɲ/",
+      "englishApproximation": "Soft palatal 'n' — like Spanish 'ñ' in 'mañana'.",
+      "description": "The 'soft' version of n. Written ń before consonants and at word-end; written 'ni' before a vowel.",
+      "examples": [
+        {"pl": "koń", "en": "horse"},
+        {"pl": "dzień", "en": "day"},
+        {"pl": "słońce", "en": "sun"},
+        {"pl": "dłoń", "en": "palm of hand"},
+        {"pl": "tańczyć", "en": "to dance"},
+        {"pl": "kończyć", "en": "to finish"},
+        {"pl": "pieśń", "en": "song"},
+        {"pl": "niania", "en": "nanny"},
+        {"pl": "jesień", "en": "autumn"},
+        {"pl": "ogień", "en": "fire"}
+      ]
+    },
+    {
+      "letter": "ż",
+      "name": "ż (z-dot)",
+      "ipa": "/ʐ/",
+      "englishApproximation": "Like the 's' in 'measure' or French 'j' in 'jour' — but harder, with the tongue curled back.",
+      "description": "A retroflex 'zh'. Identical in sound to the digraph 'rz' (which you'll meet separately). The two spellings are historical.",
+      "examples": [
+        {"pl": "żaba", "en": "frog"},
+        {"pl": "żona", "en": "wife"},
+        {"pl": "żółty", "en": "yellow"},
+        {"pl": "żyć", "en": "to live"},
+        {"pl": "żelazo", "en": "iron"},
+        {"pl": "żart", "en": "joke"},
+        {"pl": "już", "en": "already"},
+        {"pl": "mąż", "en": "husband"},
+        {"pl": "nóż", "en": "knife"},
+        {"pl": "róża", "en": "rose"}
+      ]
+    },
+    {
+      "letter": "rz",
+      "name": "rz (= ż)",
+      "ipa": "/ʐ/",
+      "englishApproximation": "Same sound as ż — like 'zh' in 'measure', harder.",
+      "description": "Pronounced identically to ż. Devoices to /ʂ/ (like sz) when adjacent to voiceless consonants — e.g. 'przepraszam' starts with a /pʂ/. The spelling is preserved because it often alternates with r in related words (morze ↔ morski).",
+      "examples": [
+        {"pl": "rzeka", "en": "river"},
+        {"pl": "morze", "en": "sea"},
+        {"pl": "drzewo", "en": "tree"},
+        {"pl": "trzy", "en": "three"},
+        {"pl": "przyjaciel", "en": "friend"},
+        {"pl": "przed", "en": "before / in front of"},
+        {"pl": "korzeń", "en": "root"},
+        {"pl": "grzyb", "en": "mushroom"},
+        {"pl": "brzeg", "en": "shore"},
+        {"pl": "wierzba", "en": "willow"}
+      ]
+    },
+    {
+      "letter": "ź",
+      "name": "ź / zi",
+      "ipa": "/ʑ/",
+      "englishApproximation": "A very soft 'zh' — like the 's' in 'vision' but more whispery, tongue forward.",
+      "description": "The 'soft' counterpart of ż. Written ź before consonants and at word-end; written 'zi' before a vowel (zia, zie, zio, ziu).",
+      "examples": [
+        {"pl": "źle", "en": "badly"},
+        {"pl": "źrebak", "en": "foal"},
+        {"pl": "źródło", "en": "source / spring"},
+        {"pl": "gałąź", "en": "branch"},
+        {"pl": "weź", "en": "take! (imperative)"},
+        {"pl": "nieźle", "en": "not bad"},
+        {"pl": "gryźć", "en": "to bite"},
+        {"pl": "jeździć", "en": "to ride / travel"},
+        {"pl": "zima", "en": "winter"},
+        {"pl": "ziemia", "en": "earth / ground"}
+      ]
+    },
+    {
+      "letter": "sz",
+      "name": "sz",
+      "ipa": "/ʂ/",
+      "englishApproximation": "Like English 'sh' in 'ship' but harder, with the tongue curled back.",
+      "description": "The 'hard' sh. Tongue is pulled back and slightly curled. Followed by y (not i): szyba, szykować.",
+      "examples": [
+        {"pl": "szkoła", "en": "school"},
+        {"pl": "szybko", "en": "quickly"},
+        {"pl": "szczęście", "en": "luck / happiness"},
+        {"pl": "szafa", "en": "wardrobe"},
+        {"pl": "proszę", "en": "please / here you go"},
+        {"pl": "pieszo", "en": "on foot"},
+        {"pl": "kasza", "en": "groats / porridge"},
+        {"pl": "szalik", "en": "scarf"},
+        {"pl": "wszystko", "en": "everything"},
+        {"pl": "mysz", "en": "mouse"}
+      ]
+    },
+    {
+      "letter": "cz",
+      "name": "cz",
+      "ipa": "/t͡ʂ/",
+      "englishApproximation": "Like English 'ch' in 'church' but harder, with the tongue curled back.",
+      "description": "The 'hard' ch. Followed by y (not i): czysty, czyj. Compare with the much softer ć.",
+      "examples": [
+        {"pl": "czas", "en": "time"},
+        {"pl": "czy", "en": "whether"},
+        {"pl": "czekać", "en": "to wait"},
+        {"pl": "oczy", "en": "eyes"},
+        {"pl": "czysty", "en": "clean"},
+        {"pl": "czerwony", "en": "red"},
+        {"pl": "czarny", "en": "black"},
+        {"pl": "klucz", "en": "key"},
+        {"pl": "część", "en": "part"},
+        {"pl": "wczoraj", "en": "yesterday"}
+      ]
+    },
+    {
+      "letter": "dz",
+      "name": "dz",
+      "ipa": "/d͡z/",
+      "englishApproximation": "Like the 'ds' in 'beds' or 'kids'.",
+      "description": "A single voiced affricate — say it in one push, not 'd' + 'z'. The voiced counterpart of c.",
+      "examples": [
+        {"pl": "bardzo", "en": "very"},
+        {"pl": "widzieć", "en": "to see"},
+        {"pl": "dzwon", "en": "bell"},
+        {"pl": "dzban", "en": "jug"},
+        {"pl": "godzina", "en": "hour"},
+        {"pl": "nadzieja", "en": "hope"},
+        {"pl": "sadza", "en": "soot"},
+        {"pl": "idzie", "en": "(he/she) goes"},
+        {"pl": "dzielić", "en": "to divide / share"},
+        {"pl": "pieniądze", "en": "money"}
+      ]
+    },
+    {
+      "letter": "dź",
+      "name": "dź / dzi",
+      "ipa": "/d͡ʑ/",
+      "englishApproximation": "A soft 'j' sound — like 'j' in 'jeans' but lighter, tongue further forward.",
+      "description": "The voiced counterpart of ć. Written dź before consonants and at word-end; written 'dzi' before a vowel.",
+      "examples": [
+        {"pl": "dźwięk", "en": "sound"},
+        {"pl": "niedźwiedź", "en": "bear"},
+        {"pl": "idź", "en": "go! (imperative)"},
+        {"pl": "łódź", "en": "boat / Łódź (city)"},
+        {"pl": "gwóźdź", "en": "nail"},
+        {"pl": "dziadek", "en": "grandfather"},
+        {"pl": "dziecko", "en": "child"},
+        {"pl": "dzień", "en": "day"},
+        {"pl": "dziś", "en": "today"},
+        {"pl": "poniedziałek", "en": "Monday"}
+      ]
+    },
+    {
+      "letter": "dż",
+      "name": "dż",
+      "ipa": "/d͡ʐ/",
+      "englishApproximation": "Like English 'j' in 'jungle' — the hard, retroflex version.",
+      "description": "The voiced counterpart of cz. Mostly appears in loanwords (dżem, dżinsy) and a handful of native words (drożdże).",
+      "examples": [
+        {"pl": "dżem", "en": "jam (preserve)"},
+        {"pl": "dżinsy", "en": "jeans"},
+        {"pl": "dżungla", "en": "jungle"},
+        {"pl": "brydż", "en": "bridge (card game)"},
+        {"pl": "dżentelmen", "en": "gentleman"},
+        {"pl": "dżin", "en": "gin"},
+        {"pl": "drożdże", "en": "yeast"},
+        {"pl": "gadżet", "en": "gadget"},
+        {"pl": "dżuma", "en": "plague"},
+        {"pl": "dżip", "en": "jeep"}
+      ]
+    }
+  ]
+}

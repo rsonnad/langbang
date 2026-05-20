@@ -1,0 +1,125 @@
+package com.sponic.langbang.domain
+
+import com.sponic.langbang.data.LessonRepository
+import com.sponic.langbang.data.model.AdjectiveEntry
+import com.sponic.langbang.data.model.SentenceExample
+import com.sponic.langbang.data.model.VerbEntry
+import com.sponic.langbang.data.model.audioPronoun
+import com.sponic.langbang.integrations.AzureTtsClient
+
+data class PrefetchProgress(
+    val total: Int = 0,
+    val done: Int = 0,
+    val current: String = "",
+    val finished: Boolean = false
+) {
+    val ratio: Float get() = if (total == 0) 0f else done / total.toFloat()
+}
+
+/**
+ * Stateless prefetch logic. Iterates every audio unit in Lesson 1 (phrases + verb forms +
+ * pronoun forms across both languages), calls Azure TTS for misses, writes to [AudioCache].
+ *
+ * Designed to be called from a WorkManager [PrefetchWorker]. Progress is reported via a
+ * callback so the worker can publish it through WorkManager's progress channel.
+ */
+class PrefetchService(
+    private val tts: AzureTtsClient,
+    private val cache: AudioCache,
+    private val repo: LessonRepository
+) {
+    suspend fun prefetchLesson1(onProgress: suspend (PrefetchProgress) -> Unit) {
+        val lesson = repo.lesson2()
+        val adjLesson = repo.lesson3()
+        val pron = repo.pronunciation()
+        val units = buildList {
+            fun addPl(text: String) {
+                if (text.isEmpty()) return
+                add(Unit_(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F))
+                add(Unit_(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F_SLOW))
+            }
+            lesson.phrases.forEach { p ->
+                add(Unit_(p.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F))
+                addPl(p.pl)
+            }
+            lesson.verbs.forEach { v ->
+                v.forms.forEach { (k, f) ->
+                    addPl("${audioPronoun(k)} $f".trim())
+                }
+            }
+            lesson.pronouns.forEach { p ->
+                p.case_forms.values.forEach { f -> addPl(f) }
+            }
+            adjLesson.adjectives.forEach { a ->
+                a.nom.values.forEach { f -> addPl(f) }
+                a.acc.values.forEach { f -> addPl(f) }
+            }
+            pron.phonemes.forEach { ph ->
+                ph.examples.forEach { ex -> addPl(ex.pl) }
+            }
+            // Saved Gemini sentences — so disconnected mode covers everything generated so far.
+            lesson.verbs.forEach { v ->
+                repo.sentencesFor(v.lemma).forEach { s ->
+                    add(Unit_(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F))
+                    addPl(s.pl)
+                }
+            }
+            adjLesson.adjectives.forEach { a ->
+                repo.adjectiveSentencesFor(a.lemma).forEach { s ->
+                    add(Unit_(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F))
+                    addPl(s.pl)
+                }
+            }
+        }.distinctBy { it.text + "|" + it.locale + "|" + it.voice }
+
+        units.forEachIndexed { i, u ->
+            onProgress(PrefetchProgress(total = units.size, done = i, current = u.text))
+            val file = cache.fileFor(u.locale, u.voice, u.text)
+            if (!cache.has(file)) {
+                tts.synthesize(u.text, u.voice, u.locale, file)
+            }
+        }
+        onProgress(
+            PrefetchProgress(
+                total = units.size, done = units.size,
+                current = "", finished = true
+            )
+        )
+    }
+
+    /** Synthesise TTS for every form of a newly-added verb so playback works immediately. */
+    suspend fun prefetchVerb(verb: VerbEntry) {
+        verb.forms.forEach { (k, form) ->
+            val text = "${audioPronoun(k)} $form".trim()
+            if (text.isEmpty()) return@forEach
+            ensurePl(text)
+        }
+    }
+
+    /** Synthesise TTS for every form of a newly-added adjective. */
+    suspend fun prefetchAdjective(adj: AdjectiveEntry) {
+        (adj.nom.values + adj.acc.values).forEach { form -> ensurePl(form) }
+    }
+
+    /** Synthesise both sides of each generated example sentence (EN cue + PL target + slow PL). */
+    suspend fun prefetchSentences(sentences: List<SentenceExample>) {
+        sentences.forEach { s ->
+            ensureAudio(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+            ensurePl(s.pl)
+        }
+    }
+
+    private suspend fun ensurePl(text: String) {
+        if (text.isEmpty()) return
+        ensureAudio(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+        ensureAudio(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F_SLOW)
+    }
+
+    private suspend fun ensureAudio(text: String, locale: String, voice: String) {
+        if (text.isEmpty()) return
+        val file = cache.fileFor(locale, voice, text)
+        if (!cache.has(file)) tts.synthesize(text, voice, locale, file)
+    }
+
+    private data class Unit_(val text: String, val locale: String, val voice: String)
+}
