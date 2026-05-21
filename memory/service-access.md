@@ -1,5 +1,20 @@
 # Service access recipes (langbang)
 
+## Galaxy Tab A9+ — wireless adb persistent port — 2026-05-20
+
+**Persistent wireless-debugging port on the Tab A9+ is `35515`** (Tailscale
+IP `100.103.110.7`). Cached at `~/.cache/adb-tab/port` so `~/bin/adb-tab`
+reuses it without an nmap scan.
+
+If `adb-tab` reports `no open high ports on 100.103.110.7`, the Wireless
+debugging toggle on the tablet is OFF — flip it back on (Settings →
+Developer options → Wireless debugging) and retry. The pair is durable;
+only the toggle state matters.
+
+If the port has rotated (rare — usually only after factory reset or
+re-pair), delete the cache file and let `adb-tab` re-scan:
+`rm ~/.cache/adb-tab/port && ~/bin/adb-tab`.
+
 ## Cloudflare R2 — duplicate BW item cleanup — 2026-05-20
 
 **Root cause fixed today.** There were two BW items both named
@@ -27,14 +42,62 @@ warning to stderr but still prints the value on stdout, so the inline form
 `$(bw-read "Supabase — AlpacApps Project" "psql Password" | python3 -c '...')`
 works fine — that stderr noise is cosmetic.
 
-**Management API PAT is STALE as of 2026-05-20.** Field `Management API Token`
-on BW item `Supabase — AlpacApps Project` is `sbp_3e69f8663424...2db5` and
-returns `{"message":"Unauthorized"}` on every endpoint including
-`/v1/projects`. **Fix at root:** rotate at
-[supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens),
-update the BW field. Until then, use psql for SQL and the SQL-side trick
-below for PostgREST config — both are documented in
-`genalpaca-admin/docs/CREDENTIALS.md`.
+**Management API PAT was rotated 2026-05-21.** Current valid token
+`sbp_09a2adf2…18d9f9f9` (dashboard name `TheLatestSupabaseToken`,
+no expiration). Stored in BW item `Supabase — AlpacApps Project`
+(id `fd5b3ae7-d6a7-4e57-8475-b410007ea3a7`) field `Management API Token`.
+Previous stale token (`sbp_3e69f866…4d2db5`) was manually revoked at some
+prior date — gone from the dashboard list entirely, hence HTTP 401.
+Confirmed working: `curl -H "Authorization: Bearer $PAT"
+https://api.supabase.com/v1/projects` → 200, lists `aphrrfprbixmhissnjfn APA Ops`.
+
+**Rotation recipe (90 sec when needed again):**
+1. Generate fresh PAT at
+   [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens),
+   set Expiration: **Never**.
+2. Update the BW field in one shot. **Use plain `base64`, NOT `bw encode`** —
+   the latter prompts for the master password and hangs Claude Code's
+   non-TTY shell:
+   ```bash
+   export BW_SESSION=$(~/bin/bw-unlock)
+   NEW='sbp_PASTE_NEW_TOKEN_HERE'
+   ID='fd5b3ae7-d6a7-4e57-8475-b410007ea3a7'   # Supabase — AlpacApps Project
+   bw get item "$ID" --session "$BW_SESSION" \
+     | jq --arg t "$NEW" '(.fields[] | select(.name=="Management API Token") | .value) = $t' \
+     | base64 \
+     | bw edit item "$ID" --session "$BW_SESSION" > /dev/null
+   bw sync --session "$BW_SESSION"
+   ```
+   Note: `bw edit` requires the item **ID**, not the name — `bw edit item
+   "Supabase — AlpacApps Project"` returns `Not found.`
+3. Verify the field round-tripped:
+   ```bash
+   curl -s -o /dev/null -w "%{http_code}\n" \
+     -H "Authorization: Bearer $(bw-read 'Supabase — AlpacApps Project' 'Management API Token')" \
+     https://api.supabase.com/v1/projects   # expect 200
+   ```
+
+**Edge Function deploy recipe (verified working 2026-05-21):**
+```bash
+export BW_SESSION=$(~/bin/bw-unlock)
+export SUPABASE_ACCESS_TOKEN=$(bw-read "Supabase — AlpacApps Project" "Management API Token")
+cd /Users/rahulio/Documents/CodingProjects/genalpaca-admin
+
+# One-time, when a function uses Azure + R2 secrets:
+supabase secrets set --project-ref aphrrfprbixmhissnjfn \
+  AZURE_SPEECH_KEY="$(bw-read 'Azure Speech — langbang-speech (TTS)' 'key1')" \
+  AZURE_SPEECH_REGION=eastus \
+  R2_ACCOUNT_ID=9cd3a280a54ce2a5b382602f0247b577 \
+  R2_ACCESS_KEY_ID=e096a89017992c90daf23b7be0b5da0a \
+  R2_SECRET_ACCESS_KEY=fc4716d54e00d0e7f936e442dfc7b6240d3e5163c721237f24936ed95be3764f \
+  R2_BUCKET_NAME=alpacapps \
+  R2_PUBLIC_URL=https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev
+
+# Deploy:
+supabase functions deploy <function-name> --no-verify-jwt --project-ref aphrrfprbixmhissnjfn
+```
+`langbang-pregen-audio` was deployed this way 2026-05-21, end-to-end verified
+(Azure synth + R2 upload + manifest return + public mp3 pull all green).
 
 **Working psql recipe (verbatim from alpacapps CREDENTIALS.md):**
 ```bash
@@ -241,6 +304,30 @@ Force-stop the app first (`am force-stop <pkg>`) or the SharedPreferences in-mem
 **Inspecting Java-produced ZIPs on macOS:** BSD `unzip -l` reports `0 files` on archives written by `java.util.zip.ZipOutputStream` because Java uses streaming data descriptors instead of writing entry sizes in local file headers. Use `zipinfo`, `jar tf`, or Python `zipfile` — all read them correctly.
 
 **Driving Compose UI via adb tap:** `uiautomator dump` gives reliable bounds for Compose Material3 tabs and buttons (look for `clickable="true"` ancestors of the visible text). Coordinates DO shift if `systemBarsPadding()` is added to the root layout, so re-dump after any UI change. `adb shell input swipe 960 900 960 200 400` scrolls one viewport-height on a 1920×1200 landscape tablet — usually need two swipes to reach the bottom card on the Settings screen.
+
+## `~/bin/bw-unlock` fails in Claude Code's non-TTY shell — 2026-05-21
+
+When `publish-r2.sh` (or any script that calls `~/bin/bw-unlock` without a pre-set
+`BW_SESSION`) runs inside Claude Code's shell, the inner `bw unlock` prompts for
+the master password interactively, can't read stdin, and crashes with
+`Error [ERR_USE_AFTER_CLOSE]: readline was closed` from Node. The script then
+proceeds with an empty `BW_SESSION` and fails on the next call with
+`Invalid endpoint: https://.r2.cloudflarestorage.com` (account ID came back blank).
+
+**Always pre-seed `BW_SESSION` before invoking scripts that wrap `bw-unlock`:**
+```bash
+export BW_PASSWORD=$(security find-generic-password -a "rahulioson@gmail.com" -s "bitwarden-cli" -w)
+export BW_SESSION=$(/opt/homebrew/bin/bw unlock --passwordenv BW_PASSWORD --raw)
+./scripts/publish-r2.sh   # script's `if [ -z "${BW_SESSION:-}" ]` short-circuits, no prompt
+```
+
+The keychain item key is `rahulioson@gmail.com` / `bitwarden-cli` (the user's
+default email for personal accounts — distinct from `wingsiebird@gmail.com`
+which is the assistant's userEmail context, NOT the BW account).
+
+If publish-r2.sh aborts mid-flight from this issue, the APK has already been
+built (buildNumber is bumped). Re-run with `--skip-build` after seeding
+BW_SESSION to avoid bumping it again.
 
 ## R2 publish — langbang APK distribution — 2026-05-20
 
