@@ -240,7 +240,7 @@ internal class VerbsTabState(
                 setLang("en", s, position)
                 playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
                 setLang("pl-slow", s, position)
-                playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F_SLOW)
+                playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F_SLOW_V2)
                 setLang("en", s, position)
                 playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
                 setLang("pl", s, position)
@@ -257,7 +257,7 @@ internal class VerbsTabState(
 
     private fun setLang(l: String, s: SentenceExample, position: String) {
         playingLang = l
-        NowVoicingBus.publish(NowVoicing(s.en, s.pl, s.literal, l, position))
+        NowVoicingBus.publish(NowVoicing(s.en, s.pl, s.literal, l, position, s.words))
     }
 
     private suspend fun ensureSentencesFor(target: VerbEntry): List<SentenceExample> {
@@ -687,6 +687,13 @@ private fun VerbParadigm(
                 modifier = Modifier.padding(bottom = 6.dp)
             )
         }
+        Text(
+            "Present",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color(0xFF7A5A1F),
+            modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+        )
         PERSON_KEYS.forEach { k ->
             val form = verb.forms[k].orEmpty()
             val spoken = "${audioPronoun(k)} $form".trim()
@@ -706,6 +713,43 @@ private fun VerbParadigm(
                 onToggleIncluded = { now -> state.toggleIncluded(k, now) },
                 onPlay = { playConjugation(app, k, form) }
             )
+        }
+        verb.past_forms?.let { past ->
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Past",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF7A5A1F)
+            )
+            Text(
+                "Masculine-singular for 1sg/2sg/3sg, virile-plural for 1pl/2pl/3pl. " +
+                    "Feminine/non-virile variants are coming.",
+                fontSize = 10.sp,
+                color = Color(0xFF999999),
+                modifier = Modifier.padding(bottom = 2.dp)
+            )
+            PERSON_KEYS.forEach { k ->
+                val form = past[k].orEmpty()
+                if (form.isEmpty()) return@forEach
+                val spoken = "${audioPronoun(k)} $form".trim()
+                val englishGloss = when (k) {
+                    "1sg" -> "I (did)"
+                    "2sg" -> "you (did)"
+                    "3sg" -> "he (did)"
+                    "1pl" -> "we (did)"
+                    "2pl" -> "y'all (did)"
+                    "3pl" -> "they (did)"
+                    else -> ""
+                }
+                ConjRow(
+                    spoken = spoken,
+                    englishGloss = englishGloss,
+                    included = false,
+                    onToggleIncluded = { /* past tense filter not yet plumbed */ },
+                    onPlay = { playConjugation(app, k, form) }
+                )
+            }
         }
         Spacer(Modifier.height(8.dp))
         SentencesList(app, verb, state)

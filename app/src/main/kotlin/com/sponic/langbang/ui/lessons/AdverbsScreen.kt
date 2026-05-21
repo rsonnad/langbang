@@ -53,12 +53,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
-import com.sponic.langbang.domain.PrefetchProgress
-import com.sponic.langbang.data.model.AdjectiveEntry
-import com.sponic.langbang.data.model.AdjectiveLesson
+import com.sponic.langbang.data.model.AdverbEntry
+import com.sponic.langbang.data.model.AdverbLesson
 import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
+import com.sponic.langbang.domain.PrefetchProgress
 import com.sponic.langbang.integrations.AzureTtsClient
 import android.media.MediaMetadataRetriever
 import kotlinx.coroutines.CoroutineScope
@@ -68,30 +68,20 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
-private enum class AdjMode(val label: String) {
-    Single("Single adjective"),
-    Add("+ Add adjective")
-}
-
-private val GENDER_KEYS = listOf("m", "f", "n", "mp", "other")
-private fun genderLabel(k: String): String = when (k) {
-    "m" -> "m  (table, dog)"
-    "f" -> "f  (house, lamp)"
-    "n" -> "n  (window, child)"
-    "mp" -> "men / mixed plural"
-    "other" -> "other plural"
-    else -> k
+private enum class AdvMode(val label: String) {
+    Single("Single adverb"),
+    Add("+ Add adverb")
 }
 
 /**
- * Hoisted state for the Adjectives screen — mirrors VerbsTabState so the play / regenerate
- * controls can live in the top bar instead of buried beside the sentences list.
+ * Per-adverb state hoisted to screen root so the play/regenerate controls live in the
+ * top bar (mirrors VerbsTabState / AdjectivesScreenState).
  */
-internal class AdjectivesScreenState(
+internal class AdverbsScreenState(
     private val app: LangbangApplication,
     private val scope: CoroutineScope
 ) {
-    var selected: AdjectiveEntry? by mutableStateOf(null)
+    var selected: AdverbEntry? by mutableStateOf(null)
         private set
     var sentences: List<SentenceExample> by mutableStateOf(emptyList())
         private set
@@ -106,23 +96,23 @@ internal class AdjectivesScreenState(
         private set
     val playing: Boolean get() = playJob?.isActive == true
 
-    fun select(adj: AdjectiveEntry?) {
-        if (selected?.lemma == adj?.lemma) return
+    fun select(adv: AdverbEntry?) {
+        if (selected?.lemma == adv?.lemma) return
         stop()
-        selected = adj
-        sentences = adj?.let { app.lessonRepo.adjectiveSentencesFor(it.lemma) } ?: emptyList()
+        selected = adv
+        sentences = adv?.let { app.lessonRepo.adverbSentencesFor(it.lemma) } ?: emptyList()
         error = null
     }
 
     fun generate() {
         if (busy) return
-        val adj = selected ?: return
+        val adv = selected ?: return
         busy = true; error = null
         scope.launch {
-            app.gemini.generateAdjectiveSentences(adj)
+            app.gemini.generateAdverbSentences(adv)
                 .onSuccess { list ->
-                    app.lessonRepo.saveAdjectiveSentences(adj.lemma, list)
-                    if (selected?.lemma == adj.lemma) sentences = list
+                    app.lessonRepo.saveAdverbSentences(adv.lemma, list)
+                    if (selected?.lemma == adv.lemma) sentences = list
                     app.prefetch.prefetchSentences(list)
                 }
                 .onFailure { error = it.message }
@@ -139,10 +129,7 @@ internal class AdjectivesScreenState(
     }
 
     fun playAll(quiz: Boolean) {
-        if (playJob?.isActive == true) {
-            stop()
-            return
-        }
+        if (playJob?.isActive == true) { stop(); return }
         if (sentences.isEmpty()) return
         val list = sentences
         playJob = scope.launch {
@@ -157,30 +144,37 @@ internal class AdjectivesScreenState(
                     }
                     if (quiz) {
                         pub("en")
-                        playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                        playAndAwaitAdv(app, s.en, AzureTtsClient.LOCALE_EN,
+                            AzureTtsClient.EN_US_F)
                         pub("pause")
                         val plFile = app.audioCache.fileFor(
                             AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, s.pl
                         )
-                        val pauseMs = mp3DurationMs(plFile) + 2000L
+                        val pauseMs = mp3DurationMsAdv(plFile) + 2000L
                         delay(pauseMs)
                         pub("pl")
-                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                        playAndAwaitAdv(app, s.pl, AzureTtsClient.LOCALE_PL,
+                            AzureTtsClient.PL_PL_F)
                     } else if (slowFirst) {
                         pub("en")
-                        playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                        playAndAwaitAdv(app, s.en, AzureTtsClient.LOCALE_EN,
+                            AzureTtsClient.EN_US_F)
                         pub("pl-slow")
-                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL,
+                        playAndAwaitAdv(app, s.pl, AzureTtsClient.LOCALE_PL,
                             AzureTtsClient.PL_PL_F_SLOW_V2)
                         pub("en")
-                        playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                        playAndAwaitAdv(app, s.en, AzureTtsClient.LOCALE_EN,
+                            AzureTtsClient.EN_US_F)
                         pub("pl")
-                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                        playAndAwaitAdv(app, s.pl, AzureTtsClient.LOCALE_PL,
+                            AzureTtsClient.PL_PL_F)
                     } else {
                         pub("en")
-                        playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                        playAndAwaitAdv(app, s.en, AzureTtsClient.LOCALE_EN,
+                            AzureTtsClient.EN_US_F)
                         pub("pl")
-                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                        playAndAwaitAdv(app, s.pl, AzureTtsClient.LOCALE_PL,
+                            AzureTtsClient.PL_PL_F)
                     }
                 }
             } finally {
@@ -193,27 +187,26 @@ internal class AdjectivesScreenState(
 }
 
 @Composable
-private fun rememberAdjectivesScreenState(app: LangbangApplication): AdjectivesScreenState {
+private fun rememberAdverbsScreenState(app: LangbangApplication): AdverbsScreenState {
     val scope = rememberCoroutineScope()
-    return remember { AdjectivesScreenState(app, scope) }
+    return remember { AdverbsScreenState(app, scope) }
 }
 
 @Composable
-fun AdjectivesScreen(app: LangbangApplication, prefetch: PrefetchProgress) {
+fun AdverbsScreen(app: LangbangApplication, prefetch: PrefetchProgress) {
     var reloadKey by remember { mutableStateOf(0) }
-    val lesson = remember(reloadKey) { app.lessonRepo.lesson3() }
-    var mode by remember { mutableStateOf(AdjMode.Single) }
+    val lesson = remember(reloadKey) { app.lessonRepo.lesson4() }
+    var mode by remember { mutableStateOf(AdvMode.Single) }
     val scope = rememberCoroutineScope()
-    val state = rememberAdjectivesScreenState(app)
+    val state = rememberAdverbsScreenState(app)
     var generateAllBusy by remember { mutableStateOf(false) }
     var generateAllProgress by remember { mutableStateOf<String?>(null) }
     var generateAllError by remember { mutableStateOf<String?>(null) }
 
-    // Re-sync selection when the lesson list reloads after a user-add.
     if (state.selected == null ||
-        lesson.adjectives.none { it.lemma == state.selected?.lemma }
+        lesson.adverbs.none { it.lemma == state.selected?.lemma }
     ) {
-        state.select(lesson.adjectives.firstOrNull())
+        state.select(lesson.adverbs.firstOrNull())
     }
 
     val generateAll: () -> Unit = {
@@ -223,13 +216,13 @@ fun AdjectivesScreen(app: LangbangApplication, prefetch: PrefetchProgress) {
             scope.launch {
                 val errors = mutableListOf<String>()
                 try {
-                    lesson.adjectives.forEachIndexed { i, a ->
+                    lesson.adverbs.forEachIndexed { i, a ->
                         generateAllProgress =
-                            "Gemini ${i + 1}/${lesson.adjectives.size} · ${a.lemma}"
-                        val existing = app.lessonRepo.adjectiveSentencesFor(a.lemma)
+                            "Gemini ${i + 1}/${lesson.adverbs.size} · ${a.lemma}"
+                        val existing = app.lessonRepo.adverbSentencesFor(a.lemma)
                         if (existing.isNotEmpty()) return@forEachIndexed
-                        app.gemini.generateAdjectiveSentences(a)
-                            .onSuccess { app.lessonRepo.saveAdjectiveSentences(a.lemma, it) }
+                        app.gemini.generateAdverbSentences(a)
+                            .onSuccess { app.lessonRepo.saveAdverbSentences(a.lemma, it) }
                             .onFailure { errors += "${a.lemma}: ${it.message}" }
                     }
                     generateAllProgress = "Kicking audio prefetch…"
@@ -237,7 +230,7 @@ fun AdjectivesScreen(app: LangbangApplication, prefetch: PrefetchProgress) {
                 } finally {
                     if (errors.isNotEmpty()) {
                         generateAllError =
-                            "${errors.size} adjective(s) failed: ${errors.first()}"
+                            "${errors.size} adverb(s) failed: ${errors.first()}"
                     }
                     generateAllProgress = null
                     generateAllBusy = false
@@ -247,7 +240,7 @@ fun AdjectivesScreen(app: LangbangApplication, prefetch: PrefetchProgress) {
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        ModeBar(
+        AdvModeBar(
             mode = mode,
             onSelect = { mode = it },
             prefetch = prefetch,
@@ -255,7 +248,7 @@ fun AdjectivesScreen(app: LangbangApplication, prefetch: PrefetchProgress) {
             generateAllBusy = generateAllBusy,
             generateAllProgress = generateAllProgress,
             state = state,
-            showControls = mode == AdjMode.Single && state.selected != null
+            showControls = mode == AdvMode.Single && state.selected != null
         )
         generateAllError?.let {
             Text(
@@ -266,8 +259,8 @@ fun AdjectivesScreen(app: LangbangApplication, prefetch: PrefetchProgress) {
         }
         Box(modifier = Modifier.fillMaxSize()) {
             when (mode) {
-                AdjMode.Single -> SingleAdjectiveMode(app, lesson, state)
-                AdjMode.Add -> AddAdjectiveMode(app) { reloadKey++; mode = AdjMode.Single }
+                AdvMode.Single -> SingleAdverbMode(app, lesson, state)
+                AdvMode.Add -> AddAdverbMode(app) { reloadKey++; mode = AdvMode.Single }
             }
         }
     }
@@ -275,14 +268,14 @@ fun AdjectivesScreen(app: LangbangApplication, prefetch: PrefetchProgress) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ModeBar(
-    mode: AdjMode,
-    onSelect: (AdjMode) -> Unit,
+private fun AdvModeBar(
+    mode: AdvMode,
+    onSelect: (AdvMode) -> Unit,
     prefetch: PrefetchProgress,
     onGenerateAll: () -> Unit,
     generateAllBusy: Boolean,
     generateAllProgress: String?,
-    state: AdjectivesScreenState,
+    state: AdverbsScreenState,
     showControls: Boolean
 ) {
     Surface(color = Color(0xFFF7F3EA), modifier = Modifier.fillMaxWidth()) {
@@ -292,7 +285,7 @@ private fun ModeBar(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                AdjMode.values().forEach { m ->
+                AdvMode.values().forEach { m ->
                     FilterChip(
                         selected = mode == m,
                         onClick = { onSelect(m) },
@@ -304,18 +297,15 @@ private fun ModeBar(
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                CacheBadge(prefetch)
+                AdvCacheBadge(prefetch)
                 if (showControls) {
-                    ExamplesControls(
+                    AdvExamplesControls(
                         state = state,
                         onGenerateAll = onGenerateAll,
                         generateAllBusy = generateAllBusy
                     )
                 } else {
-                    GenerateAllButton(
-                        onClick = onGenerateAll,
-                        busy = generateAllBusy
-                    )
+                    AdvGenerateAllButton(onGenerateAll, generateAllBusy)
                 }
             }
             generateAllProgress?.let {
@@ -331,7 +321,7 @@ private fun ModeBar(
 }
 
 @Composable
-private fun GenerateAllButton(onClick: () -> Unit, busy: Boolean) {
+private fun AdvGenerateAllButton(onClick: () -> Unit, busy: Boolean) {
     Button(
         onClick = onClick,
         enabled = !busy,
@@ -353,8 +343,8 @@ private fun GenerateAllButton(onClick: () -> Unit, busy: Boolean) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ExamplesControls(
-    state: AdjectivesScreenState,
+private fun AdvExamplesControls(
+    state: AdverbsScreenState,
     onGenerateAll: () -> Unit,
     generateAllBusy: Boolean
 ) {
@@ -362,7 +352,7 @@ private fun ExamplesControls(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        GenerateAllButton(onClick = onGenerateAll, busy = generateAllBusy)
+        AdvGenerateAllButton(onGenerateAll, generateAllBusy)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(
                 checked = state.slowFirst,
@@ -423,27 +413,27 @@ private fun ExamplesControls(
                 modifier = Modifier.size(18.dp), strokeWidth = 2.dp
             )
         } else {
-            val isRegenerate = state.sentences.isNotEmpty()
+            val isRegen = state.sentences.isNotEmpty()
             Button(
                 onClick = { state.generate() },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isRegenerate) Color(0xFFEFE8D8)
+                    containerColor = if (isRegen) Color(0xFFEFE8D8)
                     else MaterialTheme.colorScheme.primary
                 ),
                 shape = RoundedCornerShape(16.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
             ) {
                 Icon(
-                    if (isRegenerate) Icons.Default.Refresh else Icons.Default.Add,
-                    contentDescription = if (isRegenerate) "Regenerate" else "Generate",
-                    tint = if (isRegenerate) Color(0xFF7A5A1F) else Color.White,
+                    if (isRegen) Icons.Default.Refresh else Icons.Default.Add,
+                    contentDescription = if (isRegen) "Regenerate" else "Generate",
+                    tint = if (isRegen) Color(0xFF7A5A1F) else Color.White,
                     modifier = Modifier.size(14.dp)
                 )
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    if (isRegenerate) "Regen" else "Generate",
+                    if (isRegen) "Regen" else "Generate",
                     fontSize = 12.sp,
-                    color = if (isRegenerate) Color(0xFF7A5A1F) else Color.White
+                    color = if (isRegen) Color(0xFF7A5A1F) else Color.White
                 )
             }
         }
@@ -451,7 +441,7 @@ private fun ExamplesControls(
 }
 
 @Composable
-private fun CacheBadge(prefetch: PrefetchProgress) {
+private fun AdvCacheBadge(prefetch: PrefetchProgress) {
     val done = prefetch.done
     val total = prefetch.total
     if (total == 0 && !prefetch.finished) return
@@ -481,17 +471,15 @@ private fun CacheBadge(prefetch: PrefetchProgress) {
     }
 }
 
-// ── Mode 1 — pick an adjective, see all 10 nom + acc forms + Gemini examples ───
-
 @Composable
-private fun SingleAdjectiveMode(
+private fun SingleAdverbMode(
     app: LangbangApplication,
-    lesson: AdjectiveLesson,
-    state: AdjectivesScreenState
+    lesson: AdverbLesson,
+    state: AdverbsScreenState
 ) {
     Row(Modifier.fillMaxSize()) {
-        AdjectiveList(
-            adjectives = lesson.adjectives,
+        AdverbList(
+            adverbs = lesson.adverbs,
             selected = state.selected,
             onSelect = { state.select(it) },
             modifier = Modifier
@@ -500,16 +488,16 @@ private fun SingleAdjectiveMode(
                 .background(Color(0xFFF3EFE6))
         )
         Box(Modifier.weight(1f).fillMaxHeight()) {
-            state.selected?.let { AdjectiveParadigm(app, it, state) }
+            state.selected?.let { AdverbSentences(app, it, state) }
         }
     }
 }
 
 @Composable
-private fun AdjectiveList(
-    adjectives: List<AdjectiveEntry>,
-    selected: AdjectiveEntry?,
-    onSelect: (AdjectiveEntry) -> Unit,
+private fun AdverbList(
+    adverbs: List<AdverbEntry>,
+    selected: AdverbEntry?,
+    onSelect: (AdverbEntry) -> Unit,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -517,7 +505,7 @@ private fun AdjectiveList(
         contentPadding = PaddingValues(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        items(adjectives, key = { "a-${it.lemma}" }) { a ->
+        items(adverbs, key = { "adv-${it.lemma}" }) { a ->
             val isSel = a == selected
             Card(
                 onClick = { onSelect(a) },
@@ -552,10 +540,10 @@ private fun AdjectiveList(
 }
 
 @Composable
-private fun AdjectiveParadigm(
+private fun AdverbSentences(
     app: LangbangApplication,
-    adj: AdjectiveEntry,
-    state: AdjectivesScreenState
+    adv: AdverbEntry,
+    state: AdverbsScreenState
 ) {
     Column(
         modifier = Modifier
@@ -565,100 +553,35 @@ private fun AdjectiveParadigm(
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Row(verticalAlignment = Alignment.Bottom) {
-            Text(adj.lemma, fontSize = 26.sp, fontWeight = FontWeight.Bold,
+            Text(adv.lemma, fontSize = 26.sp, fontWeight = FontWeight.Bold,
                 color = Color(0xFF0F4C81))
             Spacer(Modifier.width(12.dp))
-            Text(adj.en, fontSize = 14.sp, color = Color(0xFF666666),
+            Text(adv.en, fontSize = 14.sp, color = Color(0xFF666666),
                 modifier = Modifier.padding(bottom = 4.dp))
         }
-
-        ParadigmHeader("Nominative", "the form when the adjective + noun is the subject")
-        GENDER_KEYS.forEach { k ->
-            val form = adj.nom[k].orEmpty()
-            FormRow(label = genderLabel(k), form = form) { playForm(app, form) }
-        }
-
-        Spacer(Modifier.height(4.dp))
-        ParadigmHeader(
-            "Accusative",
-            "for direct objects — \"I see a big table\". m form is animate (-ego); " +
-                "for inanimate m, accusative = nominative."
-        )
-        GENDER_KEYS.forEach { k ->
-            val form = adj.acc[k].orEmpty()
-            FormRow(label = genderLabel(k), form = form) { playForm(app, form) }
-        }
-
         Spacer(Modifier.height(8.dp))
-        SentencesSection(app, state)
-    }
-}
-
-@Composable
-private fun ParadigmHeader(label: String, hint: String) {
-    Column(Modifier.padding(top = 6.dp, bottom = 2.dp)) {
-        Text(
-            label,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color(0xFF7A5A1F)
-        )
-        Text(hint, fontSize = 10.sp, color = Color(0xFF999999))
-    }
-}
-
-@Composable
-private fun FormRow(label: String, form: String, onPlay: () -> Unit) {
-    Card(
-        onClick = onPlay,
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F2EA)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                label,
-                fontSize = 12.sp,
-                color = Color(0xFF777777),
-                modifier = Modifier.width(170.dp)
-            )
-            Text(form, fontSize = 18.sp, fontWeight = FontWeight.Medium,
-                color = Color(0xFF0F4C81), modifier = Modifier.weight(1f))
-            Icon(Icons.Default.PlayArrow, contentDescription = "Play",
-                tint = Color(0xFF0F4C81), modifier = Modifier.size(20.dp))
-        }
-    }
-}
-
-@Composable
-private fun SentencesSection(app: LangbangApplication, state: AdjectivesScreenState) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             "Examples",
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             color = Color(0xFF7A5A1F)
         )
-
         if (state.sentences.isEmpty()) {
             Text(
-                "No examples yet — tap Generate above to make 20 short sentences combining " +
-                    "this adjective with common verbs and nouns.",
+                "No examples yet — tap Generate above to make 20 short sentences using " +
+                    "this adverb with common verbs and beginner vocabulary.",
                 fontSize = 12.sp,
                 color = Color(0xFF888888)
             )
         } else {
             state.sentences.forEachIndexed { i, s ->
-                SentenceRow(
+                AdvSentenceRow(
                     sentence = s,
                     highlighted = i == state.playingIndex,
-                    onPlay = { playForm(app, s.pl) }
+                    onPlay = { playFormAdv(app, s.pl) }
                 )
             }
         }
-
         state.error?.let {
             Text("Error: $it", color = Color.Red, fontSize = 11.sp)
         }
@@ -666,7 +589,7 @@ private fun SentencesSection(app: LangbangApplication, state: AdjectivesScreenSt
 }
 
 @Composable
-private fun SentenceRow(
+private fun AdvSentenceRow(
     sentence: SentenceExample,
     highlighted: Boolean = false,
     onPlay: () -> Unit
@@ -701,15 +624,13 @@ private fun SentenceRow(
     }
 }
 
-// ── Mode 2 — add an adjective via Gemini ──────────────────────────────────────
-
 @Composable
-private fun AddAdjectiveMode(app: LangbangApplication, onAdded: () -> Unit) {
+private fun AddAdverbMode(app: LangbangApplication, onAdded: () -> Unit) {
     val scope = rememberCoroutineScope()
     var input by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var preview by remember { mutableStateOf<AdjectiveEntry?>(null) }
+    var preview by remember { mutableStateOf<AdverbEntry?>(null) }
 
     Column(
         modifier = Modifier
@@ -718,24 +639,21 @@ private fun AddAdjectiveMode(app: LangbangApplication, onAdded: () -> Unit) {
             .padding(32.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("Add an adjective", fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
+        Text("Add an adverb", fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
             color = Color(0xFF0F4C81))
         Text(
-            "Type an English adjective (e.g. \"yellow\"). Gemini will translate to Polish " +
-                "and produce the full nominative + accusative paradigm (m, f, n, virile-pl, " +
-                "other-pl), then we'll generate audio.",
+            "Type an English adverb (e.g. \"often\"). Gemini will translate it to Polish " +
+                "(no inflection — adverbs are uninflected), then we'll generate audio.",
             fontSize = 13.sp, color = Color(0xFF666666)
         )
-
         OutlinedTextField(
             value = input,
             onValueChange = { input = it },
-            label = { Text("English adjective") },
+            label = { Text("English adverb") },
             singleLine = true,
             enabled = !busy,
             modifier = Modifier.fillMaxWidth()
         )
-
         Row(verticalAlignment = Alignment.CenterVertically) {
             Button(
                 onClick = {
@@ -743,11 +661,10 @@ private fun AddAdjectiveMode(app: LangbangApplication, onAdded: () -> Unit) {
                     if (trimmed.isEmpty()) return@Button
                     busy = true; error = null; preview = null
                     scope.launch {
-                        app.gemini.translateAdjective(trimmed)
+                        app.gemini.translateAdverb(trimmed)
                             .onSuccess { a ->
                                 preview = a
-                                app.lessonRepo.addUserAdjective(a)
-                                app.prefetch.prefetchAdjective(a)
+                                app.lessonRepo.addUserAdverb(a)
                                 onAdded()
                             }
                             .onFailure { error = it.message }
@@ -769,7 +686,6 @@ private fun AddAdjectiveMode(app: LangbangApplication, onAdded: () -> Unit) {
                 CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
             }
         }
-
         error?.let {
             Text("Error: $it", color = Color.Red, fontSize = 12.sp)
         }
@@ -782,23 +698,15 @@ private fun AddAdjectiveMode(app: LangbangApplication, onAdded: () -> Unit) {
                     Text("Added ✓ — ${it.lemma}", fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF2E7D32))
                     Text(it.en, fontSize = 12.sp, color = Color(0xFF555555))
-                    Text(
-                        "nom: " + GENDER_KEYS.joinToString("  ·  ") { k -> "${k}: ${it.nom[k] ?: "—"}" },
-                        fontSize = 12.sp, color = Color(0xFF555555)
-                    )
-                    Text(
-                        "acc: " + GENDER_KEYS.joinToString("  ·  ") { k -> "${k}: ${it.acc[k] ?: "—"}" },
-                        fontSize = 12.sp, color = Color(0xFF555555)
-                    )
                 }
             }
         }
     }
 }
 
-// ── Shared helpers ────────────────────────────────────────────────────────────
+// ── Shared helpers (renamed to avoid clash with AdjectivesScreen private fns) ────
 
-private suspend fun playAndAwait(
+private suspend fun playAndAwaitAdv(
     app: LangbangApplication,
     text: String,
     locale: String,
@@ -818,7 +726,7 @@ private suspend fun playAndAwait(
     }
 }
 
-private fun mp3DurationMs(file: java.io.File): Long {
+private fun mp3DurationMsAdv(file: java.io.File): Long {
     if (!file.exists()) return 0L
     return try {
         val r = MediaMetadataRetriever()
@@ -829,7 +737,7 @@ private fun mp3DurationMs(file: java.io.File): Long {
     } catch (_: Throwable) { 0L }
 }
 
-private fun playForm(app: LangbangApplication, form: String) {
+private fun playFormAdv(app: LangbangApplication, form: String) {
     if (form.isEmpty()) return
     val f = app.audioCache.fileFor(
         AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, form

@@ -1,8 +1,18 @@
 # LangBang — Project Directives
 
 Personal-use Android tablet app for learning Polish. Kotlin + Jetpack Compose,
-min SDK 33, target SDK 36, arm64-v8a only. Source of truth for releases:
+min SDK 33, target SDK 36, arm64-v8a only. Source code lives at
 [github.com/rsonnad/langbang](https://github.com/rsonnad/langbang).
+
+**Releases live on Cloudflare R2, not on GitHub Releases.** Every build is
+published to the `alpacapps` R2 bucket under `langbang/`:
+
+- Pinned: `https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev/langbang/langbang-v{N}-arm64.apk`
+- Latest: `https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev/langbang/langbang-latest.apk`
+
+To publish a new build, run **`./scripts/publish-r2.sh`** — it builds, uploads
+both keys, verifies the public URLs return 200, and patches the version label
+on the landing page. Do **not** create GitHub Releases for this project.
 
 ## Shared infrastructure (alpacapps)
 
@@ -11,6 +21,16 @@ runbooks live in the alpacapps repo at
 `/Users/rahulio/Documents/CodingProjects/genalpaca-admin/docs/CREDENTIALS.md`
 ([github.com/rsonnad/alpacapps](https://github.com/rsonnad/alpacapps)) — this
 file just records that langbang is a tenant.
+
+> **Always use the existing recipes, don't invent new ones.**
+> When accessing any alpacapps-shared service (Supabase, R2, Cloudflare,
+> SignWell, Telnyx, Oracle, etc.), copy the canonical recipe from
+> `genalpaca-admin/docs/CREDENTIALS.md` verbatim — the inline
+> `$(bw-read ...)` form is load-bearing (see Recipes section below for the
+> langbang-specific subset). Local gotchas and any working recipes
+> discovered during a session belong in [`memory/service-access.md`](memory/service-access.md).
+> If a recipe fails, fix the BW item or the recipe at its source — don't
+> work around it inline.
 
 ### 1. Supabase — `aphrrfprbixmhissnjfn` project, `langbang` schema
 

@@ -35,10 +35,20 @@ class AzureTtsClient(
                 return@withContext Result.failure(IOException("Offline — TTS skipped."))
             }
             try {
-                val slow = voice.endsWith(SLOW_SUFFIX)
-                val realVoice = if (slow) voice.removeSuffix(SLOW_SUFFIX) else voice
+                // Two slow tiers exist so cache keys don't collide when the rate is bumped:
+                //   - slow50v3  → -50%  (old phrases, kept stable so existing mp3s replay)
+                //   - slow60v1  → -60%  (new phrases generated after 2026-05-20)
+                val slow60 = voice.endsWith(SLOW_SUFFIX_V2)
+                val slow50 = !slow60 && voice.endsWith(SLOW_SUFFIX)
+                val slow = slow50 || slow60
+                val realVoice = when {
+                    slow60 -> voice.removeSuffix(SLOW_SUFFIX_V2)
+                    slow50 -> voice.removeSuffix(SLOW_SUFFIX)
+                    else -> voice
+                }
+                val ratePct = if (slow60) "-60%" else "-50%"
                 val body = if (slow)
-                    "<prosody rate=\"-50%\">${escapeXml(text)}</prosody>"
+                    "<prosody rate=\"$ratePct\">${escapeXml(text)}</prosody>"
                 else
                     escapeXml(text)
                 // Azure Neural voices require the SSML namespace on <speak>, otherwise
@@ -90,8 +100,11 @@ class AzureTtsClient(
         const val LOCALE_PL = "pl-PL"
         // Rate suffix is baked into the cache key — bumping the version forces fresh
         // synthesis so a rate change isn't masked by stale mp3s in the AudioCache.
-        // Current: -50% via SSML <prosody> (50% slower than normal pace).
+        //   - slow50v3 (-50%) kept for backward compat: existing cached mp3s replay.
+        //   - slow60v1 (-60%) is the current default for all newly synthesized slow audio.
         const val SLOW_SUFFIX = "|slow50v3"
+        const val SLOW_SUFFIX_V2 = "|slow60v1"
         const val PL_PL_F_SLOW = "pl-PL-ZofiaNeural|slow50v3"
+        const val PL_PL_F_SLOW_V2 = "pl-PL-ZofiaNeural|slow60v1"
     }
 }

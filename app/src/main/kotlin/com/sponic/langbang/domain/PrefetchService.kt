@@ -2,6 +2,7 @@ package com.sponic.langbang.domain
 
 import com.sponic.langbang.data.LessonRepository
 import com.sponic.langbang.data.model.AdjectiveEntry
+import com.sponic.langbang.data.model.AdverbEntry
 import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.data.model.VerbEntry
 import com.sponic.langbang.data.model.audioPronoun
@@ -31,12 +32,13 @@ class PrefetchService(
     suspend fun prefetchLesson1(onProgress: suspend (PrefetchProgress) -> Unit) {
         val lesson = repo.lesson2()
         val adjLesson = repo.lesson3()
+        val advLesson = repo.lesson4()
         val pron = repo.pronunciation()
         val units = buildList {
             fun addPl(text: String) {
                 if (text.isEmpty()) return
                 add(Unit_(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F))
-                add(Unit_(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F_SLOW))
+                add(Unit_(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F_SLOW_V2))
             }
             lesson.phrases.forEach { p ->
                 add(Unit_(p.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F))
@@ -44,6 +46,9 @@ class PrefetchService(
             }
             lesson.verbs.forEach { v ->
                 v.forms.forEach { (k, f) ->
+                    addPl("${audioPronoun(k)} $f".trim())
+                }
+                v.past_forms?.forEach { (k, f) ->
                     addPl("${audioPronoun(k)} $f".trim())
                 }
             }
@@ -66,6 +71,13 @@ class PrefetchService(
             }
             adjLesson.adjectives.forEach { a ->
                 repo.adjectiveSentencesFor(a.lemma).forEach { s ->
+                    add(Unit_(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F))
+                    addPl(s.pl)
+                }
+            }
+            advLesson.adverbs.forEach { adv ->
+                addPl(adv.lemma)
+                repo.adverbSentencesFor(adv.lemma).forEach { s ->
                     add(Unit_(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F))
                     addPl(s.pl)
                 }
@@ -112,7 +124,7 @@ class PrefetchService(
     private suspend fun ensurePl(text: String) {
         if (text.isEmpty()) return
         ensureAudio(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-        ensureAudio(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F_SLOW)
+        ensureAudio(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F_SLOW_V2)
     }
 
     private suspend fun ensureAudio(text: String, locale: String, voice: String) {

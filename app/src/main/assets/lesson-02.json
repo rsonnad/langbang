@@ -24,7 +24,17 @@
     {"lemma": "mieszkać","en": "to live (reside)","forms": {"1sg": "mieszkam","2sg": "mieszkasz","3sg":"mieszka","1pl":"mieszkamy","2pl":"mieszkacie","3pl":"mieszkają"}},
     {"lemma": "pracować","en": "to work",     "forms": {"1sg": "pracuję", "2sg": "pracujesz","3sg":"pracuje","1pl":"pracujemy","2pl":"pracujecie","3pl":"pracują"}},
     {"lemma": "rozumieć","en": "to understand","forms": {"1sg": "rozumiem","2sg":"rozumiesz","3sg":"rozumie","1pl":"rozumiemy","2pl":"rozumiecie","3pl":"rozumieją"}},
-    {"lemma": "spać",    "en": "to sleep",    "forms": {"1sg": "śpię",    "2sg": "śpisz",   "3sg": "śpi",   "1pl": "śpimy",    "2pl": "śpicie",    "3pl": "śpią"}}
+    {"lemma": "spać",    "en": "to sleep",    "forms": {"1sg": "śpię",    "2sg": "śpisz",   "3sg": "śpi",   "1pl": "śpimy",    "2pl": "śpicie",    "3pl": "śpią"}},
+    {"lemma": "spotykać","en": "to meet",     "forms": {"1sg": "spotykam","2sg": "spotykasz","3sg":"spotyka","1pl":"spotykamy","2pl":"spotykacie","3pl":"spotykają"}, "past_forms": {"1sg":"spotykałem","2sg":"spotykałeś","3sg":"spotykał","1pl":"spotykaliśmy","2pl":"spotykaliście","3pl":"spotykali"}},
+    {"lemma": "pamiętać","en": "to remember", "forms": {"1sg": "pamiętam","2sg": "pamiętasz","3sg":"pamięta","1pl":"pamiętamy","2pl":"pamiętacie","3pl":"pamiętają"}, "past_forms": {"1sg":"pamiętałem","2sg":"pamiętałeś","3sg":"pamiętał","1pl":"pamiętaliśmy","2pl":"pamiętaliście","3pl":"pamiętali"}},
+    {"lemma": "tańczyć", "en": "to dance",    "forms": {"1sg": "tańczę",  "2sg": "tańczysz","3sg":"tańczy", "1pl":"tańczymy", "2pl":"tańczycie", "3pl":"tańczą"},   "past_forms": {"1sg":"tańczyłem","2sg":"tańczyłeś","3sg":"tańczył","1pl":"tańczyliśmy","2pl":"tańczyliście","3pl":"tańczyli"}},
+    {"lemma": "całować", "en": "to kiss",     "forms": {"1sg": "całuję",  "2sg": "całujesz","3sg":"całuje", "1pl":"całujemy", "2pl":"całujecie", "3pl":"całują"},   "past_forms": {"1sg":"całowałem","2sg":"całowałeś","3sg":"całował","1pl":"całowaliśmy","2pl":"całowaliście","3pl":"całowali"}},
+    {"lemma": "czekać",  "en": "to wait",     "forms": {"1sg": "czekam",  "2sg": "czekasz", "3sg":"czeka",  "1pl":"czekamy",  "2pl":"czekacie",  "3pl":"czekają"},  "past_forms": {"1sg":"czekałem","2sg":"czekałeś","3sg":"czekał","1pl":"czekaliśmy","2pl":"czekaliście","3pl":"czekali"}},
+    {"lemma": "dzwonić", "en": "to call (phone)","forms": {"1sg":"dzwonię","2sg":"dzwonisz","3sg":"dzwoni","1pl":"dzwonimy","2pl":"dzwonicie","3pl":"dzwonią"}, "past_forms": {"1sg":"dzwoniłem","2sg":"dzwoniłeś","3sg":"dzwonił","1pl":"dzwoniliśmy","2pl":"dzwoniliście","3pl":"dzwonili"}},
+    {"lemma": "czuć",    "en": "to feel",     "forms": {"1sg": "czuję",   "2sg": "czujesz", "3sg":"czuje",  "1pl":"czujemy",  "2pl":"czujecie",  "3pl":"czują"},    "past_forms": {"1sg":"czułem","2sg":"czułeś","3sg":"czuł","1pl":"czuliśmy","2pl":"czuliście","3pl":"czuli"}},
+    {"lemma": "kochać",  "en": "to love",     "forms": {"1sg": "kocham",  "2sg": "kochasz", "3sg":"kocha",  "1pl":"kochamy",  "2pl":"kochacie",  "3pl":"kochają"},  "past_forms": {"1sg":"kochałem","2sg":"kochałeś","3sg":"kochał","1pl":"kochaliśmy","2pl":"kochaliście","3pl":"kochali"}},
+    {"lemma": "pomagać", "en": "to help",     "forms": {"1sg": "pomagam", "2sg": "pomagasz","3sg":"pomaga", "1pl":"pomagamy", "2pl":"pomagacie", "3pl":"pomagają"}, "past_forms": {"1sg":"pomagałem","2sg":"pomagałeś","3sg":"pomagał","1pl":"pomagaliśmy","2pl":"pomagaliście","3pl":"pomagali"}},
+    {"lemma": "prosić",  "en": "to ask / request","forms": {"1sg":"proszę","2sg":"prosisz","3sg":"prosi","1pl":"prosimy","2pl":"prosicie","3pl":"proszą"},      "past_forms": {"1sg":"prosiłem","2sg":"prosiłeś","3sg":"prosił","1pl":"prosiliśmy","2pl":"prosiliście","3pl":"prosili"}}
   ],
   "pronouns": [
     {"lemma": "ja",  "en": "I",                  "case_forms": {"nom": "ja",  "acc": "mnie",  "dat": "mi"}},
@@ -33,7 +43,7 @@
     {"lemma": "ona", "en": "she",                "case_forms": {"nom": "ona", "acc": "ją",    "dat": "jej"}},
     {"lemma": "ono", "en": "it",                 "case_forms": {"nom": "ono", "acc": "je",    "dat": "mu"}},
     {"lemma": "my",  "en": "we",                 "case_forms": {"nom": "my",  "acc": "nas",   "dat": "nam"}},
-    {"lemma": "wy",  "en": "you (plural)",       "case_forms": {"nom": "wy",  "acc": "was",   "dat": "wam"}},
+    {"lemma": "wy",  "en": "y'all",       "case_forms": {"nom": "wy",  "acc": "was",   "dat": "wam"}},
     {"lemma": "oni", "en": "they (men/mixed)",   "case_forms": {"nom": "oni", "acc": "ich",   "dat": "im"}},
     {"lemma": "one", "en": "they (others)",      "case_forms": {"nom": "one", "acc": "je",    "dat": "im"}}
   ],

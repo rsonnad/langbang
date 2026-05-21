@@ -1,0 +1,12 @@
+{
+  "id": "lesson-04",
+  "title": "Lesson 4 — Common adverbs",
+  "summary": "Polish adverbs are uninflected: one form covers every gender, number, and case. These five carry a lot of weight in everyday speech — time-words (dzisiaj / jutro / teraz), togetherness (razem), and the willingness/gladness marker (chętnie) you hear constantly in invitations.",
+  "adverbs": [
+    {"lemma": "razem",   "en": "together"},
+    {"lemma": "dzisiaj", "en": "today"},
+    {"lemma": "jutro",   "en": "tomorrow"},
+    {"lemma": "teraz",   "en": "now"},
+    {"lemma": "chętnie", "en": "gladly / willingly"}
+  ]
+}

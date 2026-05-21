@@ -8,12 +8,14 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.sponic.langbang.data.LessonRepository
 import com.sponic.langbang.data.PronounFilterStore
+import com.sponic.langbang.data.RandomConfigStore
 import com.sponic.langbang.domain.AudioCache
 import com.sponic.langbang.domain.AudioPlayer
 import com.sponic.langbang.domain.BackupService
 import com.sponic.langbang.domain.NetworkMonitor
 import com.sponic.langbang.domain.PrefetchService
 import com.sponic.langbang.domain.PrefetchWorker
+import com.sponic.langbang.domain.R2AudioDownloader
 import com.sponic.langbang.domain.UsageTracker
 import com.sponic.langbang.integrations.AzurePronunciationClient
 import com.sponic.langbang.integrations.AzureTtsClient
@@ -43,11 +45,16 @@ class LangbangApplication : Application() {
         private set
     lateinit var pronounFilter: PronounFilterStore
         private set
+    lateinit var randomConfig: RandomConfigStore
+        private set
+    lateinit var r2Audio: R2AudioDownloader
+        private set
 
     override fun onCreate() {
         super.onCreate()
         lessonRepo = LessonRepository(this)
         pronounFilter = PronounFilterStore(this)
+        randomConfig = RandomConfigStore(this)
         audioCache = AudioCache(this)
         audioPlayer = AudioPlayer()
         usage = UsageTracker(this)
@@ -57,6 +64,7 @@ class LangbangApplication : Application() {
         gemini = GeminiClient(usage)
         backup = BackupService(this)
         prefetch = PrefetchService(tts, audioCache, lessonRepo)
+        r2Audio = R2AudioDownloader(audioCache, lessonRepo, network)
 
         WorkManager.getInstance(this).enqueueUniqueWork(
             PrefetchWorker.UNIQUE_NAME,

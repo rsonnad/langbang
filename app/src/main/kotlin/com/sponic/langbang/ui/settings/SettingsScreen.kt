@@ -65,6 +65,7 @@ fun SettingsScreen(app: LangbangApplication) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         VersionHeader()
+        AudioDownloadCard(app = app, scope = scope, context = context)
         AzureUsageCard(usage = usage)
         BackupCard(
             host = backup.config.host,
@@ -90,6 +91,109 @@ fun SettingsScreen(app: LangbangApplication) {
             },
             onCopyKey = { copyToClipboard(context, "SSH public key", backup.publicKeyOpenSsh) }
         )
+    }
+}
+
+/**
+ * "Download all audio" card. One tap pulls every cached phrase's mp3 from R2 via the
+ * langbang-pregen-audio Edge Function — much faster than letting the app synth on
+ * cache miss, and the Azure key stays server-side. Falls back to direct on-device
+ * synth via PrefetchWorker if the function isn't reachable.
+ */
+@Composable
+private fun AudioDownloadCard(
+    app: LangbangApplication,
+    scope: kotlinx.coroutines.CoroutineScope,
+    context: Context
+) {
+    val online by app.network.online.collectAsState()
+    var busy by remember { mutableStateOf(false) }
+    var done by remember { mutableStateOf(0) }
+    var total by remember { mutableStateOf(0) }
+    var current by remember { mutableStateOf("") }
+    var lastSummary by remember { mutableStateOf<String?>(null) }
+    var lastError by remember { mutableStateOf<String?>(null) }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(20.dp)) {
+            SectionHeader("Audio cache")
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Pulls every phrase's pre-generated mp3 from R2 in one batch so playback " +
+                    "is instant offline. First run downloads ~60-80 MB; later runs only " +
+                    "fetch what's new.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = {
+                        if (busy) return@Button
+                        busy = true; lastSummary = null; lastError = null
+                        done = 0; total = 0; current = ""
+                        scope.launch {
+                            app.r2Audio.downloadAll { d, t, c ->
+                                done = d; total = t; current = c
+                            }.fold(
+                                onSuccess = { s ->
+                                    lastSummary = "Fetched ${s.fetched} new, " +
+                                        "${s.alreadyCached} already cached" +
+                                        if (s.failed > 0) ", ${s.failed} failed" else ""
+                                    Toast.makeText(
+                                        context,
+                                        "Audio download complete",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                },
+                                onFailure = { t ->
+                                    lastError = t.message ?: t.javaClass.simpleName
+                                }
+                            )
+                            busy = false
+                        }
+                    },
+                    enabled = online && !busy
+                ) {
+                    Text(if (busy) "Downloading…" else "Download all audio")
+                }
+                if (busy) {
+                    Spacer(Modifier.width(12.dp))
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp), strokeWidth = 2.dp
+                    )
+                }
+            }
+            if (busy && total > 0) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "$done / $total · ${current.take(40)}",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
+            lastSummary?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, fontSize = 11.sp, color = Color(0xFF2E7D32))
+            }
+            lastError?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Error: $it (function may not be deployed — playback still works via " +
+                        "on-device synth on cache miss)",
+                    fontSize = 11.sp,
+                    color = Color(0xFFB04A2A)
+                )
+            }
+            if (!online) {
+                Spacer(Modifier.height(8.dp))
+                Text("Offline — connect to wifi to download.",
+                    fontSize = 11.sp, color = Color(0xFFB04A2A))
+            }
+        }
     }
 }
 

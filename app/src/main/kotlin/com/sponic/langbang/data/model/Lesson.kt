@@ -16,7 +16,16 @@ data class Lesson(
 data class VerbEntry(
     val lemma: String,
     val en: String,
-    val forms: Map<String, String>
+    /** Present-tense conjugation: 1sg, 2sg, 3sg, 1pl, 2pl, 3pl. Always populated. */
+    val forms: Map<String, String>,
+    /**
+     * Collapsed past-tense conjugation (masculine-singular + virile-plural defaults)
+     * keyed the same way: 1sg, 2sg, 3sg, 1pl, 2pl, 3pl. Nullable so existing verbs
+     * deserialize unchanged; new content has it populated, UI surfaces a "Past" block
+     * only when present. Gendered variants (feminine sg, non-virile pl) are deferred
+     * to a follow-up — keep the grammar lite.
+     */
+    val past_forms: Map<String, String>? = null
 )
 
 @Serializable
@@ -29,7 +38,21 @@ data class SentenceExample(
      * (e.g. "I am in home" for "Jestem w domu"). Nullable so older cached sentences
      * that don't have this field still deserialize.
      */
-    val literal: String? = null
+    val literal: String? = null,
+    /**
+     * Per-token alignment between Polish and English. Each pair is (pl_word, en_gloss)
+     * in left-to-right Polish order. Lets the sticky NowVoicing panel render each
+     * English gloss directly below its Polish word. Nullable so cached sentences from
+     * before the Gemini prompt change still deserialize; the panel falls back to
+     * whitespace-splitting `literal` when this field is absent.
+     */
+    val words: List<TokenPair>? = null
+)
+
+@Serializable
+data class TokenPair(
+    val pl: String,
+    val en: String
 )
 
 @Serializable
@@ -60,4 +83,23 @@ data class AdjectiveEntry(
     val en: String,
     val nom: Map<String, String>,
     val acc: Map<String, String>
+)
+
+@Serializable
+data class AdverbLesson(
+    val id: String,
+    val title: String,
+    val summary: String,
+    val adverbs: List<AdverbEntry>
+)
+
+/**
+ * Polish adverbs are uninflected — one form covers every context. So each entry just
+ * stores the lemma + English gloss. Example sentences are stored separately in
+ * AdverbSentenceStore, mirroring the adjective pattern.
+ */
+@Serializable
+data class AdverbEntry(
+    val lemma: String,
+    val en: String
 )

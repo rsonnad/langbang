@@ -3,6 +3,8 @@ package com.sponic.langbang.data
 import android.content.Context
 import com.sponic.langbang.data.model.AdjectiveEntry
 import com.sponic.langbang.data.model.AdjectiveLesson
+import com.sponic.langbang.data.model.AdverbEntry
+import com.sponic.langbang.data.model.AdverbLesson
 import com.sponic.langbang.data.model.Lesson
 import com.sponic.langbang.data.model.PronunciationData
 import com.sponic.langbang.data.model.SentenceExample
@@ -17,9 +19,12 @@ class LessonRepository(context: Context) {
     private val verbSentences = VerbSentenceStore(this.context)
     private val userAdjectives = UserAdjectiveStore(this.context)
     private val adjectiveSentences = AdjectiveSentenceStore(this.context)
+    private val userAdverbs = UserAdverbStore(this.context)
+    private val adverbSentences = AdverbSentenceStore(this.context)
 
     private var cachedLesson2Base: Lesson? = null
     private var cachedLesson3Base: AdjectiveLesson? = null
+    private var cachedLesson4Base: AdverbLesson? = null
     private var cachedPron: PronunciationData? = null
 
     /** Lesson 2 — core verbs in present tense, with user-added verbs merged in. */
@@ -74,5 +79,28 @@ class LessonRepository(context: Context) {
 
     fun saveAdjectiveSentences(lemma: String, sentences: List<SentenceExample>) {
         adjectiveSentences.put(lemma, sentences)
+    }
+
+    /** Lesson 4 — common adverbs, with user-added adverbs merged in. */
+    fun lesson4(): AdverbLesson {
+        val base = cachedLesson4Base ?: run {
+            val raw = context.assets.open("lesson-04.json").bufferedReader().use { it.readText() }
+            json.decodeFromString<AdverbLesson>(raw).also { cachedLesson4Base = it }
+        }
+        val added = userAdverbs.load()
+        if (added.isEmpty()) return base
+        val merged = (added + base.adverbs).distinctBy { it.lemma.lowercase() }
+        return base.copy(adverbs = merged)
+    }
+
+    fun addUserAdverb(adv: AdverbEntry) {
+        userAdverbs.add(adv)
+    }
+
+    fun adverbSentencesFor(lemma: String): List<SentenceExample> =
+        adverbSentences.get(lemma)
+
+    fun saveAdverbSentences(lemma: String, sentences: List<SentenceExample>) {
+        adverbSentences.put(lemma, sentences)
     }
 }

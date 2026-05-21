@@ -6,6 +6,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +56,7 @@ import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PrefetchProgress
 import com.sponic.langbang.domain.PrefetchWorker
 import com.sponic.langbang.ui.lessons.AdjectivesScreen
+import com.sponic.langbang.ui.lessons.AdverbsScreen
 import com.sponic.langbang.ui.lessons.LessonScreen
 import com.sponic.langbang.ui.pronunciation.PronunciationScreen
 import com.sponic.langbang.ui.settings.SettingsScreen
@@ -61,10 +65,16 @@ private enum class Section(val tabLabel: String) {
     Pronunciation("1. Pronunciation"),
     Verbs("2. Core verbs"),
     Adjectives("3. Adjectives"),
+    Adverbs("4. Adverbs"),
     Settings("Settings")
 }
 
-private val TabSections = listOf(Section.Pronunciation, Section.Verbs, Section.Adjectives)
+private val TabSections = listOf(
+    Section.Pronunciation,
+    Section.Verbs,
+    Section.Adjectives,
+    Section.Adverbs
+)
 
 @Composable
 fun LangbangApp(app: LangbangApplication) {
@@ -78,31 +88,82 @@ fun LangbangApp(app: LangbangApplication) {
     var section by remember { mutableStateOf(Section.Pronunciation) }
     var lastTabSection by remember { mutableStateOf(Section.Pronunciation) }
     val nowVoicing by NowVoicingBus.state.collectAsState()
+    val online by app.network.online.collectAsState()
+    // The sticky panel needs to keep showing the last phrase even after playback ends.
+    // nowVoicing flips to null on stop; pinnedVoicing holds the last non-null value so
+    // the user can still read it (and click words for drill-down).
+    var pinnedVoicing by remember { mutableStateOf<NowVoicing?>(null) }
+    LaunchedEffect(nowVoicing) {
+        nowVoicing?.let { pinnedVoicing = it }
+    }
     val scope = rememberCoroutineScope()
     val randomPlayer = remember { RandomPlayerState(app, scope) }
+    var showConfigSheet by remember { mutableStateOf(false) }
+    // Carries a Polish word from a word-click into the sheet's must-contain box.
+    // Reset to null after the sheet consumes it so reopening starts clean.
+    var configSeedWord by remember { mutableStateOf<String?>(null) }
 
-    Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
-        AppHeader(
-            section = section,
-            onSelect = {
-                section = it
-                if (it != Section.Settings) lastTabSection = it
-            },
-            onToggleSettings = {
-                section = if (section == Section.Settings) lastTabSection
-                else Section.Settings
-            },
-            prefetch = progress,
-            nowVoicing = nowVoicing,
-            randomPlayer = randomPlayer
-        )
-        Box(modifier = Modifier.fillMaxSize()) {
-            when (section) {
-                Section.Pronunciation -> PronunciationScreen(app = app)
-                Section.Verbs -> LessonScreen(app = app, prefetch = progress)
-                Section.Adjectives -> AdjectivesScreen(app = app, prefetch = progress)
-                Section.Settings -> SettingsScreen(app = app)
+    Box(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            AppHeader(
+                section = section,
+                onSelect = {
+                    section = it
+                    if (it != Section.Settings) lastTabSection = it
+                },
+                onToggleSettings = {
+                    section = if (section == Section.Settings) lastTabSection
+                    else Section.Settings
+                },
+                prefetch = progress,
+                nowVoicing = nowVoicing,
+                pinnedVoicing = pinnedVoicing,
+                randomPlayer = randomPlayer,
+                onOpenConfig = { showConfigSheet = true },
+                onPlWordClick = { word ->
+                    // Drill-down: stop current playback, seed the sheet, open it.
+                    if (randomPlayer.playing) randomPlayer.stop()
+                    configSeedWord = word
+                    showConfigSheet = true
+                }
+            )
+            if (!online) {
+                Surface(color = Color(0xFFFFE9DD), modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "Offline — cached content only. Generation + audio synth disabled.",
+                        fontSize = 11.sp,
+                        color = Color(0xFFB04A2A),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    )
+                }
             }
+            Box(modifier = Modifier.fillMaxSize()) {
+                when (section) {
+                    Section.Pronunciation -> PronunciationScreen(app = app)
+                    Section.Verbs -> LessonScreen(app = app, prefetch = progress)
+                    Section.Adjectives -> AdjectivesScreen(app = app, prefetch = progress)
+                    Section.Adverbs -> AdverbsScreen(app = app, prefetch = progress)
+                    Section.Settings -> SettingsScreen(app = app)
+                }
+            }
+        }
+        if (showConfigSheet) {
+            val initial = remember(showConfigSheet) { app.randomConfig.load() }
+            RandomConfigSheet(
+                app = app,
+                initial = initial,
+                initialMustContain = configSeedWord ?: initial.mustContainWord,
+                onCancel = {
+                    showConfigSheet = false
+                    configSeedWord = null
+                },
+                onPlay = { config ->
+                    app.randomConfig.save(config)
+                    showConfigSheet = false
+                    configSeedWord = null
+                    randomPlayer.start(config)
+                }
+            )
         }
     }
 }
@@ -114,7 +175,10 @@ private fun AppHeader(
     onToggleSettings: () -> Unit,
     prefetch: PrefetchProgress,
     nowVoicing: NowVoicing?,
-    randomPlayer: RandomPlayerState
+    pinnedVoicing: NowVoicing?,
+    randomPlayer: RandomPlayerState,
+    onOpenConfig: () -> Unit,
+    onPlWordClick: (String) -> Unit
 ) {
     Surface(
         color = MaterialTheme.colorScheme.primary,
@@ -164,7 +228,10 @@ private fun AppHeader(
                 }
                 RandomPlayPill(
                     playing = randomPlayer.playing,
-                    onToggle = { randomPlayer.toggle() }
+                    onToggle = {
+                        if (randomPlayer.playing) randomPlayer.stop()
+                        else onOpenConfig()
+                    }
                 )
             }
             if (!prefetch.finished && prefetch.total > 0) {
@@ -184,64 +251,126 @@ private fun AppHeader(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 1.dp)
                 )
             }
-            NowVoicingPanel(nowVoicing)
+            // Sticky: render the panel whether or not playback is active. `pinnedVoicing`
+            // carries the last shown phrase; `nowVoicing` drives the active-language
+            // highlight (null = idle so nothing is bolded).
+            NowVoicingPanel(
+                pinned = pinnedVoicing,
+                live = nowVoicing,
+                onPlWordClick = onPlWordClick
+            )
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun NowVoicingPanel(v: NowVoicing?) {
-    if (v == null) return
-    val plActive = v.lang == "pl"
-    val slowActive = v.lang == "pl-slow"
-    val enActive = v.lang == "en"
-    val pausing = v.lang == "pause"
-    Surface(
-        color = Color.White,
-        modifier = Modifier.fillMaxWidth()
-    ) {
+private fun NowVoicingPanel(
+    pinned: NowVoicing?,
+    live: NowVoicing?,
+    onPlWordClick: (String) -> Unit = {}
+) {
+    if (pinned == null) {
+        // Idle placeholder so the sticky area never collapses (avoids layout jump
+        // when playback starts).
+        Surface(color = Color.White, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "Tap “Play random” to start drilling phrases.",
+                fontSize = 12.sp,
+                color = Color(0xFFAAAAAA),
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+            )
+        }
+        return
+    }
+
+    val activeLang = live?.lang
+    val plActive = activeLang == "pl"
+    val slowActive = activeLang == "pl-slow"
+    val enActive = activeLang == "en"
+    val pausing = activeLang == "pause"
+
+    // Prefer the structured per-token field when present (new Gemini sentences carry it
+    // since Task #4). Falls back to whitespace-zipping `literal` for older cached
+    // sentences. Token counts won't always line up perfectly in the fallback — those
+    // slots just render an empty gloss.
+    val plTokens: List<String>
+    val glossTokens: List<String>
+    if (pinned.words != null && pinned.words.isNotEmpty()) {
+        plTokens = pinned.words.map { it.pl }
+        glossTokens = pinned.words.map { it.en }
+    } else {
+        plTokens = pinned.pl.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        glossTokens = pinned.literal
+            ?.trim()
+            ?.split(Regex("\\s+"))
+            ?.filter { it.isNotEmpty() }
+            ?: emptyList()
+    }
+
+    Surface(color = Color.White, modifier = Modifier.fillMaxWidth()) {
         Column(
-            Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+            Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            val tag = when (v.lang) {
+            val pos = pinned.position?.let { " · $it" } ?: ""
+            val tag = when (activeLang) {
                 "pl-slow" -> "PL (slow)"
                 "pl" -> "PL"
                 "en" -> "EN"
                 "pause" -> "your turn →"
-                else -> v.lang
+                null -> "idle"
+                else -> activeLang
             }
-            val pos = v.position?.let { " · $it" } ?: ""
             Text(
                 "NOW VOICING$pos  ·  $tag",
-                fontSize = 11.sp,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = Color(0xFF7A5A1F)
             )
+            // Grammatical English: small, muted, on top.
             Text(
-                v.en,
-                fontSize = 22.sp,
+                pinned.en,
+                fontSize = 13.sp,
                 fontWeight = if (enActive) FontWeight.Bold else FontWeight.Normal,
-                color = if (enActive) Color.Black else Color(0xFF666666)
+                color = if (enActive) Color.Black else Color(0xFF888888)
             )
-            Text(
-                v.pl,
-                fontSize = 26.sp,
-                fontWeight = if (plActive || slowActive) FontWeight.Bold
-                else FontWeight.Medium,
-                color = when {
-                    plActive || slowActive -> Color.Black
-                    pausing -> Color(0xFFBBBBBB)
-                    else -> Color(0xFF666666)
+            // Grammatical Polish in big letters with per-word English gloss directly
+            // underneath each PL token. Each token is clickable → drill-down.
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                plTokens.forEachIndexed { i, plTok ->
+                    val gloss = glossTokens.getOrNull(i).orEmpty()
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.clickable { onPlWordClick(plTok) }
+                    ) {
+                        Text(
+                            plTok,
+                            fontSize = 24.sp,
+                            fontWeight = if (plActive || slowActive) FontWeight.Bold
+                            else FontWeight.Medium,
+                            color = when {
+                                plActive || slowActive -> Color.Black
+                                pausing -> Color(0xFFBBBBBB)
+                                else -> Color(0xFF666666)
+                            }
+                        )
+                        if (gloss.isNotEmpty()) {
+                            Text(
+                                gloss,
+                                fontSize = 10.sp,
+                                color = Color(0xFFA08868),
+                                fontStyle = FontStyle.Italic
+                            )
+                        } else {
+                            // Keep column heights aligned even when one gloss is missing.
+                            Spacer(Modifier.height(12.dp))
+                        }
+                    }
                 }
-            )
-            if (!v.literal.isNullOrEmpty()) {
-                Text(
-                    v.literal,
-                    fontSize = 15.sp,
-                    fontStyle = FontStyle.Italic,
-                    color = Color(0xFF888888)
-                )
             }
         }
     }

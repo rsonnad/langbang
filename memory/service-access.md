@@ -1,5 +1,61 @@
 # Service access recipes (langbang)
 
+## Cloudflare R2 — duplicate BW item cleanup — 2026-05-20
+
+**Root cause fixed today.** There were two BW items both named
+`Cloudflare R2 — Object Storage`:
+- `3212e180-6521-4537-b89e-b410007ea3a7` — populated (11 fields incl.
+  Access Key ID, Secret Access Key, Account ID, S3 API, Public Dev URL).
+- `d886c589-f3ae-462e-8ddc-b411014aadc8` — empty placeholder created
+  2026-03-18. Now **deleted**.
+
+Symptom before delete: `bw get item "Cloudflare R2 — Object Storage"`
+returned `"More than one result was found"` and `bw-read "Cloudflare R2 — Object Storage" "Access Key ID"` printed
+`✗ Field 'Access Key ID' not found` (resolves to the empty dup first).
+`scripts/publish-r2.sh` depends on the canonical name resolving uniquely,
+so this was load-bearing.
+
+**Heads-up:** `Cloudflare R2 — Finleg Object Storage` has the same
+empty-dup pattern (`4e9b92de-...` populated, `ec244f20-...` empty).
+Same one-line fix when next encountered:
+`bw delete item ec244f20-1fd0-4039-bd57-b411014b958e --session "$BW_SESSION"`.
+
+## Supabase (alpacapps project, langbang schema) — 2026-05-20
+
+**Always run BW commands inline.** `bw-read` emits a `_bw_log: command not found`
+warning to stderr but still prints the value on stdout, so the inline form
+`$(bw-read "Supabase — AlpacApps Project" "psql Password" | python3 -c '...')`
+works fine — that stderr noise is cosmetic.
+
+**Management API PAT is STALE as of 2026-05-20.** Field `Management API Token`
+on BW item `Supabase — AlpacApps Project` is `sbp_3e69f8663424...2db5` and
+returns `{"message":"Unauthorized"}` on every endpoint including
+`/v1/projects`. **Fix at root:** rotate at
+[supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens),
+update the BW field. Until then, use psql for SQL and the SQL-side trick
+below for PostgREST config — both are documented in
+`genalpaca-admin/docs/CREDENTIALS.md`.
+
+**Working psql recipe (verbatim from alpacapps CREDENTIALS.md):**
+```bash
+export BW_SESSION=$(~/bin/bw-unlock)
+/opt/homebrew/opt/libpq/bin/psql "postgres://postgres.aphrrfprbixmhissnjfn:$(bw-read "Supabase — AlpacApps Project" "psql Password" | python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read().strip()))')@aws-1-us-east-2.pooler.supabase.com:6543/postgres?sslmode=require&gssencmode=disable" -c "SQL HERE"
+```
+The `?` + `&` in the URL only work because of inline substitution into the
+double-quoted DSN; if you split into env vars or `-f` with the DSN as a
+separate arg, libpq sometimes drops the password and re-prompts. Stick to
+the inline form.
+
+**Expose a new schema to PostgREST without Management API:**
+```sql
+ALTER ROLE authenticator SET pgrst.db_schemas = 'public,graphql_public,<new>';
+NOTIFY pgrst, 'reload config';
+```
+Verify with `curl ... -H "Accept-Profile: bogus"` against `/rest/v1/<table>`
+— the error lists currently-exposed schemas. This is how `langbang` got
+exposed on 2026-05-20 (the Studio dashboard toggle is the documented way
+but requires the dead PAT or a manual click).
+
 ## Wireless adb pairing — Pixel 10 Pro XL — 2026-05-18
 
 **Working recipe (Tailscale path):** pair + connect both over the Pixel's tailnet IP.
@@ -185,4 +241,53 @@ Force-stop the app first (`am force-stop <pkg>`) or the SharedPreferences in-mem
 **Inspecting Java-produced ZIPs on macOS:** BSD `unzip -l` reports `0 files` on archives written by `java.util.zip.ZipOutputStream` because Java uses streaming data descriptors instead of writing entry sizes in local file headers. Use `zipinfo`, `jar tf`, or Python `zipfile` — all read them correctly.
 
 **Driving Compose UI via adb tap:** `uiautomator dump` gives reliable bounds for Compose Material3 tabs and buttons (look for `clickable="true"` ancestors of the visible text). Coordinates DO shift if `systemBarsPadding()` is added to the root layout, so re-dump after any UI change. `adb shell input swipe 960 900 960 200 400` scrolls one viewport-height on a 1920×1200 landscape tablet — usually need two swipes to reach the bottom card on the Settings screen.
+
+## R2 publish — langbang APK distribution — 2026-05-20
+
+**Canonical release channel.** APKs go to the alpacapps R2 bucket under `langbang/`. Do NOT use GitHub Releases — slow upload (3+ min for 60 MB, often crashes), and the user prefers R2.
+
+**One command:**
+```bash
+./scripts/publish-r2.sh
+```
+Builds, uploads `langbang-v{N}-arm64.apk` + `langbang-latest.apk`, verifies both URLs return 200, patches `genalpaca-admin/rahulio/pages/langbang/index.html` with the new version label.
+
+**Raw recipe (if the script breaks):**
+```bash
+export BW_SESSION=$(~/bin/bw-unlock)
+ITEM=$(bw get item "Cloudflare R2 — Object Storage" --session "$BW_SESSION")
+export AWS_ACCESS_KEY_ID=$(jq -r '.fields[]|select(.name=="Access Key ID")|.value' <<<"$ITEM")
+export AWS_SECRET_ACCESS_KEY=$(jq -r '.fields[]|select(.name=="Secret Access Key")|.value' <<<"$ITEM")
+export AWS_DEFAULT_REGION=auto
+ENDPOINT="https://9cd3a280a54ce2a5b382602f0247b577.r2.cloudflarestorage.com"
+aws s3 cp app/build/outputs/apk/debug/app-arm64-v8a-debug.apk \
+  s3://alpacapps/langbang/langbang-v${N}-arm64.apk \
+  --endpoint-url "$ENDPOINT" --content-type application/vnd.android.package-archive --no-progress
+```
+
+**Gotchas observed this session:**
+- The BW item ID is `3212e180-6521-4537-b89e-b410007ea3a7` in DevOps-alpacapps. A copy exists in DevOps-shared too — either works; `bw get item "Cloudflare R2 — Object Storage"` by name resolves across collections.
+- `aws s3 cp --quiet` swallows stderr on multipart failures and reports exit 0 even when the upload aborted mid-stream. Always use `--no-progress` instead of `--quiet`, and verify with `curl -sI <public-url> | head -1` before declaring success.
+- Multipart progress display resets per-chunk: speed appears to "crash" from 5 MB/s → 200 KB/s every 8 MB. Not a real slowdown, just the AWS CLI counter resetting per part.
+- The public-dev URL has propagation lag of a few seconds after upload — first HEAD after `cp` can 404; retry once before declaring failure.
+
+**Android download-then-hang on Gmail:** Not an R2 problem. APK content bytes from R2 verified intact (SHA-256 matches local APK). The hang is Android refusing to hand a Gmail download off to Package Installer because Gmail isn't trusted as an install source. Fix: Settings → Apps → Special access → Install unknown apps → Gmail → Allow. Chrome works because the user already trusted it.
+
+**Additional gotchas — 2026-05-20 (v34/v35 upload):**
+- `--region auto` is REQUIRED, not optional. R2 rejects calls without it (or with an inferred AWS region) with cryptic signature errors.
+- **Multipart upload drops mid-flight on flaky wifi.** Saw `Could not connect to the endpoint URL` on `partNumber=1` after 30 MB of 65 MB had successfully transferred. Fix: always pass `--cli-read-timeout 0 --cli-connect-timeout 60` to make the AWS CLI patient + retry once. Worked first-try on retry with those flags.
+- **R2 does NOT implement `GetObjectTagging`.** Server-side copy fails: `aws s3 cp s3://alpacapps/foo s3://alpacapps/bar` → `(NotImplemented) when calling the GetObjectTagging operation`. Workaround: re-upload the local file to the destination key (cheap — same network round-trip).
+- **Working manual recipe (verified 2026-05-20, used for v34 + v35):**
+  ```bash
+  AWS_ACCESS_KEY_ID=$(bw-read "Cloudflare R2 — Object Storage" "Access Key ID") \
+  AWS_SECRET_ACCESS_KEY=$(bw-read "Cloudflare R2 — Object Storage" "Secret Access Key") \
+  aws s3 cp app/build/outputs/apk/debug/app-arm64-v8a-debug.apk \
+    s3://alpacapps/langbang/langbang-v${N}-arm64.apk \
+    --endpoint-url https://9cd3a280a54ce2a5b382602f0247b577.r2.cloudflarestorage.com \
+    --region auto \
+    --content-type application/vnd.android.package-archive \
+    --cli-read-timeout 0 --cli-connect-timeout 60 \
+    --no-progress
+  # Then re-upload the same local file to s3://alpacapps/langbang/langbang-latest.apk
+  ```
 
