@@ -53,6 +53,20 @@ android {
     namespace = "com.sponic.langbang"
     compileSdk = 36
 
+    // Pin the debug signing key so every machine produces an APK with the same
+    // signature. Without this, AGP falls back to ~/.android/debug.keystore, which
+    // is per-machine and gets regenerated — a signature change forces uninstall-
+    // before-install on the tablet, wiping filesDir/audio/ and triggering a full
+    // re-download of every cached mp3.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("keystore/langbang-debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.sponic.langbang"
         minSdk = 33
