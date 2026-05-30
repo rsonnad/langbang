@@ -6,7 +6,10 @@
 #   2. uploads as langbang-v{N}-arm64.apk     (pinned version, for rollback)
 #   3. uploads as langbang-latest.apk         (stable pointer for the page)
 #   4. patches rahulio/pages/langbang/index.html with the new build number
-#   5. prints the public URLs
+#   5. commits + pushes JUST that page change in the alpacapps repo
+#      (so the live label can't drift behind R2 — see 2026-05-25 incident
+#      where the page sat at v45 while R2 was on v68)
+#   6. prints the public URLs
 #
 # This is the canonical release flow for langbang. We do NOT use GitHub Releases.
 #
@@ -16,6 +19,7 @@
 # Usage:   ./scripts/publish-r2.sh
 # Options: --skip-build       reuse the existing app/build APK
 #          --no-page-edit     don't touch the langbang page
+#          --no-page-push     edit the page locally but don't commit/push
 
 set -euo pipefail
 
@@ -24,10 +28,12 @@ cd "$REPO_ROOT"
 
 SKIP_BUILD=0
 NO_PAGE_EDIT=0
+NO_PAGE_PUSH=0
 for arg in "$@"; do
   case "$arg" in
     --skip-build)   SKIP_BUILD=1 ;;
     --no-page-edit) NO_PAGE_EDIT=1 ;;
+    --no-page-push) NO_PAGE_PUSH=1 ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
   esac
 done
@@ -39,12 +45,36 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 fi
 
 APK="app/build/outputs/apk/debug/app-arm64-v8a-debug.apk"
+# The APK is the source of truth for the version — NOT version.properties. With
+# Gradle config-caching on and a mutable buildNumber counter, the number baked into
+# the APK can lag what's written to version.properties (especially when two build
+# sessions race the file). Reading from the APK via aapt2 guarantees the pinned R2
+# filename, the page label, and the in-app "version" header can never disagree.
+# (2026-05-30 incident: version.properties said 87 while a freshly-built APK reported
+# 85 — the published filename lied. Reading from the APK eliminates the whole class.)
 [ -f "$APK" ] || { echo "APK not found: $APK" >&2; exit 1; }
 
-BUILD_NUMBER=$(grep -oE 'buildNumber=[0-9]+' version.properties | cut -d= -f2)
-VERSION_NAME=$(grep -oE 'versionName=[^[:space:]]+' version.properties | cut -d= -f2)
-[ -n "$BUILD_NUMBER" ] || { echo "no buildNumber in version.properties" >&2; exit 1; }
-FULL_VERSION="${VERSION_NAME}.${BUILD_NUMBER}"
+find_aapt2() {
+  local sdk
+  sdk=$(grep -oE '^sdk\.dir=.*' local.properties 2>/dev/null | cut -d= -f2)
+  [ -z "$sdk" ] && sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}"
+  ls "$sdk"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1
+}
+AAPT2="$(find_aapt2)"
+if [ -n "$AAPT2" ] && [ -x "$AAPT2" ]; then
+  BADGING="$("$AAPT2" dump badging "$APK" 2>/dev/null)"
+  BUILD_NUMBER=$(sed -nE "s/.*versionCode='([0-9]+)'.*/\1/p" <<< "$BADGING" | head -1)
+  FULL_VERSION=$(sed -nE "s/.*versionName='([^']+)'.*/\1/p" <<< "$BADGING" | head -1)
+  VERSION_NAME="${FULL_VERSION%.*}"   # strip the trailing .build suffix for display
+  echo "→ version read from APK (aapt2): $FULL_VERSION (code $BUILD_NUMBER)"
+else
+  # Fallback: parse version.properties (less reliable — see note above).
+  BUILD_NUMBER=$(grep -oE 'buildNumber=[0-9]+' version.properties | cut -d= -f2)
+  VERSION_NAME=$(grep -oE 'versionName=[^[:space:]]+' version.properties | cut -d= -f2)
+  FULL_VERSION="${VERSION_NAME}.${BUILD_NUMBER}"
+  echo "→ aapt2 not found; version read from version.properties: $FULL_VERSION" >&2
+fi
+[ -n "$BUILD_NUMBER" ] || { echo "could not determine build number" >&2; exit 1; }
 echo "→ build $FULL_VERSION ($(du -h "$APK" | cut -f1))"
 
 # 2. Pull R2 credentials from Bitwarden.
@@ -92,19 +122,52 @@ verify() {
 verify "$PINNED_KEY"
 verify "$LATEST_KEY"
 
-# 5. Patch the landing page to point at the new pinned build.
+# 5. Patch the landing page to point at the new pinned build, then commit + push
+#    JUST that file. Stages only the page (never `git add .`) so unrelated WIP in
+#    the alpacapps tree stays untouched. Rebase-then-push handles concurrent
+#    pushes from other tenants of that repo.
 if [ "$NO_PAGE_EDIT" -eq 0 ]; then
-  PAGE="$HOME/Documents/CodingProjects/genalpaca-admin/rahulio/pages/langbang/index.html"
+  ALPACAPPS="$HOME/Documents/CodingProjects/genalpaca-admin"
+  PAGE_REL="rahulio/pages/langbang/index.html"
+  PAGE="$ALPACAPPS/$PAGE_REL"
   if [ -f "$PAGE" ]; then
-    echo "→ patching page → v${BUILD_NUMBER}"
+    echo "→ patching page → v${FULL_VERSION}"
     # Two surgical replacements — label + href.
     sed -i.bak -E \
       -e "s|Current build — v[0-9.]+|Current build — v${FULL_VERSION}|" \
       -e "s|langbang-v[0-9]+-arm64\.apk|langbang-v${BUILD_NUMBER}-arm64.apk|g" \
       "$PAGE"
     rm -f "${PAGE}.bak"
-    echo "  page diff (verify before committing):"
-    (cd "$HOME/Documents/CodingProjects/genalpaca-admin" && git diff --stat rahulio/pages/langbang/index.html 2>/dev/null || true)
+
+    if [ "$NO_PAGE_PUSH" -eq 1 ]; then
+      echo "  page diff (--no-page-push set; not committing):"
+      (cd "$ALPACAPPS" && git diff --stat "$PAGE_REL" 2>/dev/null || true)
+    else
+      # Commit only if the page actually changed (idempotent re-runs are a no-op).
+      if (cd "$ALPACAPPS" && ! git diff --quiet -- "$PAGE_REL"); then
+        echo "→ committing + pushing page bump in alpacapps"
+        (
+          cd "$ALPACAPPS"
+          git add "$PAGE_REL"
+          git commit -m "langbang page: pinned APK → v${BUILD_NUMBER}" >/dev/null
+          # Rebase any concurrent commits, then push. If rebase fails, leave the
+          # commit local and tell the operator — don't risk a force-push.
+          if git pull --rebase --autostash >/dev/null 2>&1; then
+            if git push >/dev/null 2>&1; then
+              echo "  ✓ pushed → live page will update in ~30s via Cloudflare Pages"
+            else
+              echo "  ✗ git push failed — page commit is local at $(git rev-parse --short HEAD)" >&2
+              exit 1
+            fi
+          else
+            echo "  ✗ git pull --rebase failed in $ALPACAPPS — resolve manually and push" >&2
+            exit 1
+          fi
+        )
+      else
+        echo "  page already up to date (no commit)"
+      fi
+    fi
   else
     echo "  (page not found at $PAGE — skipping)"
   fi
