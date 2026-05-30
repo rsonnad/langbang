@@ -2,6 +2,7 @@ package com.sponic.langbang.domain
 
 import com.sponic.langbang.BuildConfig
 import com.sponic.langbang.data.LessonRepository
+import com.sponic.langbang.data.VerbSentenceStore
 import com.sponic.langbang.data.model.audioPronoun
 import com.sponic.langbang.integrations.AzureTtsClient
 import kotlinx.coroutines.Dispatchers
@@ -42,7 +43,10 @@ class R2AudioDownloader(
             fun addPl(text: String) {
                 if (text.isEmpty()) return
                 add(Phrase(text, AzureTtsClient.PL_PL_F, AzureTtsClient.LOCALE_PL))
+                // Both slow styles so the Settings → Slow audio style toggle is instant
+                // — flipping it picks the already-cached mp3, no re-download needed.
                 add(Phrase(text, AzureTtsClient.PL_PL_F_SLOW_V2, AzureTtsClient.LOCALE_PL))
+                add(Phrase(text, AzureTtsClient.PL_PL_F_SLOW_ART, AzureTtsClient.LOCALE_PL))
             }
             lesson.phrases.forEach { p ->
                 add(Phrase(p.en, AzureTtsClient.EN_US_F, AzureTtsClient.LOCALE_EN))
@@ -62,7 +66,11 @@ class R2AudioDownloader(
             advLesson.adverbs.forEach { adv -> addPl(adv.lemma) }
             pron.phonemes.forEach { ph -> ph.examples.forEach { addPl(it.pl) } }
             lesson.verbs.forEach { v ->
-                repo.sentencesFor(v.lemma).forEach { s ->
+                repo.sentencesFor(v.lemma, VerbSentenceStore.TENSE_PRESENT).forEach { s ->
+                    add(Phrase(s.en, AzureTtsClient.EN_US_F, AzureTtsClient.LOCALE_EN))
+                    addPl(s.pl)
+                }
+                repo.sentencesFor(v.lemma, VerbSentenceStore.TENSE_PAST).forEach { s ->
                     add(Phrase(s.en, AzureTtsClient.EN_US_F, AzureTtsClient.LOCALE_EN))
                     addPl(s.pl)
                 }
@@ -83,9 +91,15 @@ class R2AudioDownloader(
     }
 
     /**
-     * Asks the Edge Function for the R2 URLs of every phrase that isn't already on
-     * disk, then downloads each missing mp3 in turn. [onProgress] fires after every
-     * file with (done, total, current).
+     * Pulls every not-yet-cached phrase's mp3 from R2, asking the Edge Function for URLs
+     * in BATCHES so a fresh device (where ~all phrases are missing) doesn't blow past the
+     * Edge Function's ~150s wall-clock limit. Each batch: POST up to [BATCH_SIZE] phrases
+     * → get URLs → download that batch's files → next batch. [onProgress] fires after
+     * every file with (doneAcrossAllBatches, totalMissing, current).
+     *
+     * Best-effort: if a batch's manifest call fails (function cold-recycle, network blip),
+     * that batch is skipped and counted as failed; the next batch still runs. Re-running
+     * later picks up whatever's still missing (idempotent — cache.has skips done files).
      */
     suspend fun downloadAll(onProgress: suspend (Int, Int, String) -> Unit): Result<DownloadSummary> =
         withContext(Dispatchers.IO) {
@@ -93,7 +107,6 @@ class R2AudioDownloader(
                 return@withContext Result.failure(IOException("Offline — download skipped."))
             }
             val phrases = buildManifestPhrases()
-            // Only ask the function about phrases we don't already have — saves bandwidth.
             val missing = phrases.filter { p ->
                 !cache.has(cache.fileFor(p.locale, p.voice, p.text))
             }
@@ -102,37 +115,43 @@ class R2AudioDownloader(
                     DownloadSummary(totalWanted = phrases.size, fetched = 0, alreadyCached = phrases.size)
                 )
             }
-            val manifest = try {
-                fetchManifest(missing)
-            } catch (t: Throwable) {
-                return@withContext Result.failure(t)
-            }
             var fetched = 0
             var failed = 0
-            manifest.forEachIndexed { i, m ->
-                onProgress(i, manifest.size, m.text)
-                val file = cache.fileFor(m.locale, m.voice, m.text)
-                if (cache.has(file)) return@forEachIndexed
-                if (m.url.isEmpty()) { failed++; return@forEachIndexed }
-                try {
-                    val conn = URL(m.url).openConnection() as HttpURLConnection
-                    conn.requestMethod = "GET"
-                    conn.connectTimeout = 15000
-                    conn.readTimeout = 30000
-                    if (conn.responseCode !in 200..299) {
-                        failed++
-                        return@forEachIndexed
-                    }
-                    file.parentFile?.mkdirs()
-                    conn.inputStream.use { input ->
-                        file.outputStream().use { out -> input.copyTo(out) }
-                    }
-                    fetched++
+            var done = 0
+            val total = missing.size
+            for (batch in missing.chunked(BATCH_SIZE)) {
+                val manifest = try {
+                    fetchManifest(batch)
                 } catch (_: Throwable) {
-                    failed++
+                    // Whole batch unreachable — count its phrases as failed, keep going.
+                    failed += batch.size
+                    done += batch.size
+                    onProgress(done, total, "")
+                    continue
+                }
+                for (m in manifest) {
+                    done++
+                    onProgress(done, total, m.text)
+                    val file = cache.fileFor(m.locale, m.voice, m.text)
+                    if (cache.has(file)) { fetched++; continue }
+                    if (m.url.isEmpty()) { failed++; continue }
+                    try {
+                        val conn = URL(m.url).openConnection() as HttpURLConnection
+                        conn.requestMethod = "GET"
+                        conn.connectTimeout = 15000
+                        conn.readTimeout = 30000
+                        if (conn.responseCode !in 200..299) { failed++; continue }
+                        file.parentFile?.mkdirs()
+                        conn.inputStream.use { input ->
+                            file.outputStream().use { out -> input.copyTo(out) }
+                        }
+                        fetched++
+                    } catch (_: Throwable) {
+                        failed++
+                    }
                 }
             }
-            onProgress(manifest.size, manifest.size, "")
+            onProgress(total, total, "")
             Result.success(
                 DownloadSummary(
                     totalWanted = phrases.size,
@@ -191,4 +210,11 @@ class R2AudioDownloader(
         val alreadyCached: Int,
         val failed: Int = 0
     )
+
+    companion object {
+        // Phrases per Edge Function call. At ~1s/phrase synth (cold), 80 keeps each
+        // request comfortably under the ~150s function ceiling even when nothing is
+        // cached server-side yet. Cached batches return near-instantly.
+        private const val BATCH_SIZE = 80
+    }
 }

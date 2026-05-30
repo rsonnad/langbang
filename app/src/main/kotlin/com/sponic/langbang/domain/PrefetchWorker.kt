@@ -14,6 +14,28 @@ class PrefetchWorker(
 
     override suspend fun doWork(): Result {
         val app = applicationContext as LangbangApplication
+
+        // Phase 1 — pull pre-generated mp3s from R2 (fast, free, no Azure spend). This is
+        // the "auto-download on launch" path: every launch tops up the on-device cache
+        // from the shared R2 bucket, so the user never has to tap a button or use adb.
+        // Best-effort — if the Edge Function is unreachable, fall through to Phase 2,
+        // which synthesizes whatever's still missing on-device.
+        runCatching {
+            app.r2Audio.downloadAll { done, total, current ->
+                setProgress(
+                    workDataOf(
+                        KEY_TOTAL to total,
+                        KEY_DONE to done,
+                        KEY_CURRENT to if (current.isEmpty()) "syncing audio…" else "↓ $current",
+                        KEY_FINISHED to false
+                    )
+                )
+            }
+        }
+
+        // Phase 2 — synthesize anything R2 didn't have (e.g. a brand-new voice style
+        // not yet pre-generated) on-device. cache.has() skips every file Phase 1 already
+        // pulled, so this only spends Azure on genuine gaps.
         var finalTotal = 0
         return try {
             app.prefetch.prefetchLesson1 { progress ->
