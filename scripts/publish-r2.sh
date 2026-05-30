@@ -108,6 +108,23 @@ up() {
 up "$PINNED_KEY"
 up "$LATEST_KEY"
 
+# 3b. Write the update manifest the in-app UpdateChecker polls on launch. versionCode
+# is read from the APK (see above) so the app's "is there a newer build" comparison
+# can never be fooled by a stale version.properties. no-cache so a fresh publish is
+# seen promptly past R2's edge cache.
+MANIFEST_KEY="langbang/langbang-latest.json"
+MANIFEST_TMP="$(mktemp -t langbang-manifest.XXXXXX.json)"
+cat > "$MANIFEST_TMP" <<JSON
+{"versionCode": ${BUILD_NUMBER}, "versionName": "${FULL_VERSION}", "url": "${PUBLIC_BASE}/${LATEST_KEY}"}
+JSON
+echo "→ uploading s3://${BUCKET}/${MANIFEST_KEY} (versionCode ${BUILD_NUMBER})"
+aws s3 cp "$MANIFEST_TMP" "s3://${BUCKET}/${MANIFEST_KEY}" \
+  --endpoint-url "$ENDPOINT" \
+  --content-type application/json \
+  --cache-control "no-cache, max-age=0" \
+  --no-progress
+rm -f "$MANIFEST_TMP"
+
 # 4. Verify both URLs return 200.
 verify() {
   local key="$1"
@@ -119,6 +136,7 @@ verify() {
   fi
   echo "  ✓ ${PUBLIC_BASE}/${key}"
 }
+verify "$MANIFEST_KEY"
 verify "$PINNED_KEY"
 verify "$LATEST_KEY"
 
