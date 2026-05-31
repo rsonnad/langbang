@@ -97,7 +97,6 @@ internal class AdjectivesScreenState(
         private set
     var error: String? by mutableStateOf(null)
         private set
-    var slowFirst: Boolean by mutableStateOf(true)
 
     private var playJob: Job? = null
     var playingIndex: Int by mutableStateOf(-1)
@@ -220,7 +219,12 @@ internal class AdjectivesScreenState(
             en = cue,
             literal = null,
             words = listOf(
-                com.sponic.langbang.data.model.TokenPair(form, "$adjEn ($gender, $case)")
+                com.sponic.langbang.data.model.TokenPair(
+                    pl = form,
+                    en = adjEn,
+                    gender = gender,
+                    caseKey = case
+                )
             )
         )
     }
@@ -260,7 +264,7 @@ internal class AdjectivesScreenState(
                         delay(2000L)
                         pub("pl", plHidden = false)
                         playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                    } else if (slowFirst) {
+                    } else if (app.practicePrefs.slowFirst()) {
                         pub("en")
                         playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
                         pub("pl-slow")
@@ -438,100 +442,96 @@ private fun GenerateAllButton(onClick: () -> Unit, busy: Boolean) {
 private fun ExamplesControls(
     state: AdjectivesScreenState
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Checkbox(
-            checked = state.slowFirst,
-            onCheckedChange = { state.slowFirst = it },
-            enabled = !state.playing,
-            colors = CheckboxDefaults.colors(
-                checkedColor = MaterialTheme.colorScheme.primary
-            ),
-            modifier = Modifier.size(20.dp)
-        )
-        Spacer(Modifier.width(4.dp))
-        Text("Slow first", fontSize = 11.sp, color = LbColors.TextSecondary)
-    }
-    if (state.sentences.isNotEmpty()) {
-        Button(
-            onClick = { state.playAll(quiz = false) },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary
-            ),
-            shape = RoundedCornerShape(16.dp),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-        ) {
-            Icon(
-                if (state.playing) Icons.Default.Stop else Icons.Default.PlayArrow,
-                contentDescription = if (state.playing) "Stop" else "Play all",
-                tint = Color.White,
-                modifier = Modifier.size(16.dp)
-            )
-            Spacer(Modifier.width(4.dp))
-            Text(
-                if (state.playing) "Stop" else "Play all",
-                fontSize = 12.sp,
-                color = Color.White
-            )
-        }
-        if (!state.playing) {
-            Button(
-                onClick = { state.playAll(quiz = true) },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = LbColors.Label
-                ),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-            ) {
-                Icon(
-                    Icons.Default.PlayArrow,
-                    contentDescription = "Sentence quiz",
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(4.dp))
-                Text("Sent. quiz", fontSize = 12.sp, color = Color.White)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Spacer(Modifier.width(1.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (state.sentences.isNotEmpty()) {
+                Button(
+                    onClick = { state.playAll(quiz = false) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    ),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+                ) {
+                    Icon(
+                        if (state.playing) Icons.Default.Stop else Icons.Default.PlayArrow,
+                        contentDescription = if (state.playing) "Stop" else "Play all",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        if (state.playing) "Stop" else "Play all",
+                        fontSize = 12.sp,
+                        color = Color.White
+                    )
+                }
             }
-        }
-    }
-    if (!state.playing) {
-        Button(
-            onClick = { state.recallQuiz() },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = LbColors.Accent
-            ),
-            shape = RoundedCornerShape(16.dp),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-        ) {
-            Text("Recall quiz", fontSize = 12.sp, color = Color.White)
-        }
-    }
-    if (state.busy) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(18.dp), strokeWidth = 2.dp
-        )
-    } else {
-        val isRegenerate = state.sentences.isNotEmpty()
-        Button(
-            onClick = { state.generate() },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (isRegenerate) LbColors.SurfaceTint
-                else MaterialTheme.colorScheme.primary
-            ),
-            shape = RoundedCornerShape(16.dp),
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-        ) {
-            Icon(
-                if (isRegenerate) Icons.Default.Refresh else Icons.Default.Add,
-                contentDescription = if (isRegenerate) "Regenerate" else "Generate",
-                tint = if (isRegenerate) LbColors.Label else Color.White,
-                modifier = Modifier.size(14.dp)
-            )
-            Spacer(Modifier.width(4.dp))
-            Text(
-                if (isRegenerate) "Regen" else "Generate",
-                fontSize = 12.sp,
-                color = if (isRegenerate) LbColors.Label else Color.White
-            )
+            if (!state.playing) {
+                Button(
+                    onClick = { state.recallQuiz() },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = LbColors.Accent
+                    ),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+                ) {
+                    Text("Recall quiz", fontSize = 12.sp, color = Color.White)
+                }
+            }
+            if (state.sentences.isNotEmpty() && !state.playing) {
+                Button(
+                    onClick = { state.playAll(quiz = true) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = LbColors.Label
+                    ),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+                ) {
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = "Sentence quiz",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text("Sent. quiz", fontSize = 12.sp, color = Color.White)
+                }
+            }
+            if (state.busy) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp), strokeWidth = 2.dp
+                )
+            } else {
+                val isRegenerate = state.sentences.isNotEmpty()
+                Button(
+                    onClick = { state.generate() },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isRegenerate) LbColors.SurfaceTint
+                        else MaterialTheme.colorScheme.primary
+                    ),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                ) {
+                    Icon(
+                        if (isRegenerate) Icons.Default.Refresh else Icons.Default.Add,
+                        contentDescription = if (isRegenerate) "Regenerate" else "Generate",
+                        tint = if (isRegenerate) LbColors.Label else Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        if (isRegenerate) "Regen" else "Generate",
+                        fontSize = 12.sp,
+                        color = if (isRegenerate) LbColors.Label else Color.White
+                    )
+                }
+            }
         }
     }
 }

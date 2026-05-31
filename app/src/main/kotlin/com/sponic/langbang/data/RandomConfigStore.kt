@@ -8,7 +8,7 @@ import android.content.Context
  * strings for scalars.
  *
  * Defaults match the pre-config behaviour: 1sg/2sg/3sg only, present tense, adjectives
- * yes, adverbs off, no preposition filter, no must-contain word.
+ * yes, adverbs off, preposition "None", no must-contain word.
  */
 class RandomConfigStore(context: Context) {
 
@@ -19,7 +19,7 @@ class RandomConfigStore(context: Context) {
         mustContainWord = prefs.getString(KEY_MUST_CONTAIN, "").orEmpty(),
         personKeys = readSet(KEY_PERSONS, DEFAULT_PERSONS),
         tenses = readSet(KEY_TENSES, DEFAULT_TENSES),
-        prepositions = readSet(KEY_PREPS, emptySet()),
+        prepositions = readPrepositions(),
         adjectiveMode = readMode(KEY_ADJ_MODE, IncludeMode.YES),
         adverbMode = readMode(KEY_ADV_MODE, IncludeMode.OFF),
         playMode = readPlayMode(KEY_PLAY_MODE, PlayMode.PHRASES),
@@ -44,6 +44,12 @@ class RandomConfigStore(context: Context) {
         return raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
     }
 
+    private fun readPrepositions(): Set<String> {
+        val raw = prefs.getString(KEY_PREPS, null) ?: return DEFAULT_PREPOSITIONS
+        val values = raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        return values.ifEmpty { DEFAULT_PREPOSITIONS }
+    }
+
     private fun readMode(key: String, default: IncludeMode): IncludeMode {
         val raw = prefs.getString(key, null) ?: return default
         return runCatching { IncludeMode.valueOf(raw) }.getOrDefault(default)
@@ -63,8 +69,10 @@ class RandomConfigStore(context: Context) {
         private const val KEY_ADV_MODE = "adv-mode"
         private const val KEY_PLAY_MODE = "play-mode"
         private const val KEY_QUIZ_DELAY = "quiz-delay-seconds"
+        const val PREPOSITION_NONE = "__none__"
         val DEFAULT_PERSONS = setOf("1sg", "2sg", "3sg")
         val DEFAULT_TENSES = setOf("present")
+        val DEFAULT_PREPOSITIONS = setOf(PREPOSITION_NONE)
     }
 }
 
@@ -104,7 +112,7 @@ data class RandomConfig(
     val mustContainWord: String = "",
     val personKeys: Set<String> = RandomConfigStore.DEFAULT_PERSONS,
     val tenses: Set<String> = RandomConfigStore.DEFAULT_TENSES,
-    val prepositions: Set<String> = emptySet(),
+    val prepositions: Set<String> = RandomConfigStore.DEFAULT_PREPOSITIONS,
     val adjectiveMode: IncludeMode = IncludeMode.YES,
     val adverbMode: IncludeMode = IncludeMode.OFF,
     val playMode: PlayMode = PlayMode.PHRASES,
@@ -113,6 +121,7 @@ data class RandomConfig(
 ) {
     companion object {
         /** Top-5 most common Polish prepositions for the chip row. */
+        const val PREPOSITION_NONE = RandomConfigStore.PREPOSITION_NONE
         val PREPOSITIONS = listOf("w", "na", "do", "z", "o")
         val TENSES = listOf("present", "past")
         val PERSONS = listOf("1sg", "2sg", "3sg", "1pl", "2pl", "3pl")

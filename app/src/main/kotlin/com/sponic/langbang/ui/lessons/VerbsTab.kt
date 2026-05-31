@@ -3,6 +3,7 @@ package com.sponic.langbang.ui.lessons
 import com.sponic.langbang.ui.theme.LbColors
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -110,8 +111,14 @@ internal class VerbsTabState(
         private set
     var error: String? by mutableStateOf(null)
         private set
-    var allVerbsMode: Boolean by mutableStateOf(false)
     var slowFirst: Boolean by mutableStateOf(true)
+    /**
+     * Lemmas the learner has ticked in the left verb list. When non-empty, Play all and
+     * the quizzes run across exactly these verbs (in shuffled order); when empty they
+     * fall back to the single selected verb. Persisted so the selection is sticky.
+     */
+    var checkedLemmas: Set<String> by mutableStateOf(app.practicePrefs.checkedVerbs())
+        private set
     var generateProgress: String? by mutableStateOf(null)
         private set
     var includedPresentKeys: Set<String> by mutableStateOf(
@@ -159,6 +166,26 @@ internal class VerbsTabState(
         return present + past
     }
 
+    fun toggleVerbChecked(lemma: String, checked: Boolean) {
+        checkedLemmas = if (checked) checkedLemmas + lemma else checkedLemmas - lemma
+        app.practicePrefs.setCheckedVerbs(checkedLemmas)
+    }
+
+    /** Bulk tick/untick (class "all" header, or the master "All verbs" box). */
+    fun setVerbsChecked(lemmas: List<String>, checked: Boolean) {
+        checkedLemmas = if (checked) checkedLemmas + lemmas else checkedLemmas - lemmas.toSet()
+        app.practicePrefs.setCheckedVerbs(checkedLemmas)
+    }
+
+    /**
+     * The verbs a multi-verb action should run over: the ticked verbs (shuffled, so the
+     * learner gets them in random order), or just the selected verb when nothing's ticked.
+     */
+    private fun resolveTargets(allVerbs: List<VerbEntry>): List<VerbEntry> {
+        val checked = allVerbs.filter { it.lemma in checkedLemmas }
+        return if (checked.isNotEmpty()) checked.shuffled() else listOfNotNull(selected)
+    }
+
     fun toggleIncluded(
         key: String,
         included: Boolean,
@@ -172,14 +199,22 @@ internal class VerbsTabState(
         }
     }
 
+    /** Tick/untick every person for one tense at once — backs the "all" box per column. */
+    fun setTenseIncluded(included: Boolean, tense: String = PronounFilterStore.TENSE_PRESENT) {
+        PERSON_KEYS.forEach { app.pronounFilter.setIncluded(it, included, tense) }
+        val all = if (included) PERSON_KEYS.toSet() else emptySet()
+        if (tense == PronounFilterStore.TENSE_PAST) includedPastKeys = all
+        else includedPresentKeys = all
+    }
+
     fun generate(allVerbs: List<VerbEntry> = emptyList()) {
         if (busy) return
         if (includedPresentKeys.isEmpty() && includedPastKeys.isEmpty()) {
             error = "Check at least one pronoun (present or past) to generate sentences."
             return
         }
-        if (allVerbsMode) {
-            if (allVerbs.isEmpty()) return
+        val checkedTargets = allVerbs.filter { it.lemma in checkedLemmas }
+        if (checkedTargets.isNotEmpty()) {
             busy = true; error = null; generateProgress = "starting…"
             scope.launch {
                 val errors = mutableListOf<String>()
@@ -187,8 +222,8 @@ internal class VerbsTabState(
                     // Gemini-only loop — fast (one call per verb × tense). Audio is left
                     // to the background prefetch worker so a slow/throttled TTS never
                     // stalls us.
-                    allVerbs.forEachIndexed { i, vv ->
-                        val tag = "${i + 1}/${allVerbs.size} · ${vv.lemma}"
+                    checkedTargets.forEachIndexed { i, vv ->
+                        val tag = "${i + 1}/${checkedTargets.size} · ${vv.lemma}"
                         // Present.
                         if (includedPresentKeys.isNotEmpty()) {
                             generateProgress = "Present $tag"
@@ -454,13 +489,14 @@ internal class VerbsTabState(
             stop()
             return
         }
-        val v = selected ?: return
+        val targets = resolveTargets(allVerbs)
+        val v = targets.firstOrNull() ?: return
         queueQuiz = quiz
         queueLemma = v.lemma
         scope.launch {
             // Build the queue up-front so rewind/restart can re-enter any item.
-            val built: List<SentenceExample> = if (allVerbsMode) {
-                allVerbs.flatMap { vv ->
+            val built: List<SentenceExample> = if (checkedLemmas.isNotEmpty()) {
+                targets.flatMap { vv ->
                     val list = ensureSentencesFor(vv).let { all ->
                         if (quiz) filterByTense(vv, all) else all
                     }
@@ -536,8 +572,8 @@ internal class VerbsTabState(
             stop()
             return
         }
-        val v = selected ?: return
-        val targets = if (allVerbsMode) allVerbs else listOf(v)
+        val targets = resolveTargets(allVerbs)
+        if (targets.isEmpty()) return
         PlaybackController.register(
             PlaybackTransport(stop = { stop() })
         )
@@ -603,16 +639,16 @@ internal class VerbsTabState(
                                         AzureTtsClient.PL_PL_F)
                                 }
                                 "recall" -> {
-                                    // PL spoken first with EN hidden + PL text hidden — user
-                                    // must identify "which lemma + which person".
-                                    publishLang("pl", plHidden = true,
-                                        enHiddenLabel = "•••")
-                                    playAndAwait(app, combined, AzureTtsClient.LOCALE_PL,
-                                        AzureTtsClient.PL_PL_F)
-                                    publishLang("pause", plHidden = true,
-                                        enHiddenLabel = "•••")
+                                    // EN spoken FIRST with the EN text shown (only the PL is
+                                    // hidden) so the learner reads + hears the meaning, recalls
+                                    // the Polish form from memory, then the PL is revealed and
+                                    // spoken. EN cue stays visible throughout the recall window.
+                                    publishLang("en", plHidden = true)
+                                    playAndAwait(app, englishGloss, AzureTtsClient.LOCALE_EN,
+                                        AzureTtsClient.EN_US_F)
+                                    publishLang("pause", plHidden = true)
                                     delay(2000L)
-                                    // Reveal both.
+                                    // Reveal the PL too.
                                     publishLang("pause", plHidden = false)
                                     delay(2000L)
                                     publishLang("pl", plHidden = false)
@@ -733,6 +769,10 @@ internal fun VerbsTab(
                 grouped = grouped,
                 selected = state.selected,
                 onSelect = { state.selectVerb(it) },
+                checkedLemmas = state.checkedLemmas,
+                allLemmas = lesson.verbs.map { it.lemma },
+                onToggleVerb = { lemma, c -> state.toggleVerbChecked(lemma, c) },
+                onToggleVerbs = { lemmas, c -> state.setVerbsChecked(lemmas, c) },
                 modifier = Modifier
                     .width(256.dp)
                     .fillMaxHeight()
@@ -817,19 +857,8 @@ private fun TopBar(
 // and buttons wrap together as one band.
 @Composable
 private fun ExamplesControls(state: VerbsTabState, allVerbs: List<VerbEntry>) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Checkbox(
-            checked = state.allVerbsMode,
-            onCheckedChange = { state.allVerbsMode = it },
-            enabled = !state.playing,
-            colors = CheckboxDefaults.colors(
-                checkedColor = MaterialTheme.colorScheme.primary
-            ),
-            modifier = Modifier.size(20.dp)
-        )
-        Spacer(Modifier.width(4.dp))
-        Text("All verbs", fontSize = 11.sp, color = LbColors.TextSecondary)
-    }
+    // The "All verbs" checkbox moved into the left verb list (above the first class);
+    // ticked verbs now drive Play all / the quizzes. "Slow first" stays here.
     Row(verticalAlignment = Alignment.CenterVertically) {
         Checkbox(
             checked = state.slowFirst,
@@ -892,7 +921,7 @@ private fun ExamplesControls(state: VerbsTabState, allVerbs: List<VerbEntry>) {
             Text("Recall quiz", fontSize = 12.sp, color = Color.White)
         }
     }
-    val hasSentences = state.allVerbsMode || state.sentences.isNotEmpty()
+    val hasSentences = state.checkedLemmas.isNotEmpty() || state.sentences.isNotEmpty()
     if (hasSentences && !state.playing) {
         Button(
             onClick = { state.playAll(allVerbs, quiz = true) },
@@ -931,53 +960,112 @@ private fun VerbList(
     grouped: Map<ConjugationClass, List<VerbEntry>>,
     selected: VerbEntry?,
     onSelect: (VerbEntry) -> Unit,
+    checkedLemmas: Set<String>,
+    allLemmas: List<String>,
+    onToggleVerb: (String, Boolean) -> Unit,
+    onToggleVerbs: (List<String>, Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        verticalArrangement = Arrangement.spacedBy(1.dp)
     ) {
+        // Master "All verbs" toggle — sits above the first class label and ticks /
+        // unticks every verb. Ticked verbs are what Play all + the quizzes run over.
+        item(key = "all-verbs-master") {
+            val allChecked = allLemmas.isNotEmpty() && checkedLemmas.containsAll(allLemmas)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp)
+            ) {
+                Checkbox(
+                    checked = allChecked,
+                    onCheckedChange = { onToggleVerbs(allLemmas, it) },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = MaterialTheme.colorScheme.primary
+                    ),
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "All verbs",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = LbColors.TextSecondary
+                )
+            }
+        }
         grouped.forEach { (cls, verbs) ->
             item(key = "h-${cls.name}") {
-                // Compact class header — class label only (the longer description was
-                // eating vertical room and isn't useful for casual practice).
-                Text(
-                    cls.label,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = LbColors.Label,
+                // Compact class header — class label + an "all" checkbox that ticks every
+                // verb in this class. The longer description was dropped to save room.
+                val classLemmas = verbs.map { it.lemma }
+                val classChecked = classLemmas.isNotEmpty() &&
+                    checkedLemmas.containsAll(classLemmas)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(top = 4.dp, bottom = 1.dp)
-                )
+                ) {
+                    Checkbox(
+                        checked = classChecked,
+                        onCheckedChange = { onToggleVerbs(classLemmas, it) },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        cls.label,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = LbColors.Label
+                    )
+                }
             }
             items(verbs, key = { "v-${it.lemma}" }) { v ->
                 val isSel = v == selected
-                Card(
-                    onClick = { onSelect(v) },
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isSel) MaterialTheme.colorScheme.primary
-                        else Color.White
-                    ),
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
-                        Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Checkbox(
+                        checked = v.lemma in checkedLemmas,
+                        onCheckedChange = { onToggleVerb(v.lemma, it) },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Card(
+                        onClick = { onSelect(v) },
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isSel) MaterialTheme.colorScheme.primary
+                            else Color.White
+                        ),
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Text(
-                            v.lemma,
-                            color = if (isSel) Color.White else LbColors.Primary,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 16.sp
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            v.en,
-                            color = if (isSel) Color.White.copy(alpha = 0.85f)
-                            else LbColors.TextSecondary,
-                            fontSize = 12.sp,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Row(
+                            Modifier.padding(horizontal = 12.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                v.lemma,
+                                color = if (isSel) Color.White else LbColors.Primary,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 16.sp
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                v.en,
+                                color = if (isSel) Color.White.copy(alpha = 0.85f)
+                                else LbColors.TextSecondary,
+                                fontSize = 12.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                     }
                 }
             }
@@ -998,19 +1086,27 @@ private fun VerbParadigm(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Row(verticalAlignment = Alignment.Bottom) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(verb.lemma, fontSize = 26.sp, fontWeight = FontWeight.Bold,
                 color = LbColors.Primary)
+            Spacer(Modifier.width(8.dp))
+            // Play the infinitive aloud — same affordance as the conjugation rows below.
+            Icon(
+                Icons.Default.PlayArrow,
+                contentDescription = "Play ${verb.lemma}",
+                tint = LbColors.Primary,
+                modifier = Modifier
+                    .size(28.dp)
+                    .clickable { playPolish(app, verb.lemma) }
+            )
             Spacer(Modifier.width(12.dp))
-            Text(verb.en, fontSize = 14.sp, color = LbColors.TextSecondary,
-                modifier = Modifier.padding(bottom = 4.dp))
+            Text(verb.en, fontSize = 14.sp, color = LbColors.TextSecondary)
             Spacer(Modifier.width(12.dp))
             Text(
                 verb.conjugationClass().label,
                 fontSize = 11.sp,
                 color = LbColors.Label,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(bottom = 6.dp)
+                fontWeight = FontWeight.SemiBold
             )
         }
         // Present + Past side-by-side. Each column has its tense header + 6 ConjRows.
@@ -1021,12 +1117,12 @@ private fun VerbParadigm(
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "Present",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = LbColors.Label,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+                TenseHeader(
+                    label = "Present",
+                    allChecked = state.includedPresentKeys.containsAll(PERSON_KEYS),
+                    onToggleAll = {
+                        state.setTenseIncluded(it, PronounFilterStore.TENSE_PRESENT)
+                    }
                 )
                 PERSON_KEYS.forEach { k ->
                     val form = verb.forms[k].orEmpty()
@@ -1053,12 +1149,12 @@ private fun VerbParadigm(
             }
             verb.past_forms?.let { past ->
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "Past",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = LbColors.Label,
-                        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+                    TenseHeader(
+                        label = "Past",
+                        allChecked = state.includedPastKeys.containsAll(PERSON_KEYS),
+                        onToggleAll = {
+                            state.setTenseIncluded(it, PronounFilterStore.TENSE_PAST)
+                        }
                     )
                     PERSON_KEYS.forEach { k ->
                         val form = past[k].orEmpty()
@@ -1202,6 +1298,37 @@ private suspend fun playAndAwait(
     }
 }
 
+/** Tense column header ("Present" / "Past") with an inline "all" checkbox for that tense. */
+@Composable
+private fun TenseHeader(
+    label: String,
+    allChecked: Boolean,
+    onToggleAll: (Boolean) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+    ) {
+        Text(
+            label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = LbColors.Label
+        )
+        Spacer(Modifier.width(8.dp))
+        Checkbox(
+            checked = allChecked,
+            onCheckedChange = onToggleAll,
+            colors = CheckboxDefaults.colors(
+                checkedColor = MaterialTheme.colorScheme.primary
+            ),
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(Modifier.width(2.dp))
+        Text("all", fontSize = 11.sp, color = LbColors.TextMuted)
+    }
+}
+
 @Composable
 private fun ConjRow(
     spoken: String,
@@ -1228,11 +1355,13 @@ private fun ConjRow(
                 modifier = Modifier.size(28.dp)
             )
             Spacer(Modifier.width(6.dp))
-            Column(Modifier.weight(1f)) {
-                Text(spoken, fontSize = 18.sp, fontWeight = FontWeight.Medium,
-                    color = LbColors.Primary)
-                Text(englishGloss, fontSize = 11.sp, color = LbColors.TextMuted)
-            }
+            // PL form and its English gloss share one line — the gloss sits directly to
+            // the right (no stacked line break) to save vertical room.
+            Text(spoken, fontSize = 18.sp, fontWeight = FontWeight.Medium,
+                color = LbColors.Primary)
+            Spacer(Modifier.width(8.dp))
+            Text(englishGloss, fontSize = 11.sp, color = LbColors.TextMuted,
+                modifier = Modifier.weight(1f))
             Icon(Icons.Default.PlayArrow, contentDescription = "Play",
                 tint = LbColors.Primary, modifier = Modifier.size(20.dp))
         }

@@ -52,7 +52,11 @@ data class SentenceExample(
 @Serializable
 data class TokenPair(
     val pl: String,
-    val en: String
+    val en: String,
+    val gender: String? = null,
+    val caseKey: String? = null,
+    val caseLabel: String? = null,
+    val numberLabel: String? = null
 )
 
 @Serializable

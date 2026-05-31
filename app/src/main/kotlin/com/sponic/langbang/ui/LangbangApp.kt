@@ -2,6 +2,7 @@ package com.sponic.langbang.ui
 
 import com.sponic.langbang.ui.theme.LbColors
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import android.widget.Toast
@@ -26,12 +27,15 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -75,6 +79,7 @@ import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.PrefetchProgress
 import com.sponic.langbang.domain.PrefetchWorker
+import com.sponic.langbang.ui.common.GrammarVisuals
 import com.sponic.langbang.ui.lessons.AdjectivesScreen
 import com.sponic.langbang.ui.lessons.AdverbsScreen
 import com.sponic.langbang.ui.lessons.LessonScreen
@@ -126,6 +131,9 @@ fun LangbangApp(app: LangbangApplication) {
     var lastTabSection by remember { mutableStateOf(Section.Pronunciation) }
     val nowVoicing by NowVoicingBus.state.collectAsState()
     val online by app.network.online.collectAsState()
+    // Starred phrases — lets the user add whatever is currently voicing to their
+    // personal quiz deck straight from the sticky Now Voicing panel.
+    val starredPhrases by app.starredPhrases.starred.collectAsState()
     // The sticky panel needs to keep showing the last phrase even after playback ends.
     // nowVoicing flips to null on stop; pinnedVoicing holds the last non-null value so
     // the user can still read it (and click words for drill-down).
@@ -149,6 +157,7 @@ fun LangbangApp(app: LangbangApplication) {
         { c ->
             liveConfig = c
             app.randomConfig.save(c)
+            randomPlayer.reconfigure(c)
         }
     }
     // Navigating away (switching tabs or opening Settings) silences whatever's
@@ -157,6 +166,7 @@ fun LangbangApp(app: LangbangApplication) {
     val stopActivePlayback: () -> Unit = {
         if (randomPlayer.playing || randomPlayer.paused) randomPlayer.stop()
         PlaybackController.stop()
+        pinnedVoicing = null
     }
 
     Box(
@@ -241,19 +251,18 @@ fun LangbangApp(app: LangbangApplication) {
             }
             UpdateBanner(app = app)
             SentenceRegenBanner(app = app)
-            // Two-zone body. The lesson list fills the LEFT at full height, flush to the
-            // top (directly under the header — nothing stealing rows above it). The Now
-            // Voicing panel renders as a band at the TOP of each lesson screen's RIGHT
-            // column (above the paradigm, with the play/quiz buttons under it) — it's
-            // passed in as a slot so the drill-down + config wiring stays here. The
-            // top-level Phrases browser keeps the legacy full-height right-hand column.
-            // Settings / Quizzes / Numbers / Pronunciation don't use Now Voicing.
+            // App-wide Now Voicing surface. Audio can start from any tab (for example,
+            // the global Play Phrases button while Pronunciation is open), so the
+            // canonical panel lives in the shell instead of inside individual lesson
+            // screens.
             val nowVoicingSlot: @Composable () -> Unit = {
                 NowVoicingPanel(
                     pinned = pinnedVoicing,
                     live = nowVoicing,
                     config = liveConfig,
                     onConfigChange = updateConfig,
+                    isStarred = pinnedVoicing?.pl?.let { it in starredPhrases } == true,
+                    onToggleStar = { pinnedVoicing?.pl?.let { app.starredPhrases.toggle(it) } },
                     onPlWordClick = { word ->
                         if (randomPlayer.playing) randomPlayer.stop()
                         configSeedWord = word
@@ -262,41 +271,30 @@ fun LangbangApp(app: LangbangApplication) {
                     prefetch = progress
                 )
             }
-            val showNowVoicingColumn = section == Section.Phrases
+            if (pinnedVoicing != null || nowVoicing != null || randomPlayer.playing || randomPlayer.paused) {
+                nowVoicingSlot()
+            }
+            val noNowVoicingSlot: @Composable () -> Unit = {}
             Row(modifier = Modifier.fillMaxSize()) {
                 Box(modifier = Modifier.weight(1.5f).fillMaxHeight()) {
                     when (section) {
                         Section.Pronunciation -> PronunciationScreen(app = app)
                         Section.Verbs -> LessonScreen(
-                            app = app, prefetch = progress, nowVoicing = nowVoicingSlot
+                            app = app, prefetch = progress, nowVoicing = noNowVoicingSlot
                         )
                         Section.Adjectives -> AdjectivesScreen(
-                            app = app, prefetch = progress, nowVoicing = nowVoicingSlot
+                            app = app, prefetch = progress, nowVoicing = noNowVoicingSlot
                         )
                         Section.Adverbs -> AdverbsScreen(
-                            app = app, prefetch = progress, nowVoicing = nowVoicingSlot
+                            app = app, prefetch = progress, nowVoicing = noNowVoicingSlot
                         )
                         Section.Nouns -> NounsScreen(
-                            app = app, prefetch = progress, nowVoicing = nowVoicingSlot
+                            app = app, prefetch = progress, nowVoicing = noNowVoicingSlot
                         )
-                        Section.Phrases -> PhrasesScreen(app = app)
+                        Section.Phrases -> PhrasesScreen(app = app, nowVoicing = noNowVoicingSlot)
                         Section.Numbers -> NumbersScreen(app = app)
-                        Section.Quizzes -> QuizzesScreen(app = app, nowVoicing = nowVoicingSlot)
+                        Section.Quizzes -> QuizzesScreen(app = app, nowVoicing = noNowVoicingSlot)
                         Section.Settings -> SettingsScreen(app = app)
-                    }
-                }
-                if (showNowVoicingColumn) {
-                    Column(
-                        modifier = Modifier
-                            // Fixed NARROW width (not a weight) so the phrase list on
-                            // the left gets ALL remaining space and shows many rows
-                            // instead of one or two (reported 2026-05-30). 340dp fits
-                            // the now-voicing text + transport without dominating.
-                            .width(340.dp)
-                            .fillMaxHeight()
-                            .verticalScroll(rememberScrollState())
-                    ) {
-                        nowVoicingSlot()
                     }
                 }
             }
@@ -436,32 +434,108 @@ private fun NowVoicingPanel(
     live: NowVoicing?,
     config: RandomConfig,
     onConfigChange: (RandomConfig) -> Unit,
+    isStarred: Boolean = false,
+    onToggleStar: () -> Unit = {},
     onPlWordClick: (String) -> Unit = {},
     prefetch: PrefetchProgress
 ) {
-    Surface(color = LbColors.Surface, modifier = Modifier.fillMaxWidth()) {
+    Surface(
+        color = GrammarVisuals.NowVoicingPanel.Background,
+        shape = RoundedCornerShape(0.dp),
+        border = BorderStroke(
+            GrammarVisuals.NowVoicingPanel.BorderWidth,
+            GrammarVisuals.NowVoicingPanel.Border
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    ) {
         Column {
-            NowVoicingControlsStrip(
-                config = config,
-                onConfigChange = onConfigChange,
-                showQuizDelay = live?.quizMode == true,
-                prefetch = prefetch
-            )
-            // Body: Polish + gloss on the left, 2x2 transport pinned right. Single
-            // canonical layout so the transport position never shifts between
-            // sources (RandomPlayer vs VerbsTab quiz vs Adjective quiz).
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(modifier = Modifier.weight(1f)) {
-                    NowVoicingContent(pinned, live, onPlWordClick)
+                Text(
+                    nowVoicingStatus(pinned, live),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = LbColors.TextPrimary,
+                    maxLines = 1
+                )
+                Spacer(Modifier.width(8.dp))
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    NowVoicingFilterChecks(
+                        config = config,
+                        onConfigChange = onConfigChange,
+                        showQuizDelay = live?.quizMode == true,
+                        prefetch = prefetch
+                    )
                 }
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(8.dp))
+                // Star the phrase currently shown in the panel into the personal quiz deck.
+                if (pinned != null) {
+                    IconButton(onClick = onToggleStar, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            if (isStarred) Icons.Default.Star else Icons.Default.StarBorder,
+                            contentDescription = if (isStarred) "Unstar phrase" else "Star phrase",
+                            tint = if (isStarred) LbColors.Accent else LbColors.TextMuted,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
+                }
                 TransportGrid()
+            }
+            nowVoicingGrammarReference(pinned)?.let { reference ->
+                Text(
+                    reference,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = LbColors.TextSecondary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 1.dp)
+                        .wrapContentWidth(Alignment.End)
+                )
+            }
+            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
+                NowVoicingContent(pinned, live, onPlWordClick, showStatus = false)
             }
         }
     }
+}
+
+private fun nowVoicingStatus(pinned: NowVoicing?, live: NowVoicing?): String {
+    val activeLang = live?.lang
+    val pos = pinned?.position?.let { " · $it" } ?: ""
+    val tag = when (activeLang) {
+        "pl-slow" -> "PL (slow)"
+        "pl" -> "PL"
+        "en" -> "EN"
+        "pause" -> ""
+        null -> "idle"
+        else -> activeLang
+    }
+    return if (tag.isEmpty()) "NOW VOICING$pos" else "NOW VOICING$pos  ·  $tag"
+}
+
+private fun nowVoicingGrammarReference(pinned: NowVoicing?): String? {
+    val token = pinned?.words?.firstOrNull { it.gender != null || it.caseLabel != null || it.numberLabel != null }
+        ?: return null
+    val parts = listOfNotNull(
+        token.numberLabel,
+        token.caseLabel,
+        token.gender?.let { GrammarVisuals.Gender.abbrev(it) }
+    )
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
 /**
@@ -474,29 +548,19 @@ private fun NowVoicingPanel(
 private fun NowVoicingContent(
     pinned: NowVoicing?,
     live: NowVoicing?,
-    onPlWordClick: (String) -> Unit
+    onPlWordClick: (String) -> Unit,
+    showStatus: Boolean = true
 ) {
-    val activeLang = live?.lang
-    val plHidden = live?.plHidden == true
-    val pos = pinned?.position?.let { " · $it" } ?: ""
-    val tag = when (activeLang) {
-        "pl-slow" -> "PL (slow)"
-        "pl" -> "PL"
-        "en" -> "EN"
-        "pause" -> if (plHidden) "your turn → (text hidden)" else "your turn →"
-        null -> "idle"
-        else -> activeLang
-    }
     com.sponic.langbang.ui.common.NowVoicingBody(
         pinned = pinned,
         live = live,
-        statusText = "NOW VOICING$pos  ·  $tag",
+        statusText = if (showStatus) nowVoicingStatus(pinned, live) else "",
         onPlWordClick = onPlWordClick
     )
 }
 
 /**
- * 2x2 transport grid pinned to the right of the NowVoicing card. Reads the active
+ * Transport row pinned to the right of the NowVoicing header. Reads the active
  * [PlaybackTransport] from [PlaybackController] so the same buttons appear regardless
  * of which source registered (RandomPlayer, VerbsTab quiz, Adjective quiz, …). Buttons
  * the source doesn't support stay visible but disabled — so layout doesn't shift.
@@ -509,40 +573,155 @@ private fun TransportGrid() {
     val playPauseIcon = if (isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause
     val playPauseLabel = if (isPaused) "Resume" else "Pause"
 
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            TransportIcon(
-                icon = Icons.Filled.Replay,
-                label = "Restart",
-                enabled = transport?.restart != null,
-                onClick = { PlaybackController.restart() }
-            )
-            TransportIcon(
-                icon = Icons.Filled.SkipPrevious,
-                label = "Rewind",
-                enabled = transport?.rewind != null,
-                onClick = { PlaybackController.rewind() }
-            )
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        TransportIcon(
+            icon = Icons.Filled.Replay,
+            label = "Restart",
+            enabled = transport?.restart != null,
+            onClick = { PlaybackController.restart() }
+        )
+        TransportIcon(
+            icon = Icons.Filled.SkipPrevious,
+            label = "Rewind",
+            enabled = transport?.rewind != null,
+            onClick = { PlaybackController.rewind() }
+        )
+        TransportIcon(
+            icon = playPauseIcon,
+            label = playPauseLabel,
+            enabled = transport?.pauseResume != null,
+            onClick = { PlaybackController.pauseResume() }
+        )
+        TransportIcon(
+            icon = Icons.Filled.Stop,
+            label = "Stop",
+            enabled = anyPlaying,
+            onClick = { PlaybackController.stop() }
+        )
+    }
+}
+
+@Composable
+private fun NowVoicingFilterChecks(
+    config: RandomConfig,
+    onConfigChange: (RandomConfig) -> Unit,
+    showQuizDelay: Boolean,
+    prefetch: PrefetchProgress
+) {
+    val labelColor = GrammarVisuals.NowVoicingPanel.FilterLabel
+    FilterCheck(
+        label = "Verb",
+        selected = config.playMode == PlayMode.VERBS,
+        labelColor = labelColor,
+        onToggle = { onConfigChange(config.copy(playMode = PlayMode.VERBS)) }
+    )
+    FilterCheck(
+        label = "Sent.",
+        selected = config.playMode == PlayMode.PHRASES,
+        labelColor = labelColor,
+        onToggle = { onConfigChange(config.copy(playMode = PlayMode.PHRASES)) }
+    )
+    FilterCheck(
+        label = "Pres.",
+        selected = "present" in config.tenses,
+        labelColor = labelColor,
+        onToggle = {
+            val now = if ("present" in config.tenses) config.tenses - "present"
+                      else config.tenses + "present"
+            onConfigChange(config.copy(tenses = now))
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            TransportIcon(
-                icon = playPauseIcon,
-                label = playPauseLabel,
-                enabled = transport?.pauseResume != null,
-                onClick = { PlaybackController.pauseResume() }
-            )
-            TransportIcon(
-                icon = Icons.Filled.Stop,
-                label = "Stop",
-                enabled = anyPlaying,
-                onClick = { PlaybackController.stop() }
-            )
+    )
+    FilterCheck(
+        label = "Past",
+        selected = "past" in config.tenses,
+        labelColor = labelColor,
+        onToggle = {
+            val now = if ("past" in config.tenses) config.tenses - "past"
+                      else config.tenses + "past"
+            onConfigChange(config.copy(tenses = now))
         }
+    )
+    if (config.playMode == PlayMode.PHRASES) {
+        FilterCheck(
+            label = "Adj",
+            selected = config.adjectiveMode != IncludeMode.OFF,
+            labelColor = labelColor,
+            onToggle = {
+                val now = if (config.adjectiveMode == IncludeMode.OFF) IncludeMode.YES
+                          else IncludeMode.OFF
+                onConfigChange(config.copy(adjectiveMode = now))
+            }
+        )
+        FilterCheck(
+            label = "Adv",
+            selected = config.adverbMode != IncludeMode.OFF,
+            labelColor = labelColor,
+            onToggle = {
+                val now = if (config.adverbMode == IncludeMode.OFF) IncludeMode.YES
+                          else IncludeMode.OFF
+                onConfigChange(config.copy(adverbMode = now))
+            }
+        )
+    }
+    if (showQuizDelay) {
+        QuizDelayControl(
+            seconds = config.quizDelaySeconds,
+            onChange = { onConfigChange(config.copy(quizDelaySeconds = it)) }
+        )
+    }
+    CacheBadge(prefetch)
+}
+
+@Composable
+private fun FilterCheck(
+    label: String,
+    selected: Boolean,
+    labelColor: Color,
+    onToggle: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 2.dp, vertical = 1.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(14.dp)
+                .border(
+                    width = 1.5.dp,
+                    color = if (selected) LbColors.Primary else LbColors.TextMuted,
+                    shape = RoundedCornerShape(2.dp)
+                )
+                .background(
+                    color = if (selected) LbColors.Primary else Color.Transparent,
+                    shape = RoundedCornerShape(2.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (selected) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(12.dp)
+                )
+            }
+        }
+        Spacer(Modifier.width(3.dp))
+        Text(
+            label,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = labelColor,
+            maxLines = 1
+        )
     }
 }
 
 /**
- * The controls strip at the top of the now-voicing panel. Toggles the "Drill: Words /
+ * The controls strip at the top of the now-voicing panel. Toggles the "Drill: Verbs /
  * Sentences" play-mode, present/past tense, and (in Sentences mode) adj/adv inclusion.
  * When [showQuizDelay]
  * is true the right edge gets a delay slider used by the verb quiz between English
@@ -697,9 +876,9 @@ private fun CacheBadge(prefetch: PrefetchProgress) {
 
 /**
  * Playback-mode toggle for the "Play Phrases" auto-drill — NOT navigation. The leading
- * "Drill:" caption plus the labels "Words / Sentences" keep it from colliding with the
+ * "Drill:" caption plus the labels "Verbs / Sentences" keep it from colliding with the
  * left-hand Verbs/Phrases tab nav, which it used to mirror confusingly as "Words /
- * Phrases" (two controls both ending in "Phrases"). Words = pronoun + verb forms
+ * Phrases" (two controls both ending in "Phrases"). Verbs = pronoun + verb forms
  * ("ja jestem"); Sentences = full example sentences. Tap either label to jump, or
  * drag the switch knob. (Backed by PlayMode.VERBS / PlayMode.PHRASES — the enum keeps
  * its historical names; only the user-facing labels changed.)
@@ -716,7 +895,7 @@ private fun PlayModeSlider(mode: PlayMode, onChange: (PlayMode) -> Unit) {
             modifier = Modifier.padding(end = 6.dp)
         )
         Text(
-            "Words",
+            "Verbs",
             fontSize = 11.sp,
             fontWeight = if (!isPhrases) FontWeight.SemiBold else FontWeight.Normal,
             color = if (!isPhrases) LbColors.Primary else LbColors.TextMuted,

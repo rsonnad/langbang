@@ -5,8 +5,8 @@
 #
 # Single edge invocations would blow past Supabase's per-function wall clock
 # (122 lemmas × ~27s ≈ 9 min). So this script slices the lemma list into
-# chunks small enough to finish well under the limit (default 8 lemmas per
-# invocation × parallelism 6 ≈ 40s wall time) and fires them concurrently
+# chunks small enough to finish well under the limit (default 4 lemmas per
+# invocation × parallelism 6 ≈ 60-90s wall time) and fires them concurrently
 # from the local shell (default 4 in flight). After every chunk returns the
 # script rebuilds the canonical manifest at langbang/sentences/v{N}/manifest.json
 # by walking R2 (since each function call only sees its own chunk).
@@ -15,9 +15,11 @@
 #   ./scripts/trigger-pregen-sentences.sh [--refresh] [--chunk N] [--concurrency N]
 #                                          [--parallelism N] [--version N]
 #
-# Defaults: chunk=8 lemmas, concurrency=4 in-flight invocations, parallelism=6
-# Gemini calls per invocation. Tune up if the function isn't timing out and
-# you want to burn through faster.
+# Defaults: chunk=4 lemmas, concurrency=4 in-flight invocations, parallelism=6
+# Gemini calls per invocation. chunk=8 was the old default but ~half its
+# invocations breached the Edge Function's 120s wall clock (cold start + 8
+# lemmas ran 97-115s, 2026-05-31); chunk=4 lands at 70-93s with headroom. Tune
+# up only if you confirm the function isn't timing out.
 
 set -euo pipefail
 
@@ -26,7 +28,7 @@ cd "$REPO_ROOT"
 
 REFRESH=false
 PARALLELISM=6
-CHUNK=8
+CHUNK=4
 CONCURRENCY=4
 PROMPT_VERSION=""
 
@@ -61,6 +63,23 @@ echo "→ prompt version v$PROMPT_VERSION  chunk=$CHUNK  concurrency=$CONCURRENC
 ANON_KEY=$(grep -oE 'SUPABASE_ANON_KEY=[A-Za-z0-9._-]+' local.properties | cut -d= -f2-)
 [ -n "$ANON_KEY" ] || { echo "SUPABASE_ANON_KEY missing from local.properties" >&2; exit 1; }
 URL="https://aphrrfprbixmhissnjfn.supabase.co/functions/v1/langbang-pregen-sentences"
+
+# Fetch R2 creds NOW, while the BW session is fresh. Generation below can run for
+# several minutes, and the vault may auto-lock in that window — if we deferred this
+# to the manifest step the bw call would drop into an interactive prompt and crash
+# on closed stdin (observed 2026-05-31). Capturing the secrets up front sidesteps
+# the lock entirely; the plain string creds don't expire. `</dev/null` guarantees
+# bw fails fast instead of hanging if the session is already bad.
+export BW_SESSION="${BW_SESSION:-$(~/bin/bw-unlock)}"
+R2_ITEM=$(bw get item "Cloudflare R2 — Object Storage" --session "$BW_SESSION" </dev/null)
+r2field() { jq -r --arg n "$1" '.fields[] | select(.name==$n) | .value' <<< "$R2_ITEM"; }
+export AWS_ACCESS_KEY_ID="$(r2field 'Access Key ID')"
+export AWS_SECRET_ACCESS_KEY="$(r2field 'Secret Access Key')"
+export AWS_DEFAULT_REGION=auto
+[ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ] || {
+  echo "could not read R2 creds from Bitwarden (session locked?). Run: export BW_SESSION=\$(~/bin/bw-unlock)" >&2
+  exit 1
+}
 
 # Build the master list of (type, payload) entries. Each entry is one lemma.
 # We mix verbs/adjectives/adverbs in a single round-robin so a single chunk
@@ -156,12 +175,9 @@ done | xargs -P "$CONCURRENCY" -n2 -I{} bash -c '
 # manifest pointing at whatever DID land.
 echo
 echo "→ rebuilding manifest from R2 listing"
-export BW_SESSION="${BW_SESSION:-$(~/bin/bw-unlock)}"
-ITEM=$(bw get item "Cloudflare R2 — Object Storage" --session "$BW_SESSION")
-field() { jq -r --arg n "$1" '.fields[] | select(.name==$n) | .value' <<< "$ITEM"; }
-export AWS_ACCESS_KEY_ID="$(field 'Access Key ID')"
-export AWS_SECRET_ACCESS_KEY="$(field 'Secret Access Key')"
-export AWS_DEFAULT_REGION=auto
+# R2 creds were captured at the top of the script (AWS_ACCESS_KEY_ID /
+# AWS_SECRET_ACCESS_KEY / AWS_DEFAULT_REGION) while the BW session was fresh —
+# no bw call here, so vault auto-lock during generation can't break the upload.
 ENDPOINT="https://9cd3a280a54ce2a5b382602f0247b577.r2.cloudflarestorage.com"
 PUBLIC_BASE="https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev"
 PREFIX="langbang/sentences/v${PROMPT_VERSION}/"

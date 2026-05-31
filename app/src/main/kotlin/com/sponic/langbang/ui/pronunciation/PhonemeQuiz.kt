@@ -22,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -73,6 +74,10 @@ fun PhonemeQuiz(
     var index by remember { mutableStateOf(0) }
     // Bumped by "Play all" to retrigger the LaunchedEffect on the same index.
     var playToken by remember(index) { mutableStateOf(0) }
+    // Playback intent. Tapping Stop flips this false (cancels the chain + stops audio);
+    // tapping Play flips it back true (replays the current card). Resets to true on each
+    // new card so auto-advance keeps the deck flowing.
+    var playing by remember(index) { mutableStateOf(true) }
     val current = deck.getOrNull(index)
 
     // Stop any in-flight audio when this dialog leaves the composition.
@@ -81,9 +86,10 @@ fun PhonemeQuiz(
     }
 
     // Auto-play the 3 examples in sequence, then advance. Cancelling the coroutine
-    // (back/next/Play all/close) stops audio; the next launch starts a fresh chain.
-    LaunchedEffect(index, playToken) {
+    // (back/next/Stop/Play/close) stops audio; the next launch starts a fresh chain.
+    LaunchedEffect(index, playToken, playing) {
         app.audioPlayer.stop()
+        if (!playing) return@LaunchedEffect
         val phoneme = current ?: return@LaunchedEffect
         // Tiny lead-in so the card has a beat to register before audio starts.
         delay(150)
@@ -92,10 +98,13 @@ fun PhonemeQuiz(
             playFileAndAwait(app, exampleFile(app, ex))
             if (i < examples.lastIndex) delay(220)
         }
-        // Auto-advance only after a clean playthrough. End-of-deck stays put.
+        // Auto-advance only after a clean playthrough. End-of-deck stays put and flips
+        // the button back to "Play all" since nothing is sounding anymore.
         if (index < deck.size - 1) {
             delay(450)
             index += 1
+        } else {
+            playing = false
         }
     }
 
@@ -119,6 +128,7 @@ fun PhonemeQuiz(
                         app.audioPlayer.stop()
                         index = 0
                         playToken = 0
+                        playing = true
                     }
                 )
 
@@ -146,7 +156,15 @@ fun PhonemeQuiz(
                         PhonemePane(
                             app = app,
                             phoneme = current,
-                            onPlayAll = { playToken += 1 },
+                            playing = playing,
+                            onTogglePlay = {
+                                if (playing) {
+                                    playing = false
+                                } else {
+                                    playing = true
+                                    playToken += 1
+                                }
+                            },
                             modifier = Modifier.weight(1f).fillMaxHeight()
                         )
                         NavArrow(
@@ -231,7 +249,8 @@ private fun NavArrow(
 private fun PhonemePane(
     app: LangbangApplication,
     phoneme: PhonemeEntry,
-    onPlayAll: () -> Unit,
+    playing: Boolean,
+    onTogglePlay: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -257,21 +276,24 @@ private fun PhonemePane(
                 modifier = Modifier.weight(0.55f).fillMaxHeight(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Play-all button at the top of the right pane.
+                // Play/Stop toggle at the top of the right pane. Stop cancels the
+                // auto-play chain so the user can pause on a card; Play replays it.
                 Button(
-                    onClick = onPlayAll,
+                    onClick = onTogglePlay,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
+                        containerColor = if (playing) LbColors.Danger
+                        else MaterialTheme.colorScheme.primary
                     ),
                     shape = RoundedCornerShape(20.dp),
                     modifier = Modifier.fillMaxWidth().height(40.dp)
                 ) {
                     Icon(
-                        Icons.Default.PlayArrow, contentDescription = null,
+                        if (playing) Icons.Default.Stop else Icons.Default.PlayArrow,
+                        contentDescription = null,
                         tint = Color.White, modifier = Modifier.size(20.dp)
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text("Play all", color = Color.White,
+                    Text(if (playing) "Stop" else "Play all", color = Color.White,
                         fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                 }
                 Row(verticalAlignment = Alignment.Bottom) {

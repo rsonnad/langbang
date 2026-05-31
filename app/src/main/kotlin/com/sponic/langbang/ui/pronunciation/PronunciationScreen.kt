@@ -54,6 +54,9 @@ import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.data.model.ExampleWord
 import com.sponic.langbang.data.model.PhonemeEntry
+import com.sponic.langbang.data.model.TokenPair
+import com.sponic.langbang.domain.NowVoicing
+import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.integrations.AzureTtsClient
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
@@ -125,34 +128,35 @@ private fun PhonemeList(
                 ),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                // Letter sized to match the Verbs/Adjectives lists (16sp, was 24sp) and
-                // kept on the SAME row as the IPA + the english approximation — no line
-                // break after the letter. The approximation is small (11sp) and wraps
-                // within its own column so a long hint costs at most one extra line.
-                Row(
+                // Letter + IPA on the first line (top-left justified); the english
+                // approximation wraps on its own line UNDERNEATH, spanning the full card
+                // width. Stacking instead of a single row lets a long hint use the whole
+                // width — fewer lines, no skinny right-hand column eating horizontal space.
+                Column(
                     Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    Text(
-                        ph.letter,
-                        color = if (isSelected) Color.White else LbColors.Primary,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        ph.ipa,
-                        color = if (isSelected) Color.White else LbColors.TextSecondary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(Modifier.width(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            ph.letter,
+                            color = if (isSelected) Color.White else LbColors.Primary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            ph.ipa,
+                            color = if (isSelected) Color.White else LbColors.TextSecondary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                     Text(
                         ph.englishApproximation,
                         color = if (isSelected) Color.White.copy(alpha = 0.85f)
                         else LbColors.TextMuted,
                         fontSize = 11.sp,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
@@ -191,6 +195,7 @@ private fun PhonemeDetail(
             playAllJob?.cancel()
             playAllJob = null
             app.audioPlayer.stop()
+            NowVoicingBus.clear()
         }
     }
 
@@ -253,12 +258,25 @@ private fun PhonemeDetail(
                         playingAll = false
                         playingWord = null
                         app.audioPlayer.stop()
+                        NowVoicingBus.clear()
                     } else {
                         playingAll = true
                         playAllJob = scope.launch {
                             try {
                                 phoneme.examples.forEach { ex ->
                                     playingWord = ex.pl
+                                    // Surface the word in the sticky Now Voicing panel so the
+                                    // user sees the PL/EN of whatever is sounding (same panel the
+                                    // verb/noun reciters drive). Single-token gloss.
+                                    NowVoicingBus.publish(
+                                        NowVoicing(
+                                            en = ex.en,
+                                            pl = ex.pl,
+                                            literal = null,
+                                            lang = "pl",
+                                            words = listOf(TokenPair(ex.pl, ex.en))
+                                        )
+                                    )
                                     val f = app.audioCache.fileFor(
                                         AzureTtsClient.LOCALE_PL,
                                         AzureTtsClient.PL_PL_F,
@@ -270,6 +288,7 @@ private fun PhonemeDetail(
                             } finally {
                                 playingAll = false
                                 playingWord = null
+                                NowVoicingBus.clear()
                             }
                         }
                     }

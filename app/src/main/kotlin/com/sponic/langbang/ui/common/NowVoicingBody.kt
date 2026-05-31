@@ -6,14 +6,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -78,6 +77,7 @@ fun NowVoicingBody(
     // slot — keeps the row height stable.
     val plTokens: List<String>
     val glossTokens: List<String>
+    val structuredWords = pinned.words
     if (pinned.words != null && pinned.words.isNotEmpty()) {
         plTokens = pinned.words.map { it.pl }
         glossTokens = pinned.words.map { it.en }
@@ -95,12 +95,15 @@ fun NowVoicingBody(
         verticalArrangement = Arrangement.spacedBy(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            statusText,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = LbColors.Label
-        )
+        if (statusText.isNotBlank()) {
+            Text(
+                statusText,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = LbColors.Label,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
         Text(
             pinned.en,
             fontSize = 18.sp,
@@ -112,35 +115,60 @@ fun NowVoicingBody(
         // centers its own contents. Gloss row reserved even when missing so columns
         // line up across token-count-1 (verb conjugation) and token-count-N
         // (sentence) renderings.
-        FlowRow(
+        val totalChars = plTokens.sumOf { it.length } + (plTokens.size - 1).coerceAtLeast(0) * 2
+        val polishFontSize = when {
+            totalChars > 55 -> 28.sp
+            totalChars > 46 -> 32.sp
+            totalChars > 38 -> 36.sp
+            totalChars > 30 -> 42.sp
+            else -> 52.sp
+        }
+        val glossFontSize = when {
+            totalChars > 46 -> 11.sp
+            totalChars > 38 -> 12.sp
+            else -> 14.sp
+        }
+        val tokenPad = if (totalChars > 38) 4.dp else 8.dp
+        Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center,
-            verticalArrangement = Arrangement.spacedBy(2.dp)
+            verticalAlignment = Alignment.CenterVertically
         ) {
             plTokens.forEachIndexed { i, plTok ->
                 val gloss = glossTokens.getOrNull(i).orEmpty()
+                val token = structuredWords?.getOrNull(i)
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
-                        .padding(horizontal = 8.dp)
+                        .padding(horizontal = tokenPad)
                         .clickable { onPlWordClick(plTok) }
                 ) {
                     val displayed = if (plHidden) "•".repeat(plTok.length.coerceAtLeast(2))
                                     else plTok
-                    Text(
-                        displayed,
-                        fontSize = 52.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = when {
+                    val plColor = when {
                             plHidden -> LbColors.TextMuted.copy(alpha = 0.5f)
+                            token?.gender != null -> GrammarVisuals.Gender.color(token.gender)
                             plActive || slowActive -> LbColors.TextPrimary
                             pausing -> LbColors.TextSecondary
                             else -> LbColors.TextPrimary
                         }
+                    OutlinedPolishText(
+                        text = displayed,
+                        fillColor = plColor,
+                        outlineColor = if (plHidden) null else token?.caseKey?.let { GrammarVisuals.Case.color(it) },
+                        fontSize = polishFontSize,
+                        fontWeight = FontWeight.Bold,
+                        outlineWidth = GrammarVisuals.NounForm.NowVoicingOutlineWidth,
+                        backingOutlineExtraWidth = GrammarVisuals.NounForm.NowVoicingBackingExtraWidth,
+                        glyphGap = GrammarVisuals.NounForm.NowVoicingGlyphGap,
+                        maxLines = 1,
+                        softWrap = false
                     )
                     Text(
                         if (plHidden || gloss.isEmpty()) " " else gloss,
-                        fontSize = 14.sp,
+                        fontSize = glossFontSize,
+                        maxLines = 1,
+                        softWrap = false,
                         color = LbColors.Label,
                         fontStyle = FontStyle.Italic,
                         fontWeight = FontWeight.SemiBold

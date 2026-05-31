@@ -99,6 +99,32 @@ internal class RandomPlayerState(
         launchFromCurrent()
     }
 
+    fun reconfigure(config: RandomConfig) {
+        if (!playing && !paused) return
+        val wasPaused = paused
+        job?.cancel()
+        job = null
+        app.audioPlayer.stop()
+        phrases = collectPhrases(config)
+        queueSize = phrases.size
+        currentIndex = 0
+        position = if (phrases.isEmpty()) 0 else 1
+        if (phrases.isEmpty()) {
+            playing = false
+            paused = false
+            NowVoicingBus.clear()
+            PlaybackController.unregister()
+            return
+        }
+        if (wasPaused) {
+            playing = false
+            paused = true
+            republishCurrent()
+        } else {
+            launchFromCurrent()
+        }
+    }
+
     fun pause() {
         if (!playing) return
         playing = false
@@ -179,10 +205,12 @@ internal class RandomPlayerState(
                 val pos = "${i + 1}/${phrases.size}"
                 pub(s, "en", pos)
                 playAndAwait(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                pub(s, "pl-slow", pos)
-                playAndAwait(s.pl, AzureTtsClient.LOCALE_PL, app.audioPrefs.slowPlVoice())
-                pub(s, "en", pos)
-                playAndAwait(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                if (app.practicePrefs.slowFirst()) {
+                    pub(s, "pl-slow", pos)
+                    playAndAwait(s.pl, AzureTtsClient.LOCALE_PL, app.audioPrefs.slowPlVoice())
+                    pub(s, "en", pos)
+                    playAndAwait(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                }
                 pub(s, "pl", pos)
                 playAndAwait(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
                 // Only advance if pause/rewind/restart didn't move us elsewhere.
@@ -242,7 +270,7 @@ internal class RandomPlayerState(
             .split(Regex("\\s+"))
             .filter { it.isNotEmpty() }
             .takeIf { it.isNotEmpty() }
-        val prepFilter = effectiveConfig.prepositions.takeIf { it.isNotEmpty() }
+        val prepFilter = effectiveConfig.prepositions.toUiPrepositions()
         // Union of every verb conjugation matching the selected persons × tenses.
         // Adjective + adverb sentences are required to contain at least one of these
         // verb forms so an "oni/wy/my" sentence can't sneak in when the user has only
@@ -283,7 +311,8 @@ internal class RandomPlayerState(
             )
         }
 
-        val combined = (verbSentences + adjSentences + advSentences).distinctBy { it.pl }
+        val phraseBankSentences = collectPhraseBankSentences(mustContainTokens, prepFilter)
+        val combined = (verbSentences + adjSentences + advSentences + phraseBankSentences).distinctBy { it.pl }
         // Always shuffle, regardless of adjective mode. Earlier behavior kept
         // round-robin order when adjMode == ALL — but a user reported on
         // 2026-05-28 that "Play Phrases" felt deterministic, and the hidden
@@ -368,7 +397,7 @@ internal class RandomPlayerState(
     private fun collectVerbSentences(
         personKeys: Set<String>,
         mustContainTokens: List<String>?,
-        prepFilter: Set<String>?,
+        prepFilter: Set<String>,
         tense: String
     ): List<SentenceExample> {
         val verbLesson = app.lessonRepo.lesson2()
@@ -391,7 +420,7 @@ internal class RandomPlayerState(
 
     private fun collectAdjectiveSentencesFiltered(
         mustContainTokens: List<String>?,
-        prepFilter: Set<String>?,
+        prepFilter: Set<String>,
         allowedVerbForms: Set<String>
     ): List<SentenceExample> {
         val adjLesson = app.lessonRepo.lesson3()
@@ -410,7 +439,7 @@ internal class RandomPlayerState(
      */
     private fun collectAdjectivesRoundRobin(
         mustContainTokens: List<String>?,
-        prepFilter: Set<String>?,
+        prepFilter: Set<String>,
         allowedVerbForms: Set<String>
     ): List<SentenceExample> {
         val adjLesson = app.lessonRepo.lesson3()
@@ -433,7 +462,7 @@ internal class RandomPlayerState(
 
     private fun collectAdverbSentencesFiltered(
         mustContainTokens: List<String>?,
-        prepFilter: Set<String>?,
+        prepFilter: Set<String>,
         allowedVerbForms: Set<String>
     ): List<SentenceExample> {
         val advLesson = app.lessonRepo.lesson4()
@@ -445,9 +474,20 @@ internal class RandomPlayerState(
         }
     }
 
+    private fun collectPhraseBankSentences(
+        mustContainTokens: List<String>?,
+        prepFilter: Set<String>
+    ): List<SentenceExample> {
+        return app.lessonRepo.lesson5().groups.flatMap { group ->
+            group.sentences
+                .filter { passesPrepFilter(it.pl, prepFilter) }
+                .filter { passesMustContain(it.pl, mustContainTokens) }
+        }
+    }
+
     private fun collectAdverbsRoundRobin(
         mustContainTokens: List<String>?,
-        prepFilter: Set<String>?,
+        prepFilter: Set<String>,
         allowedVerbForms: Set<String>
     ): List<SentenceExample> {
         val advLesson = app.lessonRepo.lesson4()
@@ -501,10 +541,12 @@ internal class RandomPlayerState(
             .any { it.isNotEmpty() && it in allowed }
     }
 
-    private fun passesPrepFilter(pl: String, prepFilter: Set<String>?): Boolean {
-        if (prepFilter == null) return true
+    private fun passesPrepFilter(pl: String, prepFilter: Set<String>): Boolean {
         val tokens = pl.lowercase().split(Regex("[^\\p{L}]+"))
-        return tokens.any { it in prepFilter }
+        val tracked = tokens.filter { it in RandomConfig.PREPOSITIONS }
+        val allowsNone = RandomConfig.PREPOSITION_NONE in prepFilter
+        if (tracked.isEmpty()) return allowsNone
+        return tracked.any { it in prepFilter }
     }
 
     private fun passesMustContain(pl: String, mustContainTokens: List<String>?): Boolean {
@@ -513,5 +555,11 @@ internal class RandomPlayerState(
         // "kawy") all match the stem. With multiple tokens, every token must hit.
         val hay = pl.lowercase()
         return mustContainTokens.all { hay.contains(it) }
+    }
+
+    private fun Set<String>.toUiPrepositions(): Set<String> {
+        val allowed = RandomConfig.PREPOSITIONS.toSet() + RandomConfig.PREPOSITION_NONE
+        val cleaned = intersect(allowed)
+        return cleaned.ifEmpty { setOf(RandomConfig.PREPOSITION_NONE) }
     }
 }

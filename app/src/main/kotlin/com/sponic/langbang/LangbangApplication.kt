@@ -9,8 +9,10 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.sponic.langbang.data.AudioPrefsStore
 import com.sponic.langbang.data.LessonRepository
+import com.sponic.langbang.data.PracticePrefsStore
 import com.sponic.langbang.data.PronounFilterStore
 import com.sponic.langbang.data.RandomConfigStore
+import com.sponic.langbang.data.StarredPhrasesStore
 import com.sponic.langbang.domain.AudioCache
 import com.sponic.langbang.domain.AudioPlayer
 import com.sponic.langbang.domain.BackupService
@@ -51,6 +53,10 @@ class LangbangApplication : Application() {
         private set
     lateinit var randomConfig: RandomConfigStore
         private set
+    lateinit var practicePrefs: PracticePrefsStore
+        private set
+    lateinit var starredPhrases: StarredPhrasesStore
+        private set
     lateinit var audioPrefs: AudioPrefsStore
         private set
     lateinit var r2Audio: R2AudioDownloader
@@ -68,6 +74,8 @@ class LangbangApplication : Application() {
         sentenceRegen = SentenceRegenService(lessonRepo)
         pronounFilter = PronounFilterStore(this)
         randomConfig = RandomConfigStore(this)
+        practicePrefs = PracticePrefsStore(this)
+        starredPhrases = StarredPhrasesStore(this)
         audioPrefs = AudioPrefsStore(this)
         audioCache = AudioCache(this)
         audioPlayer = AudioPlayer()

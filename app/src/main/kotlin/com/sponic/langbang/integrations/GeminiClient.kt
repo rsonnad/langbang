@@ -38,7 +38,7 @@ class GeminiClient(
          * client downloader pulls from a fresh tree even if only one type bumped.
          * Cheap — Gemini calls for the whole canonical set are pennies.
          */
-        const val SENTENCE_PROMPT_VERSION = 3
+        const val SENTENCE_PROMPT_VERSION = 4
 
         /**
          * Per-type wipe versions. Bump ONE of these when its prompt changes so
@@ -54,6 +54,13 @@ class GeminiClient(
          * costing the user ~45 min of on-device verb regen for content that
          * was already correct. These per-type keys make the wipe surgical.
          *
+         * v4 (2026-05-31): all four sentence prompts (verb/adj/adv/noun) now ask
+         * Gemini to tag each noun/pronoun/adjective token with "gender" (m/f/n)
+         * and "caseKey" (nom/acc/gen/…) so the Now Voicing panel can color-code by
+         * gender (fill) and case (outline). All four wipe versions bumped because
+         * every prompt's `words` shape changed; the matching Edge Function + R2 v4
+         * tree are regenerated in the same change.
+         *
          * v3 (2026-05-28): adj+adv prompts gained the "10-year-old test" plus
          * explicit bad examples (difficult weather, important key, easy gift,
          * health doctor). Verb prompt unchanged.
@@ -67,12 +74,12 @@ class GeminiClient(
          * unchanged (R2 v3 verb bundles are identical bytes copied from v2), so users
          * don't get worse content — they just get all of it instead of 15 of it.
          */
-        const val VERB_WIPE_VERSION = 2
-        const val ADJECTIVE_WIPE_VERSION = 4
-        const val ADVERB_WIPE_VERSION = 4
+        const val VERB_WIPE_VERSION = 3
+        const val ADJECTIVE_WIPE_VERSION = 5
+        const val ADVERB_WIPE_VERSION = 5
 
-        /** Nouns shipped in v0.1.x — first prompt version, no prior cache to wipe. */
-        const val NOUN_WIPE_VERSION = 1
+        /** Bumped to 2 in v4 (gender/case token tagging — see SENTENCE_PROMPT_VERSION). */
+        const val NOUN_WIPE_VERSION = 2
     }
 
     private val key = BuildConfig.GEMINI_API_KEY
@@ -315,9 +322,14 @@ class GeminiClient(
             "    (collapse contractions into one token). When a Polish word maps to a multi-" +
             "    word English gloss use a hyphen (\"I-am\"). The number of \"words\" entries " +
             "    MUST equal the Polish word count exactly. " +
+            "For each NOUN, PRONOUN, or ADJECTIVE token, ALSO include \"gender\" (\"m\", " +
+            "\"f\", or \"n\") and \"caseKey\" (one of \"nom\", \"acc\", \"gen\", \"dat\", " +
+            "\"inst\", \"loc\", \"voc\"); OMIT both keys for verbs, prepositions, adverbs, " +
+            "and particles. " +
             "Return ONLY a JSON array (no prose, no markdown fence) where each element has " +
             "the exact shape {\"pl\":\"...\",\"en\":\"...\",\"literal\":\"...\"," +
-            "\"words\":[{\"pl\":\"...\",\"en\":\"...\"}]}."
+            "\"words\":[{\"pl\":\"...\",\"en\":\"...\",\"gender\":\"m|f|n|omit\"," +
+            "\"caseKey\":\"nom|acc|gen|dat|inst|loc|voc|omit\"}]}."
     }
 
     private fun parseSentenceResponse(raw: String): List<SentenceExample> {
@@ -339,7 +351,12 @@ class GeminiClient(
                 val wo = w.jsonObject
                 val wpl = wo["pl"]?.jsonPrimitive?.content?.trim().orEmpty()
                 val wen = wo["en"]?.jsonPrimitive?.content?.trim().orEmpty()
-                if (wpl.isEmpty()) null else TokenPair(wpl, wen)
+                val wgender = wo["gender"]?.jsonPrimitive?.content?.trim()?.lowercase()
+                    ?.takeIf { it.isNotEmpty() }
+                val wcase = wo["caseKey"]?.jsonPrimitive?.content?.trim()?.lowercase()
+                    ?.takeIf { it.isNotEmpty() }
+                if (wpl.isEmpty()) null
+                else TokenPair(wpl, wen, gender = wgender, caseKey = wcase)
             }?.takeIf { it.isNotEmpty() }
             if (pl.isEmpty() || en.isEmpty()) null
             else SentenceExample(pl, en, literal, words)
@@ -451,9 +468,14 @@ class GeminiClient(
             "    When a Polish word maps to a multi-word English gloss use a hyphen " +
             "    (\"I-have\"). The number of \"words\" entries MUST equal the Polish word " +
             "    count exactly — every Polish token gets its own gloss. " +
+            "For each NOUN, PRONOUN, or ADJECTIVE token, ALSO include \"gender\" (\"m\", " +
+            "\"f\", or \"n\") and \"caseKey\" (one of \"nom\", \"acc\", \"gen\", \"dat\", " +
+            "\"inst\", \"loc\", \"voc\"); OMIT both keys for verbs, prepositions, adverbs, " +
+            "and particles. " +
             "Return ONLY a JSON array (no prose, no markdown fence) where each element has " +
             "the exact shape {\"pl\":\"...\",\"en\":\"...\",\"literal\":\"...\"," +
-            "\"words\":[{\"pl\":\"...\",\"en\":\"...\"}]}."
+            "\"words\":[{\"pl\":\"...\",\"en\":\"...\",\"gender\":\"m|f|n|omit\"," +
+            "\"caseKey\":\"nom|acc|gen|dat|inst|loc|voc|omit\"}]}."
     }
 
     private fun parseAdjectiveResponse(raw: String, englishFallback: String): AdjectiveEntry {
@@ -585,9 +607,14 @@ class GeminiClient(
         "    When a Polish word maps to a multi-word English gloss use a hyphen " +
         "    (\"I-am\"). The number of \"words\" entries MUST equal the Polish word count " +
         "    exactly — every Polish token gets its own gloss. " +
+        "For each NOUN, PRONOUN, or ADJECTIVE token, ALSO include \"gender\" (\"m\", " +
+        "\"f\", or \"n\") and \"caseKey\" (one of \"nom\", \"acc\", \"gen\", \"dat\", " +
+        "\"inst\", \"loc\", \"voc\"); OMIT both keys for verbs, prepositions, adverbs, " +
+        "and particles. " +
         "Return ONLY a JSON array (no prose, no markdown fence) where each element has " +
         "the exact shape {\"pl\":\"...\",\"en\":\"...\",\"literal\":\"...\"," +
-        "\"words\":[{\"pl\":\"...\",\"en\":\"...\"}]}."
+        "\"words\":[{\"pl\":\"...\",\"en\":\"...\",\"gender\":\"m|f|n|omit\"," +
+        "\"caseKey\":\"nom|acc|gen|dat|inst|loc|voc|omit\"}]}."
 
     private fun parseAdverbResponse(raw: String, englishFallback: String): AdverbEntry {
         val root = json.parseToJsonElement(raw).jsonObject
@@ -720,9 +747,14 @@ class GeminiClient(
             "    When a Polish word maps to a multi-word English gloss use a hyphen " +
             "    (\"I-have\"). The number of \"words\" entries MUST equal the Polish word " +
             "    count exactly — every Polish token gets its own gloss. " +
+            "For each NOUN, PRONOUN, or ADJECTIVE token, ALSO include \"gender\" (\"m\", " +
+            "\"f\", or \"n\") and \"caseKey\" (one of \"nom\", \"acc\", \"gen\", \"dat\", " +
+            "\"inst\", \"loc\", \"voc\"); OMIT both keys for verbs, prepositions, adverbs, " +
+            "and particles. " +
             "Return ONLY a JSON array (no prose, no markdown fence) where each element has " +
             "the exact shape {\"pl\":\"...\",\"en\":\"...\",\"literal\":\"...\"," +
-            "\"words\":[{\"pl\":\"...\",\"en\":\"...\"}]}."
+            "\"words\":[{\"pl\":\"...\",\"en\":\"...\",\"gender\":\"m|f|n|omit\"," +
+            "\"caseKey\":\"nom|acc|gen|dat|inst|loc|voc|omit\"}]}."
     }
 
     private fun parseNounResponse(raw: String, englishFallback: String): NounEntry {

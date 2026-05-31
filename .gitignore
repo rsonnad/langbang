@@ -20,3 +20,4 @@ artifacts/
 captures/
 __pycache__/
 *.pyc
+.claude/

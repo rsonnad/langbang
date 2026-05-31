@@ -27,6 +27,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -47,11 +48,15 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.sponic.langbang.BuildConfig
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.data.PronounFilterStore
 import com.sponic.langbang.data.SlowStyle
 import com.sponic.langbang.domain.UsageSnapshot
+import com.sponic.langbang.ui.common.GrammarVisuals
+import com.sponic.langbang.ui.common.OutlinedPolishText
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -74,6 +79,8 @@ fun SettingsScreen(app: LangbangApplication) {
     ) {
         VersionHeader()
         PracticePronounsCard(app = app)
+        PracticePlaybackCard(app = app)
+        NounColorLegendCard()
         RegenerateSentencesCard(app = app, scope = scope, context = context)
         AudioDownloadCard(app = app, scope = scope, context = context)
         SlowAudioStyleCard(app = app)
@@ -101,6 +108,98 @@ fun SettingsScreen(app: LangbangApplication) {
                 }
             },
             onCopyKey = { copyToClipboard(context, "SSH public key", backup.publicKeyOpenSsh) }
+        )
+    }
+}
+
+@Composable
+private fun PracticePlaybackCard(app: LangbangApplication) {
+    var slowFirst by remember { mutableStateOf(app.practicePrefs.slowFirst()) }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionHeader("Practice playback")
+            Text(
+                "Shared playback options for Play All and phrase drills.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            )
+            FilterChip(
+                selected = slowFirst,
+                onClick = {
+                    slowFirst = !slowFirst
+                    app.practicePrefs.setSlowFirst(slowFirst)
+                },
+                label = { Text("Slow Polish first", fontSize = 12.sp) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = Color.White
+                )
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun NounColorLegendCard() {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SectionHeader("Noun colors")
+            Text(
+                "Only Polish noun forms are colored: fill by gender, letter outline by case.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                LegendChip("masculine", "pies", textColor = GrammarVisuals.Gender.Masculine)
+                LegendChip("feminine", "kobieta", textColor = GrammarVisuals.Gender.Feminine)
+                LegendChip("neuter", "dziecko", textColor = GrammarVisuals.Gender.Neuter)
+            }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                LegendChip("Nominative", "pies", outlineColor = GrammarVisuals.Case.Nominative)
+                LegendChip("Accusative", "psa", outlineColor = GrammarVisuals.Case.Accusative)
+                LegendChip("Genitive", "psa", outlineColor = GrammarVisuals.Case.Genitive)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LegendChip(
+    label: String,
+    sample: String,
+    textColor: Color = MaterialTheme.colorScheme.primary,
+    outlineColor: Color? = null
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            modifier = Modifier.padding(end = 6.dp)
+        )
+        OutlinedPolishText(
+            text = sample,
+            fillColor = textColor,
+            outlineColor = outlineColor,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            outlineWidth = GrammarVisuals.NounForm.LegendOutlineWidth,
+            backingOutlineExtraWidth = GrammarVisuals.NounForm.LegendBackingExtraWidth,
+            glyphGap = GrammarVisuals.NounForm.LegendGlyphGap,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
         )
     }
 }

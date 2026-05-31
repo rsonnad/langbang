@@ -452,17 +452,61 @@ voicing" pass (new 6 verbs + 6 adjectives + 30 nouns). Three traps:
   `scripts/populate-r2-audio.py` now reads bundles from `$LANGBANG_SENTENCES_DIR`
   (the synced dir) when set, falling back to throttled HTTP otherwise.
 
-**2. `trigger-pregen-sentences.sh` has two failure modes.**
-- Its 120s per-chunk `curl --max-time` is too short for a chunk containing several
-  verbs — each verb = present+past = 2 Gemini bundles (~27s each). The chunk's
-  client curl times out and the script prints `✗ curl/http error`, but **the
-  bundles still upload server-side** (a follow-up `refresh=false` POST shows them
-  as `cached`). Don't trust the script's failed/uploaded count — verify against R2.
-- Its tail "rebuild manifest from R2 listing" step ran its internal
-  `${BW_SESSION:-$(~/bin/bw-unlock)}` fallback and crashed with the non-TTY
-  readline error even though BW_SESSION was pre-exported (the long background
-  subshell appears to lose the export). Net: the manifest was NOT rebuilt and
-  `aws` failed with `NoCredentials`.
+**2. `trigger-pregen-sentences.sh` — two failure modes, BOTH FIXED 2026-05-31.**
+- *Chunk timeout (now mitigated):* the 120s per-chunk `curl --max-time` was too
+  short for the old default `--chunk 8` — invocations ran 97-115s and cold starts
+  breached 120s, so ~half printed `✗ curl/http error`. **The bundles still upload
+  server-side** (a follow-up `refresh=false` POST shows them as `cached`), so don't
+  trust the printed failed/uploaded count — verify against R2. **Fix:** default
+  `CHUNK` lowered 8→4 (runs 70-93s with headroom). Bump back up only if you confirm
+  no timeouts.
+- *Manifest-step BW crash (now fixed):* the tail "rebuild manifest from R2 listing"
+  step called `bw get item` AFTER the ~5-min generation run. The BW vault
+  auto-locks during that window, so the late call dropped into an interactive
+  master-password prompt and crashed on closed stdin (`ERR_USE_AFTER_CLOSE`,
+  `readline was closed`) → manifest NOT rebuilt, `aws` failed `NoCredentials`. This
+  is NOT "the subshell loses the export" — it's vault auto-lock invalidating the
+  session mid-run. **Fix:** the script now fetches R2 creds at the TOP (while the
+  session is fresh), exports `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, and the
+  manifest step reuses them with no further bw call. Plain-string creds don't
+  expire, so a mid-run lock no longer matters.
+
+**2b. `bw-read` cosmetic error in non-TTY shells — ROOT CAUSE found 2026-05-31.**
+`bw-read`/`bw-unlock`/`bw-get`/`bw-env` are zsh *functions*, not scripts on PATH.
+Source chain: `~/.zshrc` line 6 → `source ~/Documents/CodingProjects/portsie/scripts/bw-profile.sh`
+→ which sources `~/Documents/CodingProjects/portsie/scripts/bw-secrets.sh` (the real
+definitions; `_bw_log` is defined there at line ~42, `bw-read` at ~190). NOTE: these
+live in the **portsie** repo, not langbang.
+
+Why the error: every `bw-*` function calls the private helper `_bw_log` for audit
+logging (writes `~/.bw-audit.log`). Claude Code's per-session shell snapshot
+(`~/.claude/shell-snapshots/snapshot-zsh-*.sh`) captures every **non-underscore**
+function (`bw-read`, `bw-env`, `bw-get`, …) but **skips single-underscore-prefixed
+"private" functions** — so `_bw_log` is absent in Claude's shell while its callers
+are present. `bw-secrets.sh:53` tries to fix this with
+`[ -n "${BASH_VERSION:-}" ] && export -f _bw_log`, but that guard is a no-op because
+Claude runs **zsh** (error format `bw-read:37:` is zsh, and zsh has no `export -f`).
+Result: `_bw_log: command not found` on stderr. It is **purely cosmetic** — bw-read
+still echoes the value after the failed log call; the real failure in the deploy was
+a separate empty-session issue, which made bw-read *also* hit the `_bw_log`
+error-path line and mislabel it `Field '…' not found`.
+
+Permanent fix — DONE 2026-05-31: renamed `_bw_log` → `bw_log` (dropped the leading
+underscore so Claude's snapshot captures it) throughout
+`portsie/scripts/bw-secrets.sh` (def + all calls + the bash `export -f`). Verified:
+`zsh -c 'source bw-secrets.sh; bw_log SELFTEST x'` writes the audit log with empty
+stderr. **Takes effect on the next shell snapshot** — i.e. a new Claude session (or
+re-sourcing `~/.zshrc`); the current session's already-captured snapshot still has
+the old `_bw_log`, so the cosmetic noise persists until then. Harmless either way.
+
+**Reliable path that avoids the functions entirely (used verbatim all session 2026-05-31):**
+```bash
+export BW_SESSION=$(~/bin/bw-unlock)
+bw get item "<item name>" --session "$BW_SESSION" \
+  | python3 -c "import json,sys;d=json.load(sys.stdin);print(next(f['value'] for f in d['fields'] if f['name']=='<field>'))"
+```
+For the Supabase deploy specifically: `SUPABASE_ACCESS_TOKEN` = the
+`Management API Token` field of `Supabase — AlpacApps Project`.
 
 **3. Manual manifest rebuild (reliable workaround for #2):** sync bundles via S3,
 recompute sha256/count/bytes locally, upload. Verified working 2026-05-30:

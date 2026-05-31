@@ -100,6 +100,18 @@ class R2AudioDownloader(
                     addPl(s.pl)
                 }
             }
+            // Phrase-bank (lesson 5) sentences feed the "Play Phrases" queue exactly like
+            // the verb/adj/adv sentences above (see RandomPlayerState.collectPhraseBankSentences),
+            // so they MUST be in the manifest too — otherwise every phrase-bank sentence
+            // misses the bulk cache and falls through to slow per-phrase on-demand synth,
+            // which is why most of them sat silent for a long time before voicing. Includes
+            // any user-added groups; the Edge Function synthesizes arbitrary text on demand.
+            repo.lesson5().groups.forEach { group ->
+                group.sentences.forEach { s ->
+                    add(Phrase(s.en, AzureTtsClient.EN_US_F, AzureTtsClient.LOCALE_EN))
+                    addPl(s.pl)
+                }
+            }
         }.distinctBy { it.text + "|" + it.locale + "|" + it.voice }
     }
 
@@ -180,7 +192,12 @@ class R2AudioDownloader(
         conn.requestMethod = "POST"
         conn.doOutput = true
         conn.connectTimeout = 15000
-        conn.readTimeout = 120000
+        // Matches the Edge Function's ~150s wall-clock ceiling. A fully-cold batch
+        // synthesizes server-side at ~2s/phrase, so the read must outlast the slowest
+        // batch we send (see BATCH_SIZE) or the POST times out, the batch is dropped as
+        // "failed", and its phrases are never downloaded — leaving the progress bar
+        // parked on a batch boundary while the spinner keeps going.
+        conn.readTimeout = 150000
         conn.setRequestProperty("Content-Type", "application/json")
         conn.setRequestProperty("Authorization", "Bearer ${BuildConfig.SUPABASE_ANON_KEY}")
         val body = json.encodeToString(
@@ -225,10 +242,14 @@ class R2AudioDownloader(
     )
 
     companion object {
-        // Phrases per Edge Function call. At ~1s/phrase synth (cold), 80 keeps each
-        // request comfortably under the ~150s function ceiling even when nothing is
-        // cached server-side yet. Cached batches return near-instantly.
-        private const val BATCH_SIZE = 80
+        // Phrases per Edge Function call. Cold synth measures ~2s/phrase server-side
+        // (sequential), so a fully-uncached batch of 80 took ~160s — past both the
+        // function's ~150s ceiling and the old 120s client read timeout, which dropped
+        // the whole batch as "failed" and froze the progress bar on the boundary. 40
+        // keeps a worst-case cold batch near ~85s, comfortably inside the 150s read
+        // timeout. Cached batches still return near-instantly, so this only adds round
+        // trips on first fill / newly-added content.
+        private const val BATCH_SIZE = 40
 
         private val sharedJson = Json { ignoreUnknownKeys = true; isLenient = true }
         private val sharedEndpoint =

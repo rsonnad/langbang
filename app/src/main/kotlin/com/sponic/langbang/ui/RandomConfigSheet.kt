@@ -57,6 +57,7 @@ import com.sponic.langbang.data.IncludeMode
 import com.sponic.langbang.data.RandomConfig
 import com.sponic.langbang.data.VerbSentenceStore
 import com.sponic.langbang.domain.NowVoicingBus
+import com.sponic.langbang.ui.common.GrammarVisuals
 import kotlinx.coroutines.launch
 
 /**
@@ -77,7 +78,7 @@ internal fun RandomConfigSheet(
     var mustContain by remember { mutableStateOf(initialMustContain) }
     var persons by remember { mutableStateOf(initial.personKeys) }
     var tenses by remember { mutableStateOf(initial.tenses) }
-    var preps by remember { mutableStateOf(initial.prepositions) }
+    var preps by remember { mutableStateOf(initial.prepositions.toUiPrepositions()) }
     var adjMode by remember { mutableStateOf(initial.adjectiveMode) }
     var advMode by remember { mutableStateOf(initial.adverbMode) }
     val scope = rememberCoroutineScope()
@@ -230,12 +231,25 @@ internal fun RandomConfigSheet(
                     ) {
                         InlineRow("Preps") {
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                ToggleChip(
+                                    label = "None",
+                                    selected = RandomConfig.PREPOSITION_NONE in preps,
+                                    onToggle = {
+                                        preps = if (RandomConfig.PREPOSITION_NONE in preps) {
+                                            val next = preps - RandomConfig.PREPOSITION_NONE
+                                            next.ifEmpty { setOf(RandomConfig.PREPOSITION_NONE) }
+                                        } else {
+                                            preps + RandomConfig.PREPOSITION_NONE
+                                        }
+                                    }
+                                )
                                 RandomConfig.PREPOSITIONS.forEach { p ->
                                     ToggleChip(
                                         label = p,
                                         selected = p in preps,
                                         onToggle = {
                                             preps = if (p in preps) preps - p else preps + p
+                                            preps = preps.toUiPrepositions()
                                         }
                                     )
                                 }
@@ -293,8 +307,12 @@ private fun NowPlayingPanel(player: RandomPlayerState) {
         else -> "QUEUE"
     }
     Surface(
-        color = LbColors.SurfaceRaised,
+        color = GrammarVisuals.NowVoicingPanel.Background,
         shape = RoundedCornerShape(8.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            GrammarVisuals.NowVoicingPanel.BorderWidth,
+            GrammarVisuals.NowVoicingPanel.Border
+        ),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -462,11 +480,14 @@ private fun computePreflight(app: LangbangApplication, config: RandomConfig): Pr
         .split(Regex("\\s+"))
         .filter { it.isNotEmpty() }
         .takeIf { it.isNotEmpty() }
-    val prepFilter = config.prepositions.takeIf { it.isNotEmpty() }
+    val prepFilter = config.prepositions.toUiPrepositions()
 
     fun passesPreps(pl: String): Boolean {
-        if (prepFilter == null) return true
-        return pl.lowercase().split(Regex("[^\\p{L}]+")).any { it in prepFilter }
+        val tokens = pl.lowercase().split(Regex("[^\\p{L}]+"))
+        val tracked = tokens.filter { it in RandomConfig.PREPOSITIONS }
+        val allowsNone = RandomConfig.PREPOSITION_NONE in prepFilter
+        if (tracked.isEmpty()) return allowsNone
+        return tracked.any { it in prepFilter }
     }
     fun passesMustContain(pl: String): Boolean {
         if (mustContainTokens == null) return true
@@ -521,13 +542,14 @@ private fun computePreflight(app: LangbangApplication, config: RandomConfig): Pr
     }
 
     val missingAdj = mutableListOf<String>()
+    val mustContainActive = mustContainTokens != null
     if (config.adjectiveMode != IncludeMode.OFF) {
         val adjLesson = app.lessonRepo.lesson3()
         adjLesson.adjectives.forEach { adj ->
             val sentences = app.lessonRepo.adjectiveSentencesFor(adj.lemma)
                 .filter { matchesAllowedVerb(it.pl) }
             val eligible = sentences.count { passesPreps(it.pl) && passesMustContain(it.pl) }
-            if (eligible == 0 && config.adjectiveMode == IncludeMode.ALL) {
+            if (!mustContainActive && eligible == 0 && config.adjectiveMode == IncludeMode.ALL) {
                 missingAdj += adj.lemma
             }
             total += if (config.adjectiveMode == IncludeMode.ALL) eligible.coerceAtMost(1) * sentences.size
@@ -544,8 +566,18 @@ private fun computePreflight(app: LangbangApplication, config: RandomConfig): Pr
         }
     }
 
+    total += app.lessonRepo.lesson5().groups.sumOf { group ->
+        group.sentences.count { s -> passesPreps(s.pl) && passesMustContain(s.pl) }
+    }
+
     val hits = if (mustContainTokens != null) total else null
     return Preflight(eligibleCount = total, mustContainHits = hits, missingAdjectives = missingAdj)
+}
+
+private fun Set<String>.toUiPrepositions(): Set<String> {
+    val allowed = RandomConfig.PREPOSITIONS.toSet() + RandomConfig.PREPOSITION_NONE
+    val cleaned = intersect(allowed)
+    return cleaned.ifEmpty { setOf(RandomConfig.PREPOSITION_NONE) }
 }
 
 private suspend fun generateMissingAdjectiveSentences(
