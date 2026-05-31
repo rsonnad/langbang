@@ -2,6 +2,7 @@ package com.sponic.langbang.integrations
 
 import com.sponic.langbang.BuildConfig
 import com.sponic.langbang.domain.NetworkMonitor
+import com.sponic.langbang.domain.R2AudioDownloader
 import com.sponic.langbang.domain.UsageTracker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -33,6 +34,15 @@ class AzureTtsClient(
         withContext(Dispatchers.IO) {
             if (network?.isOnline() == false) {
                 return@withContext Result.failure(IOException("Offline — TTS skipped."))
+            }
+            // Prefer the shared R2 cache: ask the Edge Function (which synthesizes once,
+            // server-side, and uploads to R2) before spending Azure here. A cache miss on
+            // one device no longer makes every other device re-synthesize the same phrase —
+            // the function caches its single result to R2 and every device downloads it.
+            // Falls through to the on-device synth below only when R2 / the function can't
+            // serve it (e.g. a brand-new phrase the function fails to generate).
+            if (R2AudioDownloader.fetchOne(text, voice, locale, outFile)) {
+                return@withContext Result.success(outFile)
             }
             try {
                 // Three slow tiers exist so cache keys don't collide when the rate is bumped:

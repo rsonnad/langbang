@@ -10,6 +10,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -228,5 +229,69 @@ class R2AudioDownloader(
         // request comfortably under the ~150s function ceiling even when nothing is
         // cached server-side yet. Cached batches return near-instantly.
         private const val BATCH_SIZE = 80
+
+        private val sharedJson = Json { ignoreUnknownKeys = true; isLenient = true }
+        private val sharedEndpoint =
+            "${BuildConfig.SUPABASE_URL}/functions/v1/langbang-pregen-audio"
+
+        /**
+         * Fetch a single phrase's mp3 from the shared R2 cache, asking the
+         * langbang-pregen-audio Edge Function to synthesize-and-upload it server-side if
+         * it isn't there yet, then download it into [outFile]. Returns true on success.
+         *
+         * This is the "synthesize once, reuse on every device" path: on-demand playback
+         * (see [AzureTtsClient.synthesize]) calls this before spending Azure locally, so a
+         * cache miss on one device no longer forces every other device to re-synthesize the
+         * same audio — the function caches the result to R2 and all devices download it
+         * thereafter. Mirrors the per-phrase POST + download that [downloadAll] does in bulk.
+         *
+         * Self-contained (no instance state) so the TTS client can call it without wiring,
+         * and best-effort: any network / function / IO error returns false so the caller
+         * falls back to on-device synthesis. Callers are expected to gate on connectivity
+         * first (the 15s connect timeout would otherwise stall an offline cache miss).
+         */
+        suspend fun fetchOne(
+            text: String,
+            voice: String,
+            locale: String,
+            outFile: File
+        ): Boolean = withContext(Dispatchers.IO) {
+            if (text.isBlank()) return@withContext false
+            try {
+                val req = (URL(sharedEndpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    doOutput = true
+                    connectTimeout = 15000
+                    readTimeout = 30000
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("Authorization", "Bearer ${BuildConfig.SUPABASE_ANON_KEY}")
+                }
+                val payload = sharedJson.encodeToString(
+                    ManifestRequest.serializer(),
+                    ManifestRequest(listOf(Phrase(text, voice, locale)))
+                )
+                req.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                if (req.responseCode !in 200..299) return@withContext false
+                val raw = req.inputStream.bufferedReader().use { it.readText() }
+                val entry = sharedJson
+                    .decodeFromString(ManifestResponse.serializer(), raw)
+                    .manifest.firstOrNull()
+                if (entry == null || entry.url.isEmpty()) return@withContext false
+
+                val audio = (URL(entry.url).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 15000
+                    readTimeout = 30000
+                }
+                if (audio.responseCode !in 200..299) return@withContext false
+                outFile.parentFile?.mkdirs()
+                audio.inputStream.use { input ->
+                    outFile.outputStream().use { out -> input.copyTo(out) }
+                }
+                true
+            } catch (_: Throwable) {
+                false
+            }
+        }
     }
 }
