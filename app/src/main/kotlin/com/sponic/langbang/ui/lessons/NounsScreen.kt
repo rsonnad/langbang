@@ -34,7 +34,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -214,7 +213,24 @@ internal class NounsScreenState(
      */
     fun recallQuiz() {
         if (playJob?.isActive == true) { stop(); return }
-        val noun = selected ?: return
+        val items = nounFormItems() ?: return
+        queue = items.shuffled()
+        queueQuiz = true
+        currentItemIndex = 0
+        relaunchFromCurrent()
+    }
+
+    fun playForms() {
+        if (playJob?.isActive == true) { stop(); return }
+        val items = nounFormItems() ?: return
+        queue = items
+        queueQuiz = false
+        currentItemIndex = 0
+        relaunchFromCurrent()
+    }
+
+    private fun nounFormItems(): List<SentenceExample>? {
+        val noun = selected ?: return null
         val items = buildList {
             CASE_BLOCKS.forEach { block ->
                 val map = noun.caseMap(block.key)
@@ -226,11 +242,7 @@ internal class NounsScreenState(
                 }
             }
         }
-        if (items.isEmpty()) return
-        queue = items.shuffled()
-        queueQuiz = true
-        currentItemIndex = 0
-        relaunchFromCurrent()
+        return items.takeIf { it.isNotEmpty() }
     }
 
     private fun makeRecallItem(
@@ -325,46 +337,12 @@ fun NounsScreen(
     nowVoicing: @Composable () -> Unit = {}
 ) {
     val lesson = remember { app.lessonRepo.lesson6() }
-    val scope = rememberCoroutineScope()
     val state = rememberNounsScreenState(app)
-    var generateAllBusy by remember { mutableStateOf(false) }
-    var generateAllProgress by remember { mutableStateOf<String?>(null) }
-    var generateAllError by remember { mutableStateOf<String?>(null) }
 
     if (state.selected == null ||
         lesson.nouns.none { it.lemma == state.selected?.lemma }
     ) {
         state.select(lesson.nouns.firstOrNull())
-    }
-
-    val generateAll: () -> Unit = {
-        if (!generateAllBusy) {
-            generateAllBusy = true
-            generateAllError = null
-            scope.launch {
-                val errors = mutableListOf<String>()
-                try {
-                    lesson.nouns.forEachIndexed { i, n ->
-                        generateAllProgress =
-                            "Gemini ${i + 1}/${lesson.nouns.size} · ${n.lemma}"
-                        val existing = app.lessonRepo.nounSentencesFor(n.lemma)
-                        if (existing.isNotEmpty()) return@forEachIndexed
-                        app.gemini.generateNounSentences(n)
-                            .onSuccess { app.lessonRepo.saveNounSentences(n.lemma, it) }
-                            .onFailure { errors += "${n.lemma}: ${it.message}" }
-                    }
-                    generateAllProgress = "Kicking audio prefetch…"
-                    kickPrefetchWorker(app)
-                } finally {
-                    if (errors.isNotEmpty()) {
-                        generateAllError =
-                            "${errors.size} noun(s) failed: ${errors.first()}"
-                    }
-                    generateAllProgress = null
-                    generateAllBusy = false
-                }
-            }
-        }
     }
 
     // Noun list flush to the top-left (the controls used to sit in a full-width band
@@ -382,18 +360,8 @@ fun NounsScreen(
         Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
             nowVoicing()
             NounControlsBar(
-                onGenerateAll = generateAll,
-                generateAllBusy = generateAllBusy,
-                generateAllProgress = generateAllProgress,
                 state = state
             )
-            generateAllError?.let {
-                Text(
-                    "Generate-all error: $it",
-                    fontSize = 11.sp, color = Color.Red,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
-                )
-            }
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 state.selected?.let { NounParadigm(app, it, state) }
             }
@@ -403,9 +371,6 @@ fun NounsScreen(
 
 @Composable
 private fun NounControlsBar(
-    onGenerateAll: () -> Unit,
-    generateAllBusy: Boolean,
-    generateAllProgress: String?,
     state: NounsScreenState
 ) {
     Surface(color = LbColors.SurfaceRaised, modifier = Modifier.fillMaxWidth()) {
@@ -413,63 +378,20 @@ private fun NounControlsBar(
             // ExamplesControls supplies its own FlowRow, so just pad the wrapper here.
             Box(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                 if (state.selected != null) {
-                    ExamplesControls(
-                        state = state,
-                        onGenerateAll = onGenerateAll,
-                        generateAllBusy = generateAllBusy
-                    )
-                } else {
-                    GenerateAllButton(
-                        onClick = onGenerateAll,
-                        busy = generateAllBusy
-                    )
+                    ExamplesControls(state = state)
                 }
             }
-            generateAllProgress?.let {
-                Text(
-                    "Generating · $it",
-                    fontSize = 10.sp,
-                    color = LbColors.Label,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 1.dp)
-                )
-            }
         }
-    }
-}
-
-@Composable
-private fun GenerateAllButton(onClick: () -> Unit, busy: Boolean) {
-    Button(
-        onClick = onClick,
-        enabled = !busy,
-        colors = ButtonDefaults.buttonColors(containerColor = LbColors.Label),
-        shape = RoundedCornerShape(16.dp),
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-    ) {
-        if (busy) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(12.dp),
-                strokeWidth = 1.5.dp,
-                color = Color.White
-            )
-            Spacer(Modifier.width(4.dp))
-        }
-        Text("Generate all", fontSize = 11.sp, color = Color.White)
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ExamplesControls(
-    state: NounsScreenState,
-    onGenerateAll: () -> Unit,
-    generateAllBusy: Boolean
-) {
+private fun ExamplesControls(state: NounsScreenState) {
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        GenerateAllButton(onClick = onGenerateAll, busy = generateAllBusy)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(
                 checked = state.slowFirst,
@@ -483,47 +405,26 @@ private fun ExamplesControls(
             Spacer(Modifier.width(4.dp))
             Text("Slow first", fontSize = 11.sp, color = LbColors.TextSecondary)
         }
-        if (state.sentences.isNotEmpty()) {
-            Button(
-                onClick = { state.playAll(quiz = false) },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                ),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-            ) {
-                Icon(
-                    if (state.playing) Icons.Default.Stop else Icons.Default.PlayArrow,
-                    contentDescription = if (state.playing) "Stop" else "Play all",
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    if (state.playing) "Stop" else "Play all",
-                    fontSize = 12.sp,
-                    color = Color.White
-                )
-            }
-            if (!state.playing) {
-                Button(
-                    onClick = { state.playAll(quiz = true) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = LbColors.Label
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-                ) {
-                    Icon(
-                        Icons.Default.PlayArrow,
-                        contentDescription = "Sentence quiz",
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text("Sent. quiz", fontSize = 12.sp, color = Color.White)
-                }
-            }
+        Button(
+            onClick = { state.playForms() },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary
+            ),
+            shape = RoundedCornerShape(16.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+        ) {
+            Icon(
+                if (state.playing) Icons.Default.Stop else Icons.Default.PlayArrow,
+                contentDescription = if (state.playing) "Stop" else "Play all",
+                tint = Color.White,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                if (state.playing) "Stop" else "Play all",
+                fontSize = 12.sp,
+                color = Color.White
+            )
         }
         if (!state.playing) {
             Button(
@@ -537,31 +438,53 @@ private fun ExamplesControls(
                 Text("Recall quiz", fontSize = 12.sp, color = Color.White)
             }
         }
-        if (state.busy) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(18.dp), strokeWidth = 2.dp
-            )
-        } else {
-            val isRegenerate = state.sentences.isNotEmpty()
+        if (state.sentences.isNotEmpty() && !state.playing) {
             Button(
-                onClick = { state.generate() },
+                onClick = { state.playAll(quiz = true) },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isRegenerate) LbColors.SurfaceTint
-                    else MaterialTheme.colorScheme.primary
+                    containerColor = LbColors.Label
                 ),
                 shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
             ) {
                 Icon(
-                    if (isRegenerate) Icons.Default.Refresh else Icons.Default.Add,
-                    contentDescription = if (isRegenerate) "Regenerate" else "Generate",
-                    tint = if (isRegenerate) LbColors.Label else Color.White,
-                    modifier = Modifier.size(14.dp)
+                    Icons.Default.PlayArrow,
+                    contentDescription = "Sentence quiz",
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp)
                 )
                 Spacer(Modifier.width(4.dp))
-                Text(
-                    if (isRegenerate) "Regen" else "Generate",
-                    fontSize = 12.sp,
+                Text("Sent. quiz", fontSize = 12.sp, color = Color.White)
+            }
+        }
+        val isRegenerate = state.sentences.isNotEmpty()
+        Button(
+            onClick = { state.generate() },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isRegenerate) LbColors.SurfaceTint
+                else MaterialTheme.colorScheme.primary
+            ),
+            shape = RoundedCornerShape(16.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+            enabled = !state.busy && !state.playing
+        ) {
+            Icon(
+                if (isRegenerate) Icons.Default.Refresh else Icons.Default.Add,
+                contentDescription = if (isRegenerate) "Regenerate" else "Generate",
+                tint = if (isRegenerate) LbColors.Label else Color.White,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                if (state.busy) "Generating" else if (isRegenerate) "Regen" else "Generate",
+                fontSize = 12.sp,
+                color = if (isRegenerate) LbColors.Label else Color.White
+            )
+            if (state.busy) {
+                Spacer(Modifier.width(4.dp))
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.size(12.dp),
+                    strokeWidth = 1.5.dp,
                     color = if (isRegenerate) LbColors.Label else Color.White
                 )
             }
@@ -701,7 +624,7 @@ private fun SentencesSection(app: LangbangApplication, state: NounsScreenState) 
 
         if (state.sentences.isEmpty()) {
             Text(
-                "No examples yet — tap Generate above to make short sentences using this " +
+                "No examples yet — tap Generate to make short sentences using this " +
                     "noun across all three cases (subject, object, and \"of\"/negation).",
                 fontSize = 12.sp,
                 color = LbColors.TextMuted

@@ -680,9 +680,10 @@ private fun RegenerateSentencesCard(
             SectionHeader("Sentence library")
             Spacer(Modifier.height(4.dp))
             Text(
-                "Phrases are pre-generated server-side and stored in R2; the app pulls " +
-                    "missing bundles automatically on launch. Tap below to force a " +
-                    "re-check (only useful right after a prompt update).",
+                "Example sentences for verbs, adjectives, adverbs, and nouns are " +
+                    "pre-generated server-side and stored in R2; the app pulls missing " +
+                    "bundles automatically on launch. Tap below to force a re-check " +
+                    "(only useful right after a prompt update).",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
             )

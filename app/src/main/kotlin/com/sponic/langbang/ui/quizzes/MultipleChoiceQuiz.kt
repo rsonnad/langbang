@@ -38,6 +38,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sponic.langbang.LangbangApplication
+import com.sponic.langbang.data.VerbSentenceStore
+import com.sponic.langbang.data.model.SentenceExample
+import com.sponic.langbang.domain.NowVoicing
+import com.sponic.langbang.domain.NowVoicingBus
+import com.sponic.langbang.integrations.AzureTtsClient
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 /**
  * Generic multiple-choice quiz runner. Takes a fixed [questions] list, shows them
@@ -55,6 +63,7 @@ import androidx.compose.ui.unit.sp
  */
 @Composable
 fun MultipleChoiceQuiz(
+    app: LangbangApplication,
     title: String,
     questions: List<QuizQuestion>,
     onExit: () -> Unit
@@ -64,12 +73,13 @@ fun MultipleChoiceQuiz(
         return
     }
 
-    // Shuffled once per mount; "Retry" remounts via a key change in the caller.
-    val ordered = remember { questions.shuffled() }
-    var index by remember { mutableStateOf(0) }
-    var correctCount by remember { mutableStateOf(0) }
-    var pickedIndex by remember { mutableStateOf<Int?>(null) }
-    var pickedCorrect by remember { mutableStateOf<Boolean?>(null) }
+    val quizKey = remember(title, questions) { title to questions }
+    var runId by remember(quizKey) { mutableStateOf(0) }
+    val ordered = remember(quizKey, runId) { questions.shuffled() }
+    var index by remember(quizKey, runId) { mutableStateOf(0) }
+    var correctCount by remember(quizKey, runId) { mutableStateOf(0) }
+    var pickedIndex by remember(quizKey, runId) { mutableStateOf<Int?>(null) }
+    var pickedCorrect by remember(quizKey, runId) { mutableStateOf<Boolean?>(null) }
 
     val q = ordered.getOrNull(index)
     if (q == null) {
@@ -78,10 +88,7 @@ fun MultipleChoiceQuiz(
             score = correctCount,
             total = ordered.size,
             onRetry = {
-                index = 0
-                correctCount = 0
-                pickedIndex = null
-                pickedCorrect = null
+                runId += 1
             },
             onExit = onExit
         )
@@ -90,12 +97,13 @@ fun MultipleChoiceQuiz(
 
     // Per-question stable shuffle of options so tapping doesn't re-roll positions
     // when state updates trigger recomposition.
-    val options = remember(index) { (q.distractors + q.correct).shuffled() }
+    val options = remember(quizKey, runId, index) { (q.distractors + q.correct).shuffled() }
     val correctOption = q.correct
 
     // Auto-advance after the reveal pause when the user picks an option.
     LaunchedEffect(pickedIndex) {
         if (pickedIndex != null) {
+            voiceQuizReveal(app, q, pickedCorrect == true)
             kotlinx.coroutines.delay(if (pickedCorrect == true) 700L else 1500L)
             if (pickedCorrect == true) correctCount += 1
             index += 1
@@ -122,6 +130,19 @@ fun MultipleChoiceQuiz(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
             ) {
                 Text("Exit", fontSize = 12.sp)
+            }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(
+                onClick = {
+                    if (pickedIndex == null) {
+                        pickedIndex = NO_PICK_INDEX
+                        pickedCorrect = false
+                    }
+                },
+                enabled = pickedIndex == null,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                Text("Hear answer", fontSize = 12.sp)
             }
         }
 
@@ -150,11 +171,11 @@ fun MultipleChoiceQuiz(
         // ── 2x2 options grid ──────────────────────────────────────────────
         val pairs = options.chunked(2)
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            pairs.forEach { row ->
+            pairs.forEachIndexed { pairIndex, row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxWidth()) {
-                    row.forEach { opt ->
-                        val i = options.indexOf(opt)
+                    row.forEachIndexed { rowIndex, opt ->
+                        val i = pairIndex * 2 + rowIndex
                         val tapped = pickedIndex == i
                         val isCorrect = opt == correctOption
                         val bg = when {
@@ -193,6 +214,96 @@ fun MultipleChoiceQuiz(
             }
         }
     }
+}
+
+private const val NO_PICK_INDEX = -1
+
+private suspend fun voiceQuizReveal(
+    app: LangbangApplication,
+    question: QuizQuestion,
+    wasCorrect: Boolean
+) {
+    publishQuizAnswer(question)
+    speakQuizAnswer(app, question.correct, question.correctLocale)
+    if (!wasCorrect) {
+        findPracticeSentence(app, question.polishPracticeWord)?.let { sentence ->
+            NowVoicingBus.publish(
+                NowVoicing(
+                    en = sentence.en,
+                    pl = sentence.pl,
+                    literal = sentence.literal,
+                    lang = "pl",
+                    position = "extra phrase",
+                    words = sentence.words,
+                    quizMode = true
+                )
+            )
+            speakQuizAnswer(app, sentence.pl, AzureTtsClient.LOCALE_PL)
+        }
+    }
+}
+
+private fun publishQuizAnswer(question: QuizQuestion) {
+    val isEnglishAnswer = question.correctLocale == AzureTtsClient.LOCALE_EN
+    NowVoicingBus.publish(
+        NowVoicing(
+            en = if (isEnglishAnswer) question.correct else question.prompt,
+            pl = if (isEnglishAnswer) question.polishPracticeWord else question.correct,
+            literal = null,
+            lang = if (isEnglishAnswer) "en" else "pl",
+            position = "quiz answer",
+            words = null,
+            quizMode = true
+        )
+    )
+}
+
+private suspend fun speakQuizAnswer(
+    app: LangbangApplication,
+    text: String,
+    locale: String
+) {
+    if (text.isBlank()) return
+    val voice = if (locale == AzureTtsClient.LOCALE_EN) {
+        AzureTtsClient.EN_US_F
+    } else {
+        AzureTtsClient.PL_PL_F
+    }
+    val file = app.audioCache.fileFor(locale, voice, text)
+    if (!app.audioCache.has(file)) {
+        app.tts.synthesize(text, voice, locale, file)
+    }
+    if (!app.audioCache.has(file)) return
+    suspendCancellableCoroutine<Unit> { cont ->
+        app.audioPlayer.play(file) { if (cont.isActive) cont.resume(Unit) }
+        cont.invokeOnCancellation { app.audioPlayer.stop() }
+    }
+}
+
+private fun findPracticeSentence(app: LangbangApplication, polishWord: String): SentenceExample? {
+    val word = polishWord.trim().lowercase()
+    if (word.isEmpty()) return null
+    val repo = app.lessonRepo
+    val candidates = buildList {
+        repo.lesson2().verbs.forEach { verb ->
+            addAll(repo.sentencesFor(verb.lemma, VerbSentenceStore.TENSE_PRESENT))
+            addAll(repo.sentencesFor(verb.lemma, VerbSentenceStore.TENSE_PAST))
+        }
+        repo.lesson3().adjectives.forEach { addAll(repo.adjectiveSentencesFor(it.lemma)) }
+        repo.lesson4().adverbs.forEach { addAll(repo.adverbSentencesFor(it.lemma)) }
+        repo.lesson5().groups.forEach { addAll(it.sentences) }
+        repo.lesson6().nouns.forEach { addAll(repo.nounSentencesFor(it.lemma)) }
+    }
+    return candidates.firstOrNull { sentence ->
+        sentence.pl.trim().lowercase() != word && containsPolishToken(sentence.pl, word)
+    }
+}
+
+private fun containsPolishToken(sentence: String, word: String): Boolean {
+    val tokens = sentence.lowercase()
+        .split(Regex("[^\\p{L}]+"))
+        .filter { it.isNotBlank() }
+    return word in tokens
 }
 
 @Composable

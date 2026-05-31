@@ -335,13 +335,7 @@ private fun AdvControlsBar(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 if (state.selected != null) {
-                    AdvExamplesControls(
-                        state = state,
-                        onGenerateAll = onGenerateAll,
-                        generateAllBusy = generateAllBusy
-                    )
-                } else {
-                    AdvGenerateAllButton(onGenerateAll, generateAllBusy)
+                    AdvExamplesControls(state = state)
                 }
             }
             generateAllProgress?.let {
@@ -381,11 +375,8 @@ private fun AdvGenerateAllButton(onClick: () -> Unit, busy: Boolean) {
 // and buttons wrap together as one band.
 @Composable
 private fun AdvExamplesControls(
-    state: AdverbsScreenState,
-    onGenerateAll: () -> Unit,
-    generateAllBusy: Boolean
+    state: AdverbsScreenState
 ) {
-    AdvGenerateAllButton(onGenerateAll, generateAllBusy)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Checkbox(
             checked = state.slowFirst,

@@ -16,5 +16,9 @@ data class QuizQuestion(
     val correct: String,
     val distractors: List<String>,
     /** Optional small caption shown above the prompt, e.g. "Adjective · nominative". */
-    val context: String = ""
+    val context: String = "",
+    /** Locale used to speak [correct] after a right, wrong, or skipped answer. */
+    val correctLocale: String = "pl-PL",
+    /** Polish word/form to use when looking for an extra practice phrase after a miss. */
+    val polishPracticeWord: String = correct
 )

@@ -79,7 +79,11 @@ echo "→ build $FULL_VERSION ($(du -h "$APK" | cut -f1))"
 
 # 2. Pull R2 credentials from Bitwarden.
 echo "→ unlocking Bitwarden"
-if [ -z "${BW_SESSION:-}" ]; then
+BW_STATUS=""
+if [ -n "${BW_SESSION:-}" ]; then
+  BW_STATUS="$(bw status --session "$BW_SESSION" 2>/dev/null | jq -r '.status // empty' || true)"
+fi
+if [ "$BW_STATUS" != "unlocked" ]; then
   export BW_SESSION="$(~/bin/bw-unlock)"
 fi
 ITEM=$(bw get item "Cloudflare R2 — Object Storage" --session "$BW_SESSION")
@@ -89,6 +93,11 @@ export AWS_SECRET_ACCESS_KEY="$(field 'Secret Access Key')"
 export AWS_DEFAULT_REGION=auto
 ACCOUNT_ID="$(field 'Account ID')"
 PUBLIC_BASE="$(field 'Public Dev URL')"
+if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] ||
+   [ -z "$ACCOUNT_ID" ] || [ -z "$PUBLIC_BASE" ]; then
+  echo "missing required Cloudflare R2 fields from Bitwarden item" >&2
+  exit 1
+fi
 ENDPOINT="https://${ACCOUNT_ID}.r2.cloudflarestorage.com"
 BUCKET="alpacapps"
 

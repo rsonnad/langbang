@@ -180,6 +180,7 @@ fun LangbangApp(app: LangbangApplication) {
                 },
                 prefetch = progress,
                 randomPlayer = randomPlayer,
+                liveConfig = liveConfig,
                 onOpenConfig = { showConfigSheet = true },
                 onTitleClick = {
                     // Tap the title → check R2 for a newer build and, if found,
@@ -280,7 +281,7 @@ fun LangbangApp(app: LangbangApplication) {
                         )
                         Section.Phrases -> PhrasesScreen(app = app)
                         Section.Numbers -> NumbersScreen(app = app)
-                        Section.Quizzes -> QuizzesScreen(app = app)
+                        Section.Quizzes -> QuizzesScreen(app = app, nowVoicing = nowVoicingSlot)
                         Section.Settings -> SettingsScreen(app = app)
                     }
                 }
@@ -329,6 +330,7 @@ private fun AppHeader(
     onToggleSettings: () -> Unit,
     prefetch: PrefetchProgress,
     randomPlayer: RandomPlayerState,
+    liveConfig: RandomConfig,
     onOpenConfig: () -> Unit,
     onTitleClick: () -> Unit
 ) {
@@ -387,16 +389,11 @@ private fun AppHeader(
                 // to one row.
                 RandomPlayPill(
                     playing = randomPlayer.playing || randomPlayer.paused,
-                    // Idle → open the config sheet so the user can pick filters.
-                    // Playing/paused → the pill IS a Stop button (orange + stop
-                    // icon + label "Stop"), so actually stop playback instead of
-                    // just opening the sheet. Reported 2026-05-28: tapping Stop
-                    // opened the sheet and audio kept advancing, which the user
-                    // perceived as "stops for 30 seconds then starts again".
                     onToggle = {
                         if (randomPlayer.playing || randomPlayer.paused) randomPlayer.stop()
-                        else onOpenConfig()
-                    }
+                        else randomPlayer.start(liveConfig)
+                    },
+                    onConfigure = onOpenConfig
                 )
                 // Build tag pinned to the far right, immediately after Play Phrases —
                 // tiny + tightly tracked so it barely takes any width. Glanceable
@@ -846,31 +843,53 @@ private fun QuizDelayControl(seconds: Float, onChange: (Float) -> Unit) {
 }
 
 @Composable
-private fun RandomPlayPill(playing: Boolean, onToggle: () -> Unit) {
-    Surface(
-        color = if (playing) LbColors.Accent else LbColors.OnPrimary.copy(alpha = 0.14f),
-        shape = RoundedCornerShape(6.dp),
-        modifier = Modifier
-            .padding(start = 4.dp)
-            .clickable(onClick = onToggle)
+private fun RandomPlayPill(
+    playing: Boolean,
+    onToggle: () -> Unit,
+    onConfigure: () -> Unit
+) {
+    Row(
+        modifier = Modifier.padding(start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp)
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+        Surface(
+            color = if (playing) LbColors.Accent else LbColors.OnPrimary.copy(alpha = 0.14f),
+            shape = RoundedCornerShape(6.dp),
+            modifier = Modifier.clickable(onClick = onToggle)
         ) {
-            Icon(
-                imageVector = if (playing) Icons.Filled.Stop else Icons.Filled.Shuffle,
-                contentDescription = if (playing) "Stop phrases" else "Play Phrases",
-                tint = LbColors.OnPrimary,
-                modifier = Modifier.size(13.dp)
-            )
-            Spacer(Modifier.width(4.dp))
-            Text(
-                if (playing) "Stop" else "Play Phrases",
-                color = LbColors.OnPrimary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+            ) {
+                Icon(
+                    imageVector = if (playing) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+                    contentDescription = if (playing) "Stop phrases" else "Play Phrases",
+                    tint = LbColors.OnPrimary,
+                    modifier = Modifier.size(13.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    if (playing) "Stop" else "Play Phrases",
+                    color = LbColors.OnPrimary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+        if (!playing) {
+            Surface(
+                color = LbColors.OnPrimary.copy(alpha = 0.10f),
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier.clickable(onClick = onConfigure)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Settings,
+                    contentDescription = "Configure Play Phrases",
+                    tint = LbColors.OnPrimary,
+                    modifier = Modifier.padding(5.dp).size(13.dp)
+                )
+            }
         }
     }
 }

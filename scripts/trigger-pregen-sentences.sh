@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # trigger-pregen-sentences.sh — Tell the langbang-pregen-sentences Edge Function
-# to walk every canonical verb/adjective/adverb in the app's bundled assets and
+# to walk every canonical verb/adjective/adverb/noun in the app's bundled assets and
 # generate sentence bundles into R2 at langbang/sentences/v{N}/.
 #
 # Single edge invocations would blow past Supabase's per-function wall clock
@@ -75,12 +75,14 @@ jq -c '.adjectives[]' app/src/main/assets/lesson-03.json | \
   awk '{print "a\t" $0}' >> "$TMP/all.tsv"
 jq -c '.adverbs[]' app/src/main/assets/lesson-04.json | \
   awk '{print "d\t" $0}' >> "$TMP/all.tsv"
+jq -c '.nouns[]' app/src/main/assets/lesson-06.json | \
+  awk '{print "n\t" $0}' >> "$TMP/all.tsv"
 
 TOTAL=$(wc -l < "$TMP/all.tsv" | tr -d ' ')
 echo "→ total lemmas: $TOTAL"
 
 # Slice into chunks of $CHUNK lines each, then convert each chunk into a
-# {verbs, adjectives, adverbs} payload the Edge Function expects.
+# {verbs, adjectives, adverbs, nouns} payload the Edge Function expects.
 split -l "$CHUNK" "$TMP/all.tsv" "$TMP/chunk-"
 
 CHUNK_COUNT=0
@@ -89,13 +91,14 @@ for chunk in "$TMP"/chunk-*; do
   VERBS=$(awk -F'\t' '$1=="v"{print $2}' "$chunk" | jq -s '.')
   ADJ=$(awk -F'\t' '$1=="a"{print $2}' "$chunk" | jq -s '.')
   ADV=$(awk -F'\t' '$1=="d"{print $2}' "$chunk" | jq -s '.')
+  NOUNS=$(awk -F'\t' '$1=="n"{print $2}' "$chunk" | jq -s '.')
   jq -n \
-    --argjson v "$VERBS" --argjson a "$ADJ" --argjson d "$ADV" \
+    --argjson v "$VERBS" --argjson a "$ADJ" --argjson d "$ADV" --argjson n "$NOUNS" \
     --argjson version "$PROMPT_VERSION" \
     --argjson para "$PARALLELISM" \
     --argjson refresh "$REFRESH" \
     '{promptVersion: $version, refresh: $refresh, parallelism: $para,
-      verbs: $v, adjectives: $a, adverbs: $d}' > "$chunk.body.json"
+      verbs: $v, adjectives: $a, adverbs: $d, nouns: $n}' > "$chunk.body.json"
 done
 echo "→ split into $CHUNK_COUNT chunks"
 

@@ -62,41 +62,56 @@ import com.sponic.langbang.data.model.VerbEntry
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun QuizzesScreen(app: LangbangApplication) {
+fun QuizzesScreen(
+    app: LangbangApplication,
+    nowVoicing: @Composable () -> Unit = {}
+) {
     var mode by remember { mutableStateOf<QuizMode>(QuizMode.Hub) }
-    when (val m = mode) {
-        QuizMode.Hub -> Hub(app = app, onPick = { mode = it })
-        is QuizMode.PerVerbPick -> PerVerbPicker(app = app,
-            onPick = { v, t -> mode = QuizMode.PerVerb(v, t) },
-            onBack = { mode = QuizMode.Hub })
-        is QuizMode.CrossVerbPick -> CrossVerbPicker(
-            onPick = { p, t -> mode = QuizMode.CrossVerb(p, t) },
-            onBack = { mode = QuizMode.Hub })
-        is QuizMode.PerVerb -> MultipleChoiceQuiz(
-            title = "Verb forms · ${m.verb.lemma} (${m.tenseLabel()})",
-            questions = QuizGenerators.perVerbConjugation(m.verb, m.tense),
-            onExit = { mode = QuizMode.Hub }
-        )
-        is QuizMode.CrossVerb -> MultipleChoiceQuiz(
-            title = "All verbs · ${m.personLabel()} (${m.tenseLabel()})",
-            questions = QuizGenerators.crossVerbConjugation(app.lessonRepo, m.personKey, m.tense),
-            onExit = { mode = QuizMode.Hub }
-        )
-        is QuizMode.Adjectives -> MultipleChoiceQuiz(
-            title = if (m.enToPl) "Adjectives · EN → PL" else "Adjectives · PL → EN",
-            questions = QuizGenerators.adjectiveVocab(app.lessonRepo, enToPl = m.enToPl),
-            onExit = { mode = QuizMode.Hub }
-        )
-        is QuizMode.Adverbs -> MultipleChoiceQuiz(
-            title = if (m.enToPl) "Adverbs · EN → PL" else "Adverbs · PL → EN",
-            questions = QuizGenerators.adverbVocab(app.lessonRepo, enToPl = m.enToPl),
-            onExit = { mode = QuizMode.Hub }
-        )
-        QuizMode.Pronouns -> MultipleChoiceQuiz(
-            title = "Pronoun case forms",
-            questions = QuizGenerators.pronounCaseForms(app.lessonRepo),
-            onExit = { mode = QuizMode.Hub }
-        )
+    Column(modifier = Modifier.fillMaxSize()) {
+        nowVoicing()
+        Box(modifier = Modifier.weight(1f)) {
+            when (val m = mode) {
+                QuizMode.Hub -> Hub(app = app, onPick = { mode = it })
+                is QuizMode.PerVerbPick -> PerVerbPicker(app = app,
+                    onPick = { v, t -> mode = QuizMode.PerVerb(v, t) },
+                    onBack = { mode = QuizMode.Hub })
+                is QuizMode.CrossVerbPick -> CrossVerbPicker(
+                    onPick = { p, t -> mode = QuizMode.CrossVerb(p, t) },
+                    onBack = { mode = QuizMode.Hub })
+                is QuizMode.PerVerb -> MultipleChoiceQuiz(
+                    app = app,
+                    title = "Verb forms · ${m.verb.lemma} (${m.tenseLabel()})",
+                    questions = QuizGenerators.perVerbConjugation(m.verb, m.tense),
+                    onExit = { mode = QuizMode.Hub }
+                )
+                is QuizMode.CrossVerb -> MultipleChoiceQuiz(
+                    app = app,
+                    title = "All verbs · ${m.personLabel()} (${m.tenseLabel()})",
+                    questions = QuizGenerators.crossVerbConjugation(
+                        app.lessonRepo, m.personKey, m.tense
+                    ),
+                    onExit = { mode = QuizMode.Hub }
+                )
+                is QuizMode.Adjectives -> MultipleChoiceQuiz(
+                    app = app,
+                    title = if (m.enToPl) "Adjectives · EN → PL" else "Adjectives · PL → EN",
+                    questions = QuizGenerators.adjectiveVocab(app.lessonRepo, enToPl = m.enToPl),
+                    onExit = { mode = QuizMode.Hub }
+                )
+                is QuizMode.Adverbs -> MultipleChoiceQuiz(
+                    app = app,
+                    title = if (m.enToPl) "Adverbs · EN → PL" else "Adverbs · PL → EN",
+                    questions = QuizGenerators.adverbVocab(app.lessonRepo, enToPl = m.enToPl),
+                    onExit = { mode = QuizMode.Hub }
+                )
+                QuizMode.Pronouns -> MultipleChoiceQuiz(
+                    app = app,
+                    title = "Pronoun case forms",
+                    questions = QuizGenerators.pronounCaseForms(app.lessonRepo),
+                    onExit = { mode = QuizMode.Hub }
+                )
+            }
+        }
     }
 }
 

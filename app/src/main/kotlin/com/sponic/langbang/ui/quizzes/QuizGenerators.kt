@@ -4,6 +4,7 @@ import com.sponic.langbang.data.LessonRepository
 import com.sponic.langbang.data.model.PERSON_KEYS
 import com.sponic.langbang.data.model.VerbEntry
 import com.sponic.langbang.data.VerbSentenceStore
+import com.sponic.langbang.integrations.AzureTtsClient
 
 /**
  * Builds [QuizQuestion] lists for every quiz type. Each generator pulls from the
@@ -133,7 +134,9 @@ object QuizGenerators {
                     prompt = adj.lemma,
                     correct = adj.en,
                     distractors = distractors,
-                    context = "Adjective · pick the English"
+                    context = "Adjective · pick the English",
+                    correctLocale = AzureTtsClient.LOCALE_EN,
+                    polishPracticeWord = adj.lemma
                 )
             }
         }
@@ -160,7 +163,9 @@ object QuizGenerators {
                     prompt = adv.lemma,
                     correct = adv.en,
                     distractors = distractors,
-                    context = "Adverb · pick the English"
+                    context = "Adverb · pick the English",
+                    correctLocale = AzureTtsClient.LOCALE_EN,
+                    polishPracticeWord = adv.lemma
                 )
             }
         }

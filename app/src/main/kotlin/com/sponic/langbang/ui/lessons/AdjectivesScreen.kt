@@ -396,16 +396,7 @@ private fun ControlsBar(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 if (state.selected != null) {
-                    ExamplesControls(
-                        state = state,
-                        onGenerateAll = onGenerateAll,
-                        generateAllBusy = generateAllBusy
-                    )
-                } else {
-                    GenerateAllButton(
-                        onClick = onGenerateAll,
-                        busy = generateAllBusy
-                    )
+                    ExamplesControls(state = state)
                 }
             }
             generateAllProgress?.let {
@@ -445,11 +436,8 @@ private fun GenerateAllButton(onClick: () -> Unit, busy: Boolean) {
 // and buttons wrap together as one band.
 @Composable
 private fun ExamplesControls(
-    state: AdjectivesScreenState,
-    onGenerateAll: () -> Unit,
-    generateAllBusy: Boolean
+    state: AdjectivesScreenState
 ) {
-    GenerateAllButton(onClick = onGenerateAll, busy = generateAllBusy)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Checkbox(
             checked = state.slowFirst,
