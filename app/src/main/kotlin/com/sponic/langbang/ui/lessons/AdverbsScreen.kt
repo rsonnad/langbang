@@ -1,5 +1,7 @@
 package com.sponic.langbang.ui.lessons
 
+import com.sponic.langbang.ui.theme.LbColors
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,10 +56,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.data.model.AdverbEntry
-import com.sponic.langbang.data.model.AdverbLesson
 import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
+import com.sponic.langbang.domain.PlaybackController
+import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.PrefetchProgress
 import com.sponic.langbang.integrations.AzureTtsClient
 import android.media.MediaMetadataRetriever
@@ -67,11 +70,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
-
-private enum class AdvMode(val label: String) {
-    Single("Single adverb"),
-    Add("+ Add adverb")
-}
 
 /**
  * Per-adverb state hoisted to screen root so the play/regenerate controls live in the
@@ -95,6 +93,10 @@ internal class AdverbsScreenState(
     var playingIndex: Int by mutableStateOf(-1)
         private set
     val playing: Boolean get() = playJob?.isActive == true
+
+    private var queue: List<SentenceExample> = emptyList()
+    private var queueQuiz: Boolean = false
+    private var currentItemIndex: Int = 0
 
     fun select(adv: AdverbEntry?) {
         if (selected?.lemma == adv?.lemma) return
@@ -124,35 +126,73 @@ internal class AdverbsScreenState(
         playJob?.cancel()
         playJob = null
         playingIndex = -1
+        queue = emptyList()
+        currentItemIndex = 0
         app.audioPlayer.stop()
         NowVoicingBus.clear()
+        PlaybackController.unregister()
+    }
+
+    fun rewind() {
+        if (queue.isEmpty()) return
+        playJob?.cancel()
+        playJob = null
+        app.audioPlayer.stop()
+        currentItemIndex = (currentItemIndex - 1).coerceAtLeast(0)
+        relaunchFromCurrent()
+    }
+
+    fun restartQueue() {
+        if (queue.isEmpty()) return
+        playJob?.cancel()
+        playJob = null
+        app.audioPlayer.stop()
+        currentItemIndex = 0
+        relaunchFromCurrent()
     }
 
     fun playAll(quiz: Boolean) {
         if (playJob?.isActive == true) { stop(); return }
         if (sentences.isEmpty()) return
-        val list = sentences
+        queue = sentences.shuffled()
+        queueQuiz = quiz
+        currentItemIndex = 0
+        relaunchFromCurrent()
+    }
+
+    private fun relaunchFromCurrent() {
+        PlaybackController.register(
+            PlaybackTransport(
+                stop = { stop() },
+                rewind = { rewind() },
+                restart = { restartQueue() }
+            )
+        )
         playJob = scope.launch {
             try {
-                list.forEachIndexed { i, s ->
+                while (currentItemIndex < queue.size) {
+                    val i = currentItemIndex
+                    val s = queue[i]
                     playingIndex = i
-                    val pos = "${i + 1}/${list.size}"
-                    fun pub(lang: String) {
+                    val pos = "${i + 1}/${queue.size}"
+                    fun pub(lang: String, plHidden: Boolean = false) {
                         NowVoicingBus.publish(
-                            NowVoicing(s.en, s.pl, s.literal, lang, pos, s.words)
+                            NowVoicing(
+                                en = s.en, pl = s.pl, literal = s.literal,
+                                lang = lang, position = pos, words = s.words,
+                                plHidden = plHidden, quizMode = queueQuiz
+                            )
                         )
                     }
-                    if (quiz) {
-                        pub("en")
+                    if (queueQuiz) {
+                        pub("en", plHidden = true)
                         playAndAwaitAdv(app, s.en, AzureTtsClient.LOCALE_EN,
                             AzureTtsClient.EN_US_F)
-                        pub("pause")
-                        val plFile = app.audioCache.fileFor(
-                            AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, s.pl
-                        )
-                        val pauseMs = mp3DurationMsAdv(plFile) + 2000L
-                        delay(pauseMs)
-                        pub("pl")
+                        pub("pause", plHidden = true)
+                        delay(2000L)
+                        pub("pause", plHidden = false)
+                        delay(2000L)
+                        pub("pl", plHidden = false)
                         playAndAwaitAdv(app, s.pl, AzureTtsClient.LOCALE_PL,
                             AzureTtsClient.PL_PL_F)
                     } else if (slowFirst) {
@@ -161,7 +201,7 @@ internal class AdverbsScreenState(
                             AzureTtsClient.EN_US_F)
                         pub("pl-slow")
                         playAndAwaitAdv(app, s.pl, AzureTtsClient.LOCALE_PL,
-                            AzureTtsClient.PL_PL_F_SLOW_V2)
+                            app.audioPrefs.slowPlVoice())
                         pub("en")
                         playAndAwaitAdv(app, s.en, AzureTtsClient.LOCALE_EN,
                             AzureTtsClient.EN_US_F)
@@ -176,11 +216,16 @@ internal class AdverbsScreenState(
                         playAndAwaitAdv(app, s.pl, AzureTtsClient.LOCALE_PL,
                             AzureTtsClient.PL_PL_F)
                     }
+                    if (currentItemIndex == i) {
+                        currentItemIndex = i + 1
+                        if (!queueQuiz && currentItemIndex < queue.size) delay(1000)
+                    }
                 }
             } finally {
                 playingIndex = -1
                 playJob = null
                 NowVoicingBus.clear()
+                PlaybackController.unregister()
             }
         }
     }
@@ -193,10 +238,12 @@ private fun rememberAdverbsScreenState(app: LangbangApplication): AdverbsScreenS
 }
 
 @Composable
-fun AdverbsScreen(app: LangbangApplication, prefetch: PrefetchProgress) {
-    var reloadKey by remember { mutableStateOf(0) }
-    val lesson = remember(reloadKey) { app.lessonRepo.lesson4() }
-    var mode by remember { mutableStateOf(AdvMode.Single) }
+fun AdverbsScreen(
+    app: LangbangApplication,
+    prefetch: PrefetchProgress,
+    nowVoicing: @Composable () -> Unit = {}
+) {
+    val lesson = remember { app.lessonRepo.lesson4() }
     val scope = rememberCoroutineScope()
     val state = rememberAdverbsScreenState(app)
     var generateAllBusy by remember { mutableStateOf(false) }
@@ -239,28 +286,34 @@ fun AdverbsScreen(app: LangbangApplication, prefetch: PrefetchProgress) {
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        AdvModeBar(
-            mode = mode,
-            onSelect = { mode = it },
-            prefetch = prefetch,
-            onGenerateAll = generateAll,
-            generateAllBusy = generateAllBusy,
-            generateAllProgress = generateAllProgress,
-            state = state,
-            showControls = mode == AdvMode.Single && state.selected != null
+    // Left list flush to the top; right column = Now Voicing band, controls, examples.
+    Row(modifier = Modifier.fillMaxSize()) {
+        AdverbList(
+            adverbs = lesson.adverbs,
+            selected = state.selected,
+            onSelect = { state.select(it) },
+            modifier = Modifier
+                .width(224.dp)
+                .fillMaxHeight()
+                .background(LbColors.Canvas)
         )
-        generateAllError?.let {
-            Text(
-                "Generate-all error: $it",
-                fontSize = 11.sp, color = Color.Red,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+        Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+            nowVoicing()
+            AdvControlsBar(
+                onGenerateAll = generateAll,
+                generateAllBusy = generateAllBusy,
+                generateAllProgress = generateAllProgress,
+                state = state
             )
-        }
-        Box(modifier = Modifier.fillMaxSize()) {
-            when (mode) {
-                AdvMode.Single -> SingleAdverbMode(app, lesson, state)
-                AdvMode.Add -> AddAdverbMode(app) { reloadKey++; mode = AdvMode.Single }
+            generateAllError?.let {
+                Text(
+                    "Generate-all error: $it",
+                    fontSize = 11.sp, color = Color.Red,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+                )
+            }
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                state.selected?.let { AdverbSentences(app, it, state) }
             }
         }
     }
@@ -268,37 +321,20 @@ fun AdverbsScreen(app: LangbangApplication, prefetch: PrefetchProgress) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AdvModeBar(
-    mode: AdvMode,
-    onSelect: (AdvMode) -> Unit,
-    prefetch: PrefetchProgress,
+private fun AdvControlsBar(
     onGenerateAll: () -> Unit,
     generateAllBusy: Boolean,
     generateAllProgress: String?,
-    state: AdverbsScreenState,
-    showControls: Boolean
+    state: AdverbsScreenState
 ) {
-    Surface(color = Color(0xFFF7F3EA), modifier = Modifier.fillMaxWidth()) {
+    Surface(color = LbColors.SurfaceRaised, modifier = Modifier.fillMaxWidth()) {
         Column {
-            Row(
-                Modifier.padding(horizontal = 16.dp, vertical = 3.dp),
+            FlowRow(
+                Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                AdvMode.values().forEach { m ->
-                    FilterChip(
-                        selected = mode == m,
-                        onClick = { onSelect(m) },
-                        label = { Text(m.label, fontSize = 12.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primary,
-                            selectedLabelColor = Color.White
-                        )
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                AdvCacheBadge(prefetch)
-                if (showControls) {
+                if (state.selected != null) {
                     AdvExamplesControls(
                         state = state,
                         onGenerateAll = onGenerateAll,
@@ -312,7 +348,7 @@ private fun AdvModeBar(
                 Text(
                     "Generating · $it",
                     fontSize = 10.sp,
-                    color = Color(0xFF7A5A1F),
+                    color = LbColors.Label,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 1.dp)
                 )
             }
@@ -325,7 +361,7 @@ private fun AdvGenerateAllButton(onClick: () -> Unit, busy: Boolean) {
     Button(
         onClick = onClick,
         enabled = !busy,
-        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7A5A1F)),
+        colors = ButtonDefaults.buttonColors(containerColor = LbColors.Label),
         shape = RoundedCornerShape(16.dp),
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
     ) {
@@ -341,157 +377,102 @@ private fun AdvGenerateAllButton(onClick: () -> Unit, busy: Boolean) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+// Emits its controls directly into the caller's FlowRow (no own layout wrapper) so chips
+// and buttons wrap together as one band.
 @Composable
 private fun AdvExamplesControls(
     state: AdverbsScreenState,
     onGenerateAll: () -> Unit,
     generateAllBusy: Boolean
 ) {
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        AdvGenerateAllButton(onGenerateAll, generateAllBusy)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(
-                checked = state.slowFirst,
-                onCheckedChange = { state.slowFirst = it },
-                enabled = !state.playing,
-                colors = CheckboxDefaults.colors(
-                    checkedColor = MaterialTheme.colorScheme.primary
-                ),
-                modifier = Modifier.size(20.dp)
+    AdvGenerateAllButton(onGenerateAll, generateAllBusy)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(
+            checked = state.slowFirst,
+            onCheckedChange = { state.slowFirst = it },
+            enabled = !state.playing,
+            colors = CheckboxDefaults.colors(
+                checkedColor = MaterialTheme.colorScheme.primary
+            ),
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text("Slow first", fontSize = 11.sp, color = LbColors.TextSecondary)
+    }
+    if (state.sentences.isNotEmpty()) {
+        Button(
+            onClick = { state.playAll(quiz = false) },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary
+            ),
+            shape = RoundedCornerShape(16.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+        ) {
+            Icon(
+                if (state.playing) Icons.Default.Stop else Icons.Default.PlayArrow,
+                contentDescription = if (state.playing) "Stop" else "Play all",
+                tint = Color.White,
+                modifier = Modifier.size(16.dp)
             )
             Spacer(Modifier.width(4.dp))
-            Text("Slow first", fontSize = 11.sp, color = Color(0xFF555555))
+            Text(
+                if (state.playing) "Stop" else "Play all",
+                fontSize = 12.sp,
+                color = Color.White
+            )
         }
-        if (state.sentences.isNotEmpty()) {
+        if (!state.playing) {
             Button(
-                onClick = { state.playAll(quiz = false) },
+                onClick = { state.playAll(quiz = true) },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
+                    containerColor = LbColors.Label
                 ),
                 shape = RoundedCornerShape(16.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
             ) {
                 Icon(
-                    if (state.playing) Icons.Default.Stop else Icons.Default.PlayArrow,
-                    contentDescription = if (state.playing) "Stop" else "Play all",
+                    Icons.Default.PlayArrow,
+                    contentDescription = "Quiz",
                     tint = Color.White,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(Modifier.width(4.dp))
-                Text(
-                    if (state.playing) "Stop" else "Play all",
-                    fontSize = 12.sp,
-                    color = Color.White
-                )
-            }
-            if (!state.playing) {
-                Button(
-                    onClick = { state.playAll(quiz = true) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF7A5A1F)
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-                ) {
-                    Icon(
-                        Icons.Default.PlayArrow,
-                        contentDescription = "Quiz",
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text("Quiz >", fontSize = 12.sp, color = Color.White)
-                }
-            }
-        }
-        if (state.busy) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(18.dp), strokeWidth = 2.dp
-            )
-        } else {
-            val isRegen = state.sentences.isNotEmpty()
-            Button(
-                onClick = { state.generate() },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isRegen) Color(0xFFEFE8D8)
-                    else MaterialTheme.colorScheme.primary
-                ),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-            ) {
-                Icon(
-                    if (isRegen) Icons.Default.Refresh else Icons.Default.Add,
-                    contentDescription = if (isRegen) "Regenerate" else "Generate",
-                    tint = if (isRegen) Color(0xFF7A5A1F) else Color.White,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    if (isRegen) "Regen" else "Generate",
-                    fontSize = 12.sp,
-                    color = if (isRegen) Color(0xFF7A5A1F) else Color.White
-                )
+                Text("Quiz >", fontSize = 12.sp, color = Color.White)
             }
         }
     }
-}
-
-@Composable
-private fun AdvCacheBadge(prefetch: PrefetchProgress) {
-    val done = prefetch.done
-    val total = prefetch.total
-    if (total == 0 && !prefetch.finished) return
-    val complete = prefetch.finished || (total > 0 && done >= total)
-    val bg = if (complete) Color(0xFFE5F2E6) else Color(0xFFFFF3DA)
-    val fg = if (complete) Color(0xFF2E7D32) else Color(0xFF8A5A1F)
-    Surface(color = bg, shape = RoundedCornerShape(12.dp)) {
-        Row(
-            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            if (!complete) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(10.dp),
-                    strokeWidth = 1.5.dp,
-                    color = fg
-                )
-            }
-            Text(
-                "audio $done/$total",
-                fontSize = 11.sp,
-                color = fg,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-    }
-}
-
-@Composable
-private fun SingleAdverbMode(
-    app: LangbangApplication,
-    lesson: AdverbLesson,
-    state: AdverbsScreenState
-) {
-    Row(Modifier.fillMaxSize()) {
-        AdverbList(
-            adverbs = lesson.adverbs,
-            selected = state.selected,
-            onSelect = { state.select(it) },
-            modifier = Modifier
-                .width(224.dp)
-                .fillMaxHeight()
-                .background(Color(0xFFF3EFE6))
+    if (state.busy) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(18.dp), strokeWidth = 2.dp
         )
-        Box(Modifier.weight(1f).fillMaxHeight()) {
-            state.selected?.let { AdverbSentences(app, it, state) }
+    } else {
+        val isRegen = state.sentences.isNotEmpty()
+        Button(
+            onClick = { state.generate() },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isRegen) LbColors.SurfaceTint
+                else MaterialTheme.colorScheme.primary
+            ),
+            shape = RoundedCornerShape(16.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+        ) {
+            Icon(
+                if (isRegen) Icons.Default.Refresh else Icons.Default.Add,
+                contentDescription = if (isRegen) "Regenerate" else "Generate",
+                tint = if (isRegen) LbColors.Label else Color.White,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                if (isRegen) "Regen" else "Generate",
+                fontSize = 12.sp,
+                color = if (isRegen) LbColors.Label else Color.White
+            )
         }
     }
 }
+
+// AdvCacheBadge moved to AppHeader (single source) — removed duplicate.
 
 @Composable
 private fun AdverbList(
@@ -516,23 +497,23 @@ private fun AdverbList(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
-                    Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            a.lemma,
-                            color = if (isSel) Color.White else Color(0xFF0F4C81),
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 16.sp
-                        )
-                        Text(
-                            a.en,
-                            color = if (isSel) Color.White.copy(alpha = 0.85f)
-                            else Color(0xFF666666),
-                            fontSize = 12.sp
-                        )
-                    }
+                    Text(
+                        a.lemma,
+                        color = if (isSel) Color.White else LbColors.Primary,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        a.en,
+                        color = if (isSel) Color.White.copy(alpha = 0.85f)
+                        else LbColors.TextSecondary,
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
         }
@@ -554,9 +535,9 @@ private fun AdverbSentences(
     ) {
         Row(verticalAlignment = Alignment.Bottom) {
             Text(adv.lemma, fontSize = 26.sp, fontWeight = FontWeight.Bold,
-                color = Color(0xFF0F4C81))
+                color = LbColors.Primary)
             Spacer(Modifier.width(12.dp))
-            Text(adv.en, fontSize = 14.sp, color = Color(0xFF666666),
+            Text(adv.en, fontSize = 14.sp, color = LbColors.TextSecondary,
                 modifier = Modifier.padding(bottom = 4.dp))
         }
         Spacer(Modifier.height(8.dp))
@@ -564,14 +545,14 @@ private fun AdverbSentences(
             "Examples",
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
-            color = Color(0xFF7A5A1F)
+            color = LbColors.Label
         )
         if (state.sentences.isEmpty()) {
             Text(
                 "No examples yet — tap Generate above to make 20 short sentences using " +
                     "this adverb with common verbs and beginner vocabulary.",
                 fontSize = 12.sp,
-                color = Color(0xFF888888)
+                color = LbColors.TextMuted
             )
         } else {
             state.sentences.forEachIndexed { i, s ->
@@ -597,7 +578,7 @@ private fun AdvSentenceRow(
     Card(
         onClick = onPlay,
         colors = CardDefaults.cardColors(
-            containerColor = if (highlighted) Color(0xFFE6F0FA) else Color(0xFFFBF7EC)
+            containerColor = if (highlighted) LbColors.PrimarySoft else LbColors.SurfaceRaised
         ),
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -607,99 +588,19 @@ private fun AdvSentenceRow(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    sentence.pl,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFF0F4C81)
-                )
-                Text(
                     sentence.en,
                     fontSize = 12.sp,
-                    color = Color(0xFF777777)
+                    color = LbColors.TextMuted
+                )
+                com.sponic.langbang.ui.common.WordAlignedPolish(
+                    sentence = sentence,
+                    plFontSize = 16.sp,
+                    plFontWeight = FontWeight.Medium,
+                    glossFontSize = 10.sp
                 )
             }
             Icon(Icons.Default.PlayArrow, contentDescription = "Play",
-                tint = Color(0xFF0F4C81), modifier = Modifier.size(20.dp))
-        }
-    }
-}
-
-@Composable
-private fun AddAdverbMode(app: LangbangApplication, onAdded: () -> Unit) {
-    val scope = rememberCoroutineScope()
-    var input by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var preview by remember { mutableStateOf<AdverbEntry?>(null) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(32.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text("Add an adverb", fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
-            color = Color(0xFF0F4C81))
-        Text(
-            "Type an English adverb (e.g. \"often\"). Gemini will translate it to Polish " +
-                "(no inflection — adverbs are uninflected), then we'll generate audio.",
-            fontSize = 13.sp, color = Color(0xFF666666)
-        )
-        OutlinedTextField(
-            value = input,
-            onValueChange = { input = it },
-            label = { Text("English adverb") },
-            singleLine = true,
-            enabled = !busy,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Button(
-                onClick = {
-                    val trimmed = input.trim()
-                    if (trimmed.isEmpty()) return@Button
-                    busy = true; error = null; preview = null
-                    scope.launch {
-                        app.gemini.translateAdverb(trimmed)
-                            .onSuccess { a ->
-                                preview = a
-                                app.lessonRepo.addUserAdverb(a)
-                                onAdded()
-                            }
-                            .onFailure { error = it.message }
-                        busy = false
-                    }
-                },
-                enabled = !busy && input.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                ),
-                shape = RoundedCornerShape(24.dp)
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null, tint = Color.White)
-                Spacer(Modifier.width(8.dp))
-                Text(if (busy) "Translating…" else "Translate & add", color = Color.White)
-            }
-            if (busy) {
-                Spacer(Modifier.width(12.dp))
-                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-            }
-        }
-        error?.let {
-            Text("Error: $it", color = Color.Red, fontSize = 12.sp)
-        }
-        preview?.let {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F4EA)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Added ✓ — ${it.lemma}", fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF2E7D32))
-                    Text(it.en, fontSize = 12.sp, color = Color(0xFF555555))
-                }
-            }
+                tint = LbColors.Primary, modifier = Modifier.size(20.dp))
         }
     }
 }

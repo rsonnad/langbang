@@ -4,7 +4,9 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
+import com.microsoft.cognitiveservices.speech.CancellationDetails
 import com.microsoft.cognitiveservices.speech.PropertyId
+import com.microsoft.cognitiveservices.speech.ResultReason
 import com.microsoft.cognitiveservices.speech.SpeechConfig
 import com.microsoft.cognitiveservices.speech.SpeechRecognizer
 import com.microsoft.cognitiveservices.speech.PronunciationAssessmentConfig
@@ -53,9 +55,17 @@ class AzurePronunciationClient(
      * @param locale e.g. "pl-PL"
      * @param referenceText The exact phrase the user is expected to say
      */
+    /**
+     * Optional callback that fires whenever the Speech SDK emits a `recognizing` event —
+     * i.e. live partial transcripts while the user is still speaking. Useful for showing
+     * a "Listening: …" hint in the UI so the user knows the mic is actually capturing
+     * audio (vs. a silent timeout that returns 0).
+     */
     suspend fun assessOnce(
         locale: String,
-        referenceText: String
+        referenceText: String,
+        onListening: (() -> Unit)? = null,
+        onPartial: ((String) -> Unit)? = null
     ): Result<PronunciationScore> = withContext(Dispatchers.IO) {
         // Permission check first — without RECORD_AUDIO the native mic capture would
         // either silently produce no audio or block forever waiting for samples.
@@ -97,6 +107,17 @@ class AzurePronunciationClient(
             recognizer = rec
             pronConfig.applyTo(rec)
 
+            // Live partial transcripts: the SDK fires `recognizing` events as it processes
+            // incoming audio chunks. If we never see one, the mic isn't capturing — that's
+            // a much more useful diagnostic than the silent 0 we used to return.
+            var heardAnyAudio = false
+            rec.sessionStarted.addEventListener { _, _ -> onListening?.invoke() }
+            rec.recognizing.addEventListener { _, e ->
+                heardAnyAudio = true
+                val partial = e.result.text
+                if (!partial.isNullOrEmpty()) onPartial?.invoke(partial)
+            }
+
             val startMs = System.currentTimeMillis()
             // 30s safety net. Azure's silence-timeout normally resolves recognizeOnceAsync
             // in ~5s even if the user doesn't speak; if the network or SDK init wedges,
@@ -106,27 +127,56 @@ class AzurePronunciationClient(
                     rec.recognizeOnceAsync().get()
                 }
             }
-            val pronResult = PronunciationAssessmentResult.fromResult(result)
 
             // Wall-clock around recognizeOnceAsync — slightly over-estimates vs the
             // recognized-audio span Azure actually bills, which is fine for a budget gauge.
             val seconds = (System.currentTimeMillis() - startMs).coerceAtLeast(0L) / 1000.0
             usage?.recordPronunciationSeconds(seconds)
-            val words = pronResult.words?.map {
-                WordScore(it.word, it.accuracyScore, it.errorType?.toString() ?: "None")
-            } ?: emptyList()
 
-            val score = PronunciationScore(
-                transcribed = result.text ?: "",
-                accuracy = pronResult.accuracyScore,
-                fluency = pronResult.fluencyScore,
-                completeness = pronResult.completenessScore,
-                pronunciation = pronResult.pronunciationScore,
-                words = words
-            )
-
-            result.close()
-            Result.success(score)
+            when (result.reason) {
+                ResultReason.RecognizedSpeech -> {
+                    val pronResult = PronunciationAssessmentResult.fromResult(result)
+                    val words = pronResult.words?.map {
+                        WordScore(it.word, it.accuracyScore, it.errorType?.toString() ?: "None")
+                    } ?: emptyList()
+                    val score = PronunciationScore(
+                        transcribed = result.text ?: "",
+                        accuracy = pronResult.accuracyScore,
+                        fluency = pronResult.fluencyScore,
+                        completeness = pronResult.completenessScore,
+                        pronunciation = pronResult.pronunciationScore,
+                        words = words
+                    )
+                    result.close()
+                    Result.success(score)
+                }
+                ResultReason.NoMatch -> {
+                    result.close()
+                    val msg = if (heardAnyAudio) {
+                        "Didn't recognize what you said. Try again, closer to the mic."
+                    } else {
+                        "No audio captured. Check the mic isn't muted and try again."
+                    }
+                    Result.failure(IOException(msg))
+                }
+                ResultReason.Canceled -> {
+                    val details = runCatching { CancellationDetails.fromResult(result) }
+                        .getOrNull()
+                    result.close()
+                    val msg = buildString {
+                        append("Speech recognition canceled")
+                        details?.reason?.let { append(" (").append(it.toString()).append(")") }
+                        details?.errorDetails?.takeIf { it.isNotBlank() }
+                            ?.let { append(": ").append(it) }
+                    }
+                    Result.failure(IOException(msg))
+                }
+                else -> {
+                    val reason = result.reason
+                    result.close()
+                    Result.failure(IOException("Unexpected recognition result: $reason"))
+                }
+            }
         } catch (t: TimeoutCancellationException) {
             Result.failure(
                 IOException("Speech recognition timed out after 30s. Check network and try again.")

@@ -3,6 +3,7 @@ package com.sponic.langbang.integrations
 import com.sponic.langbang.BuildConfig
 import com.sponic.langbang.data.model.AdjectiveEntry
 import com.sponic.langbang.data.model.AdverbEntry
+import com.sponic.langbang.data.model.NounEntry
 import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.data.model.TokenPair
 import com.sponic.langbang.data.model.VerbEntry
@@ -26,6 +27,53 @@ import java.net.URL
 class GeminiClient(
     private val usage: UsageTracker? = null
 ) {
+
+    companion object {
+        const val TENSE_PRESENT = "present"
+        const val TENSE_PAST = "past"
+
+        /**
+         * Path key for the server-side sentence bundle tree in R2
+         * (`langbang/sentences/v{N}/...`). Bump when ANY prompt changes so the
+         * client downloader pulls from a fresh tree even if only one type bumped.
+         * Cheap — Gemini calls for the whole canonical set are pennies.
+         */
+        const val SENTENCE_PROMPT_VERSION = 3
+
+        /**
+         * Per-type wipe versions. Bump ONE of these when its prompt changes so
+         * the local on-device cache for that type gets cleared on next launch
+         * without nuking caches the user already paid for. Pair with a
+         * [SENTENCE_PROMPT_VERSION] bump above so the R2 tree has fresh content
+         * matching the new prompt; the on-launch downloader then refills the
+         * cleared store from the new tree.
+         *
+         * Wrong-blast-radius incident on 2026-05-28: v0.1.7.70 bumped a single
+         * global `SENTENCE_PROMPT_VERSION` from 1 → 2 because the adj+adv
+         * prompts added a `words` field, but the migration wiped verbs too —
+         * costing the user ~45 min of on-device verb regen for content that
+         * was already correct. These per-type keys make the wipe surgical.
+         *
+         * v3 (2026-05-28): adj+adv prompts gained the "10-year-old test" plus
+         * explicit bad examples (difficult weather, important key, easy gift,
+         * health doctor). Verb prompt unchanged.
+         *
+         * 2026-05-28 (later): all three wipe versions bumped because the parallel
+         * R2 downloader in [SentenceRegenService] was racing on the per-store JSON
+         * writes — only ~15 of 92 downloaded bundles actually survived on disk.
+         * Mutex added in the same change; bumping the wipe versions forces every
+         * device to throw away the partially-corrupted local caches and pull a
+         * clean copy from R2 with the race-free path. Verb prompt content is
+         * unchanged (R2 v3 verb bundles are identical bytes copied from v2), so users
+         * don't get worse content — they just get all of it instead of 15 of it.
+         */
+        const val VERB_WIPE_VERSION = 2
+        const val ADJECTIVE_WIPE_VERSION = 4
+        const val ADVERB_WIPE_VERSION = 4
+
+        /** Nouns shipped in v0.1.x — first prompt version, no prior cache to wipe. */
+        const val NOUN_WIPE_VERSION = 1
+    }
 
     private val key = BuildConfig.GEMINI_API_KEY
     private val endpoint =
@@ -52,10 +100,14 @@ class GeminiClient(
      * vocabulary so a beginner can read them, restricted to [allowedPersonKeys] — only
      * subjects/conjugations matching those person keys (e.g. "1sg", "2sg") will appear.
      * Empty or null means "all forms allowed".
+     *
+     * [tense] selects which conjugation set to use ("present" → verb.forms, "past" →
+     * verb.past_forms). Past requests fail fast if the verb has no past_forms.
      */
     suspend fun generateSentences(
         verb: VerbEntry,
-        allowedPersonKeys: Set<String>? = null
+        allowedPersonKeys: Set<String>? = null,
+        tense: String = TENSE_PRESENT
     ): Result<List<SentenceExample>> =
         withContext(Dispatchers.IO) {
             if (key.isBlank()) {
@@ -63,8 +115,13 @@ class GeminiClient(
                     IllegalStateException("GEMINI_API_KEY not set in local.properties")
                 )
             }
+            if (tense == TENSE_PAST && verb.past_forms.isNullOrEmpty()) {
+                return@withContext Result.failure(
+                    IllegalStateException("Verb ${verb.lemma} has no past_forms")
+                )
+            }
             try {
-                val raw = postPrompt(buildSentencePrompt(verb, allowedPersonKeys))
+                val raw = postPrompt(buildSentencePrompt(verb, allowedPersonKeys, tense))
                 Result.success(parseSentenceResponse(raw))
             } catch (t: Throwable) {
                 Result.failure(t)
@@ -174,21 +231,66 @@ class GeminiClient(
 
     private fun buildSentencePrompt(
         verb: VerbEntry,
-        allowedPersonKeys: Set<String>?
+        allowedPersonKeys: Set<String>?,
+        tense: String
     ): String {
+        val isPast = tense == TENSE_PAST
+        val sourceForms = if (isPast) verb.past_forms.orEmpty() else verb.forms
         val effectiveKeys = allowedPersonKeys
             ?.takeIf { it.isNotEmpty() }
-            ?: verb.forms.keys
-        val allowedForms = verb.forms.filterKeys { it in effectiveKeys }
+            ?: sourceForms.keys
+        val allowedForms = sourceForms.filterKeys { it in effectiveKeys }
         val formsBlurb = allowedForms.entries.joinToString(", ") { "${it.key}=${it.value}" }
-        return "Write 20 very simple example Polish sentences that use the verb \"" +
-            "${verb.lemma}\" (English: ${verb.en}). " +
-            "Use only the most common everyday vocabulary that a beginner would know " +
-            "(food, family, basic objects, places). " +
+        val tenseInstruction = if (isPast) {
+            "Every sentence must be in the PAST TENSE. " +
+                "STRICT REQUIREMENT: every sentence's main verb must be one of these " +
+                "past-tense conjugations — do NOT use any other conjugation and do NOT " +
+                "fall back to present tense: $formsBlurb. " +
+                "These are the collapsed masculine-singular (1sg/2sg/3sg) and virile " +
+                "masculine-personal plural (1pl/2pl/3pl) past forms. Use them exactly. " +
+                "Vary which of those allowed forms you use across the 40 sentences. " +
+                "The English translations must also be in the simple past tense " +
+                "(e.g. \"I drank water\", not \"I drink water\"). "
+        } else {
             "STRICT REQUIREMENT: every sentence's verb must be one of these conjugated " +
-            "forms — do NOT use any other conjugation: $formsBlurb. " +
-            "Vary which of those allowed forms you use across the 20 sentences. " +
+                "forms — do NOT use any other conjugation: $formsBlurb. " +
+                "Vary which of those allowed forms you use across the 40 sentences. "
+        }
+        return "Write 40 very simple example Polish sentences that use the verb \"" +
+            "${verb.lemma}\" (English: ${verb.en}). " +
+            "EVERYDAY-PHRASE REQUIREMENT (the most important rule): every sentence must " +
+            "be a HIGH-FREQUENCY phrase that adults actually say multiple times a week — " +
+            "the kind of phrase that would appear in the top 500 sentences of a beginner " +
+            "phrasebook. Aim for the everyday register of \"I'm hungry\", \"I'm tired\", " +
+            "\"I want to eat\", \"I'm going to the restaurant\", \"I saw her at the gym\", " +
+            "\"I'm cold\", \"I need coffee\", \"I have a headache\", \"do you understand\", " +
+            "\"see you later\", \"I'll be right back\", \"I forgot my keys\", \"are you " +
+            "ready\", \"let's go home\", \"I'm running late\". Hit body states (hungry, " +
+            "thirsty, sleepy, hot, cold, tired, sick), basic intentions (want, need, going " +
+            "to), common places (home, work, store, restaurant, school, gym, park), and " +
+            "common objects (keys, phone, money, food, coffee, water, bread). " +
+            "Use only the most common everyday vocabulary that a beginner would know " +
+            "(food, family, basic objects, places, body states). " +
+            "CRITICAL NATURALNESS RULE: every sentence must be something a real person " +
+            "would actually say in ordinary conversation. Grammatical correctness is NOT " +
+            "enough — the sentence must be idiomatic and commonplace in BOTH Polish AND " +
+            "English. Before including a sentence, ask yourself: \"Have I heard a native " +
+            "speaker say this in real life this week?\" If the answer is no, pick a " +
+            "different one. Use the right verb collocation for the noun (you LOOK AT a " +
+            "painting, you don't WATCH it; you LISTEN TO music, you don't HEAR-TO it). " +
+            "REJECT contrived, textbook-flavored, or whimsical scenarios — no \"The cat " +
+            "is on the table\" filler. Prefer phrases someone would actually text a " +
+            "friend or say to a family member (\"I'm leaving now\", \"call me later\", " +
+            "\"don't forget bread\", \"I drank coffee already\"). " +
+            tenseInstruction +
             "Keep each Polish sentence to 5 words or fewer. " +
+            "PREPOSITION COVERAGE: at least 10 of the 40 sentences must use a Polish " +
+            "preposition. Include AT LEAST ONE sentence for each of these five common " +
+            "prepositions: w (in/at), na (on/at), do (to), z (with/from), o (about). " +
+            "Examples of natural preposition use: \"Jestem w domu\" (w + locative), " +
+            "\"Książka leży na stole\" (na + locative), \"Idę do sklepu\" (do + genitive), " +
+            "\"Rozmawiam z bratem\" (z + instrumental), \"Mówię o pogodzie\" (o + locative). " +
+            "Use the correct case for each preposition. " +
             "For each sentence, return THREE fields: " +
             "(1) \"pl\": the Polish sentence with correct diacritics and natural capitalization. " +
             "(2) \"en\": a GRAMMATICALLY CORRECT, NATURAL English translation. " +
@@ -197,6 +299,10 @@ class GeminiClient(
             "    Use natural English prepositions — e.g. \"Jestem w domu\" → \"I am at home\", " +
             "    NOT \"I am in home\". Do NOT paraphrase to a different scene; keep the same " +
             "    subject and meaning, just render it in idiomatic English. " +
+            "    For the 2pl form (wy / 2pl), render the English subject as \"Y'all\" at " +
+            "    the start of a sentence and \"y'all\" mid-sentence — NEVER write \"You " +
+            "    (plural)\", \"you (pl.)\", or any \"(plural)\" annotation in the English. " +
+            "    For 1pl use \"We\"; for 3pl use \"They\". " +
             "(3) \"literal\": a WORD-FOR-WORD gloss that preserves the Polish word order and " +
             "    matches each Polish word to its closest English equivalent. Skip articles " +
             "    that don't exist in the Polish (Polish has no a/an/the). Keep the literal " +
@@ -239,7 +345,7 @@ class GeminiClient(
             else SentenceExample(pl, en, literal, words)
         }
         require(sentences.isNotEmpty()) { "Gemini returned no usable sentences" }
-        return sentences.take(20)
+        return sentences.take(40)
     }
 
     private fun buildAdjectivePrompt(english: String): String =
@@ -258,19 +364,96 @@ class GeminiClient(
     private fun buildAdjectiveSentencePrompt(adj: AdjectiveEntry): String {
         val nomBlurb = adj.nom.entries.joinToString(", ") { "${it.key}=${it.value}" }
         val accBlurb = adj.acc.entries.joinToString(", ") { "${it.key}=${it.value}" }
-        return "Write 20 very simple example Polish sentences that use the adjective \"" +
+        return "Write 40 very simple example Polish sentences that use the adjective \"" +
             "${adj.lemma}\" (English: ${adj.en}). " +
-            "Each sentence must combine a common Polish verb (e.g. mieć, widzieć, lubić, " +
-            "kupować, czytać, jeść) with the adjective and a beginner-level noun (e.g. stół, " +
-            "dom, kot, pies, książka, kawa, jabłko). The English side should read like " +
-            "'I see a big table' or 'She has a small dog'. " +
+            "EVERYDAY-PHRASE REQUIREMENT (the most important rule): every sentence must " +
+            "be a HIGH-FREQUENCY phrase that adults actually say multiple times a week. " +
+            "Aim for the everyday register of \"I want hot coffee\", \"she has a big " +
+            "house\", \"I bought a new phone\", \"do you have small change\", \"I need a " +
+            "warm jacket\", \"that was a long day\", \"this is good bread\". Avoid " +
+            "textbook filler. " +
+            "VERB POOL: use ONLY these common Polish verbs in the chosen tense/person — " +
+            "mieć (to have), widzieć (to see), lubić (to like), kochać (to love), " +
+            "kupować (to buy), czytać (to read), jeść (to eat), pić (to drink), " +
+            "chcieć (to want), potrzebować (to need), znać (to know), pamiętać (to remember), " +
+            "robić (to do), pisać (to write), mówić (to speak), słuchać (to listen to), " +
+            "oglądać (to watch), iść (to go), być (to be), spotykać (to meet). " +
+            "NOUN POOL: use ONLY ordinary everyday concrete nouns the adjective can " +
+            "TRULY describe. Examples: kawa, herbata, woda, chleb, jabłko, obiad, " +
+            "śniadanie, kolacja, dom, mieszkanie, samochód, pies, kot, książka, telefon, " +
+            "kurtka, sweter, koszula, sukienka, klucze, pieniądze, prezent, ogród, " +
+            "ulica, sklep, restauracja, hotel, szkoła, pokój, łóżko, stół, krzesło, " +
+            "miasto, dzień, wieczór, pogoda, lekarz, sąsiad, przyjaciel, dziecko. " +
+            "CRITICAL NATURALNESS RULE: each sentence must be something a real person would " +
+            "actually say in ordinary conversation, in BOTH Polish AND English. Grammatical " +
+            "correctness is NOT enough — the adjective must NATURALLY describe the noun and " +
+            "the verb must NATURALLY apply to that noun. Before including a sentence, ask " +
+            "yourself two questions: (a) \"Does ${adj.en} actually describe this noun in " +
+            "everyday English?\" and (b) \"Have I heard a native speaker say this in real " +
+            "life this week?\" If either answer is no, pick a different noun. " +
+            "THE 10-YEAR-OLD TEST (apply to every sentence): could an English-speaking " +
+            "10-year-old plausibly say this exact sentence to their parent, sibling, " +
+            "friend, or teacher in real life? If you have to invent a contrived " +
+            "scenario to justify it, DROP THE SENTENCE and pick a different noun. " +
+            "If the English sentence sounds like a translated phrasebook entry rather " +
+            "than something an actual kid or adult would text, REJECT IT. " +
+            "REJECT awkward adjective+noun pairings even if grammatical. Bad examples " +
+            "(do NOT produce sentences like these — every one of these was generated by " +
+            "a previous version of this prompt and got flagged by a real user): " +
+            "\"the low building\" / \"niski budynek\" (we say 'tall' or 'short' for " +
+            "buildings, not 'low' — and 'low building' is not a phrase anyone uses), " +
+            "\"an expensive shop\" / \"drogi sklep\" (shops aren't usually called " +
+            "'expensive'; expensive describes items inside the shop — pick 'I'm going " +
+            "to a small shop' or 'I bought an expensive coffee'), " +
+            "\"I am talking about difficult weather\" (no one says this — say 'It's bad " +
+            "weather' or 'The weather is bad'), " +
+            "\"he has an important key in the room\" (keys aren't 'important' in casual " +
+            "speech — say 'he found the key' or 'he has my keys'), " +
+            "\"I remember about an easy gift\" ('easy gift' isn't a phrase — say 'nice " +
+            "gift' / 'small gift' / 'perfect gift'; and people 'remember a gift', not " +
+            "'remember about a gift'), " +
+            "\"I am going to a health doctor\" (just say 'doctor' — 'health doctor' is " +
+            "not a phrase in English), " +
+            "\"a difficult word\" (people don't 'write words'), " +
+            "\"watch a big painting\" (paintings aren't 'big' colloquially — and you LOOK " +
+            "AT, not WATCH, a painting), \"read a quick book\" ('quick' doesn't describe " +
+            "a book — say 'short' instead), \"eat a tall apple\", \"drink a long coffee\", " +
+            "\"see a fast car\" (only OK if the car is actually moving fast), " +
+            "\"eat a bad mouse\" (people don't eat mice), \"eat a small bread\" (bread is " +
+            "uncountable — say 'a small piece of bread' or pick a different noun). " +
+            "If the adjective doesn't pair naturally with a given noun, CHANGE THE NOUN. " +
+            "Stick to ordinary, boring, everyday pairings (a big house, a small dog, hot " +
+            "coffee, an old book, a red car, a good friend, a new phone, a long day). " +
             "Make the adjective agree correctly with the noun's gender and case " +
             "(nominative: $nomBlurb; accusative: $accBlurb). Use the accusative form when the " +
             "noun is the direct object of the verb (most of these examples). " +
             "Vary the subject pronoun across sentences. Keep each sentence to 6 words or fewer. " +
+            "For the 2pl subject (wy), render the English subject as \"Y'all\" at the start " +
+            "of a sentence and \"y'all\" mid-sentence — NEVER write \"You (plural)\", \"you " +
+            "(pl.)\", or any \"(plural)\" annotation in the English. " +
+            "PREPOSITION COVERAGE: at least 10 of the 40 sentences must use a Polish " +
+            "preposition with the adjective+noun. Include AT LEAST ONE sentence for each " +
+            "of these five common prepositions: w (in/at), na (on/at), do (to), z (with/" +
+            "from), o (about). Examples: \"Mam ciepłą kawę w domu\", \"Widzę dużego psa na " +
+            "ulicy\", \"Idę do nowego sklepu\", \"Piję herbatę z dobrym przyjacielem\", " +
+            "\"Czytam książkę o starym mieście\". Use the correct case for each preposition. " +
+            "For each sentence, return FOUR fields: " +
+            "(1) \"pl\": the Polish sentence with correct diacritics and natural capitalization. " +
+            "(2) \"en\": a GRAMMATICALLY CORRECT, NATURAL English translation. " +
+            "    Use proper English articles (a / an / the) where English requires them. " +
+            "    For 2pl render the subject as \"Y'all\" / \"y'all\"; never \"You (plural)\". " +
+            "(3) \"literal\": a WORD-FOR-WORD gloss preserving Polish word order. Skip " +
+            "    articles that don't exist in Polish. Keep prepositions literal (e.g. " +
+            "    \"Mam ciepłą kawę\" → \"I-have warm coffee\"). " +
+            "(4) \"words\": an ARRAY of per-token mappings in the same left-to-right order " +
+            "    as the Polish sentence. Each element is {\"pl\":\"polish-token\",\"en\":" +
+            "    \"english-gloss\"}. Tokens correspond to whitespace-separated Polish words. " +
+            "    When a Polish word maps to a multi-word English gloss use a hyphen " +
+            "    (\"I-have\"). The number of \"words\" entries MUST equal the Polish word " +
+            "    count exactly — every Polish token gets its own gloss. " +
             "Return ONLY a JSON array (no prose, no markdown fence) where each element has " +
-            "the exact shape {\"pl\":\"polish sentence\",\"en\":\"english translation\"}. " +
-            "Polish sentences must use correct diacritics and natural capitalization."
+            "the exact shape {\"pl\":\"...\",\"en\":\"...\",\"literal\":\"...\"," +
+            "\"words\":[{\"pl\":\"...\",\"en\":\"...\"}]}."
     }
 
     private fun parseAdjectiveResponse(raw: String, englishFallback: String): AdjectiveEntry {
@@ -360,13 +543,51 @@ class GeminiClient(
         "Use lowercase Polish with correct diacritics."
 
     private fun buildAdverbSentencePrompt(adv: AdverbEntry): String =
-        "Write 20 very simple example Polish sentences that use the adverb \"${adv.lemma}\" " +
-        "(English: ${adv.en}). Each sentence must combine the adverb with a common Polish " +
-        "verb (e.g. iść, robić, jeść, lubić, mieć) and beginner vocabulary. Vary the " +
-        "subject pronoun. Keep each sentence to 6 words or fewer. " +
+        "Write 40 very simple example Polish sentences that use the adverb \"${adv.lemma}\" " +
+        "(English: ${adv.en}). " +
+        "EVERYDAY-PHRASE REQUIREMENT (the most important rule): every sentence must be a " +
+        "HIGH-FREQUENCY phrase that adults actually say multiple times a week. Aim for " +
+        "everyday phrases like \"I'm running late\", \"I sleep well\", \"speak slowly " +
+        "please\", \"come quickly\", \"work hard\", \"eat slowly\". No textbook filler. " +
+        "VERB POOL: use ONLY common Polish verbs the adverb can naturally modify. " +
+        "Good candidates: iść, robić, jeść, pić, mówić, pracować, spać, czytać, pisać, " +
+        "śpiewać, biec, chodzić, słuchać, oglądać, uczyć się, gotować, jechać. " +
+        "Vary the subject pronoun. Keep each sentence to 6 words or fewer. " +
+        "CRITICAL NATURALNESS RULE: each sentence must be something a real person would " +
+        "actually say in ordinary conversation, in BOTH Polish AND English. Grammatical " +
+        "correctness is NOT enough — the adverb must NATURALLY modify the chosen verb. " +
+        "Before including a sentence, ask yourself: \"Have I heard a native speaker say " +
+        "this in real life this week?\" If no, pick a different verb. " +
+        "THE 10-YEAR-OLD TEST (apply to every sentence): could an English-speaking " +
+        "10-year-old plausibly say this exact sentence to their parent, sibling, friend, " +
+        "or teacher in real life? If you have to invent a contrived scenario to justify " +
+        "it, DROP THE SENTENCE and pick a different verb. " +
+        "Reject any verb+adverb combination that sounds odd. Bad examples (do NOT produce " +
+        "sentences like these): \"I have quickly\" ('have' isn't done quickly), \"she sees " +
+        "slowly\" (you don't see slowly), \"we like loudly\" (liking isn't loud). " +
+        "Prefer common verb+adverb collocations native speakers actually use (walk slowly, " +
+        "speak quietly, eat quickly, sing loudly, work hard, sleep well). " +
+        "For the 2pl subject (wy), render the English subject as \"Y'all\" at the start " +
+        "of a sentence and \"y'all\" mid-sentence — NEVER write \"You (plural)\", \"you " +
+        "(pl.)\", or any \"(plural)\" annotation in the English. " +
+        "PREPOSITION COVERAGE: at least 10 of the 40 sentences must use a Polish preposition. " +
+        "Include AT LEAST ONE sentence for each of these five common prepositions: w (in/at), " +
+        "na (on/at), do (to), z (with/from), o (about). Use the correct case for each. " +
+        "For each sentence, return FOUR fields: " +
+        "(1) \"pl\": the Polish sentence with correct diacritics and natural capitalization. " +
+        "(2) \"en\": a GRAMMATICALLY CORRECT, NATURAL English translation. For 2pl render " +
+        "    the subject as \"Y'all\" / \"y'all\"; never \"You (plural)\". " +
+        "(3) \"literal\": a WORD-FOR-WORD gloss preserving Polish word order. Skip articles " +
+        "    that don't exist in Polish. Keep prepositions literal. " +
+        "(4) \"words\": an ARRAY of per-token mappings in the same left-to-right order as " +
+        "    the Polish sentence. Each element is {\"pl\":\"polish-token\",\"en\":" +
+        "    \"english-gloss\"}. Tokens correspond to whitespace-separated Polish words. " +
+        "    When a Polish word maps to a multi-word English gloss use a hyphen " +
+        "    (\"I-am\"). The number of \"words\" entries MUST equal the Polish word count " +
+        "    exactly — every Polish token gets its own gloss. " +
         "Return ONLY a JSON array (no prose, no markdown fence) where each element has " +
-        "the shape {\"pl\":\"polish sentence\",\"en\":\"english translation\"," +
-        "\"literal\":\"word-for-word gloss\"}."
+        "the exact shape {\"pl\":\"...\",\"en\":\"...\",\"literal\":\"...\"," +
+        "\"words\":[{\"pl\":\"...\",\"en\":\"...\"}]}."
 
     private fun parseAdverbResponse(raw: String, englishFallback: String): AdverbEntry {
         val root = json.parseToJsonElement(raw).jsonObject
@@ -383,5 +604,151 @@ class GeminiClient(
         )
         require(adv.lemma.isNotEmpty()) { "Gemini returned empty adverb lemma" }
         return adv
+    }
+
+    // ── Nouns ───────────────────────────────────────────────────────────────────
+
+    /**
+     * Translate an English noun and produce its nominative + accusative + genitive
+     * paradigm (singular & plural) plus gender. Mirrors [translateAdjective].
+     */
+    suspend fun translateNoun(englishNoun: String): Result<NounEntry> =
+        withContext(Dispatchers.IO) {
+            if (key.isBlank()) {
+                return@withContext Result.failure(
+                    IllegalStateException("GEMINI_API_KEY not set in local.properties")
+                )
+            }
+            try {
+                val raw = postPrompt(buildNounPrompt(englishNoun))
+                Result.success(parseNounResponse(raw, englishNoun))
+            } catch (t: Throwable) {
+                Result.failure(t)
+            }
+        }
+
+    /**
+     * Asks Gemini for 20-40 short example sentences that use [noun] across its cases —
+     * subject (nominative), direct object (accusative), and "of"/negation (genitive).
+     */
+    suspend fun generateNounSentences(noun: NounEntry): Result<List<SentenceExample>> =
+        withContext(Dispatchers.IO) {
+            if (key.isBlank()) {
+                return@withContext Result.failure(
+                    IllegalStateException("GEMINI_API_KEY not set in local.properties")
+                )
+            }
+            try {
+                val raw = postPrompt(buildNounSentencePrompt(noun))
+                Result.success(parseSentenceResponse(raw))
+            } catch (t: Throwable) {
+                Result.failure(t)
+            }
+        }
+
+    private fun buildNounPrompt(english: String): String =
+        "Translate the English noun \"$english\" into Polish, then give its declension in the " +
+        "nominative, accusative, and genitive cases — each in BOTH singular and plural. Return " +
+        "ONLY a JSON object with this exact shape (no prose, no markdown fence): " +
+        "{\"lemma\":\"polish_nom_singular\",\"en\":\"$english\",\"gender\":\"m|f|n\"," +
+        "\"nom\":{\"sg\":\"\",\"pl\":\"\"}," +
+        "\"acc\":{\"sg\":\"\",\"pl\":\"\"}," +
+        "\"gen\":{\"sg\":\"\",\"pl\":\"\"}}. " +
+        "\"gender\" is the grammatical gender: \"m\" (masculine), \"f\" (feminine), or \"n\" " +
+        "(neuter). \"lemma\" is the nominative singular (the dictionary form). " +
+        "For the masculine accusative singular, use the ANIMATE form (= genitive singular) " +
+        "for people and animals (e.g. widzę psa, widzę syna), but for INANIMATE masculine " +
+        "nouns the accusative singular equals the nominative singular (e.g. widzę dom). " +
+        "For the accusative plural, masculine-personal (people) nouns use the genitive plural " +
+        "form; everything else (animals, all feminine, all neuter) uses the nominative plural " +
+        "form. Use lowercase Polish with correct diacritics. If the noun is normally only used " +
+        "in the singular, still give the grammatically-correct plural forms."
+
+    private fun buildNounSentencePrompt(noun: NounEntry): String {
+        val nomBlurb = noun.nom.entries.joinToString(", ") { "${it.key}=${it.value}" }
+        val accBlurb = noun.acc.entries.joinToString(", ") { "${it.key}=${it.value}" }
+        val genBlurb = noun.gen.entries.joinToString(", ") { "${it.key}=${it.value}" }
+        return "Write 40 very simple example Polish sentences that use the noun \"" +
+            "${noun.lemma}\" (English: ${noun.en}, gender: ${noun.gender}). " +
+            "EVERYDAY-PHRASE REQUIREMENT (the most important rule): every sentence must " +
+            "be a HIGH-FREQUENCY phrase that adults actually say multiple times a week. " +
+            "Aim for the everyday register of \"I have a dog\", \"the coffee is hot\", " +
+            "\"I'm going home\", \"where is the car\", \"I don't have money\", \"this is my " +
+            "brother\", \"I love my mom\", \"we have two children\". Avoid textbook filler. " +
+            "VERB POOL: use ONLY these common Polish verbs in the chosen tense/person — " +
+            "mieć (to have), widzieć (to see), lubić (to like), kochać (to love), " +
+            "kupować (to buy), czytać (to read), jeść (to eat), pić (to drink), " +
+            "chcieć (to want), potrzebować (to need), znać (to know), pamiętać (to remember), " +
+            "robić (to do), pisać (to write), mówić (to speak), szukać (to look for), " +
+            "iść (to go), być (to be), spotykać (to meet), dawać (to give). " +
+            "CASE COVERAGE — this is critical. Distribute the 40 sentences across all three " +
+            "cases of \"${noun.lemma}\", using the EXACT inflected forms below and no others:\n" +
+            "  • NOMINATIVE (subject of the sentence, or after 'to jest' / 'to są'): $nomBlurb. " +
+            "Examples: \"To jest ${noun.nom["sg"]}\", \"${noun.nom["pl"]} są tutaj\".\n" +
+            "  • ACCUSATIVE (direct object of the verb — the most common case for these): " +
+            "$accBlurb. Examples: \"Mam ${noun.acc["sg"]}\", \"Widzę ${noun.acc["pl"]}\".\n" +
+            "  • GENITIVE (after 'nie ma' / negated verbs, after 'do', 'od', 'z', 'dla', " +
+            "'bez', and to mean 'of'): $genBlurb. Examples: \"Nie mam ${noun.gen["sg"]}\", " +
+            "\"Idę do ${noun.gen["sg"]}\" (if it makes sense), \"szukam ${noun.gen["sg"]}\". " +
+            "Aim for roughly 15 accusative, 13 nominative, and 12 genitive sentences. Every " +
+            "sentence's form of \"${noun.lemma}\" MUST be one of the forms listed above — never " +
+            "invent a different inflection. " +
+            "CRITICAL NATURALNESS RULE: each sentence must be something a real person would " +
+            "actually say in ordinary conversation, in BOTH Polish AND English. Grammatical " +
+            "correctness is NOT enough. Before including a sentence, ask yourself: \"Have I " +
+            "heard a native speaker say this in real life this week?\" If no, pick a different " +
+            "one. " +
+            "THE 10-YEAR-OLD TEST (apply to every sentence): could an English-speaking " +
+            "10-year-old plausibly say this exact sentence to their parent, sibling, friend, " +
+            "or teacher in real life? If you have to invent a contrived scenario to justify " +
+            "it, DROP THE SENTENCE. " +
+            "Vary the subject pronoun across sentences. Keep each sentence to 6 words or fewer. " +
+            "For the 2pl subject (wy), render the English subject as \"Y'all\" at the start " +
+            "of a sentence and \"y'all\" mid-sentence — NEVER write \"You (plural)\", \"you " +
+            "(pl.)\", or any \"(plural)\" annotation in the English. " +
+            "For each sentence, return FOUR fields: " +
+            "(1) \"pl\": the Polish sentence with correct diacritics and natural capitalization. " +
+            "(2) \"en\": a GRAMMATICALLY CORRECT, NATURAL English translation. " +
+            "    Use proper English articles (a / an / the) where English requires them. " +
+            "    For 2pl render the subject as \"Y'all\" / \"y'all\"; never \"You (plural)\". " +
+            "(3) \"literal\": a WORD-FOR-WORD gloss preserving Polish word order. Skip " +
+            "    articles that don't exist in Polish. Keep prepositions literal (e.g. " +
+            "    \"Idę do sklepu\" → \"I-go to shop\"). " +
+            "(4) \"words\": an ARRAY of per-token mappings in the same left-to-right order " +
+            "    as the Polish sentence. Each element is {\"pl\":\"polish-token\",\"en\":" +
+            "    \"english-gloss\"}. Tokens correspond to whitespace-separated Polish words. " +
+            "    When a Polish word maps to a multi-word English gloss use a hyphen " +
+            "    (\"I-have\"). The number of \"words\" entries MUST equal the Polish word " +
+            "    count exactly — every Polish token gets its own gloss. " +
+            "Return ONLY a JSON array (no prose, no markdown fence) where each element has " +
+            "the exact shape {\"pl\":\"...\",\"en\":\"...\",\"literal\":\"...\"," +
+            "\"words\":[{\"pl\":\"...\",\"en\":\"...\"}]}."
+    }
+
+    private fun parseNounResponse(raw: String, englishFallback: String): NounEntry {
+        val root = json.parseToJsonElement(raw).jsonObject
+        val candidates = root["candidates"] as? JsonArray ?: error("Gemini: candidates missing")
+        val first = candidates.firstOrNull()?.jsonObject ?: error("Gemini: empty candidates")
+        val parts = first["content"]?.jsonObject?.get("parts") as? JsonArray
+            ?: error("Gemini: parts missing")
+        val text = parts.firstOrNull()?.jsonObject?.get("text")?.jsonPrimitive?.content
+            ?: error("Gemini: text missing")
+        val inner = json.parseToJsonElement(text.trim()).jsonObject
+        val noun = NounEntry(
+            lemma = inner["lemma"]?.jsonPrimitive?.content?.trim().orEmpty(),
+            en = inner["en"]?.jsonPrimitive?.content?.trim() ?: englishFallback,
+            gender = inner["gender"]?.jsonPrimitive?.content?.trim()?.lowercase() ?: "",
+            nom = inner["nom"]?.jsonObject?.mapValues { it.value.jsonPrimitive.content }
+                ?: emptyMap(),
+            acc = inner["acc"]?.jsonObject?.mapValues { it.value.jsonPrimitive.content }
+                ?: emptyMap(),
+            gen = inner["gen"]?.jsonObject?.mapValues { it.value.jsonPrimitive.content }
+                ?: emptyMap()
+        )
+        require(noun.lemma.isNotEmpty()) { "Gemini returned empty noun lemma" }
+        require(noun.nom.size == 2) { "Gemini returned ${noun.nom.size} nom forms, expected 2 (sg, pl)" }
+        require(noun.acc.size == 2) { "Gemini returned ${noun.acc.size} acc forms, expected 2 (sg, pl)" }
+        require(noun.gen.size == 2) { "Gemini returned ${noun.gen.size} gen forms, expected 2 (sg, pl)" }
+        return noun
     }
 }

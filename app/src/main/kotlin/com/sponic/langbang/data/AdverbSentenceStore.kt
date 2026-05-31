@@ -22,19 +22,38 @@ class AdverbSentenceStore(context: Context) {
         ListSerializer(SentenceExample.serializer())
     )
 
+    // See VerbSentenceStore for the memo rationale — same ANR class.
+    @Volatile private var memo: MutableMap<String, List<SentenceExample>>? = null
+
     private fun loadAll(): MutableMap<String, List<SentenceExample>> {
-        if (!file.exists()) return mutableMapOf()
-        return runCatching {
-            json.decodeFromString(serializer, file.readText()).toMutableMap()
-        }.getOrDefault(mutableMapOf())
+        memo?.let { return it }
+        return synchronized(this) {
+            memo ?: run {
+                val loaded = if (!file.exists()) mutableMapOf()
+                else runCatching {
+                    json.decodeFromString(serializer, file.readText()).toMutableMap()
+                }.getOrDefault(mutableMapOf())
+                memo = loaded
+                loaded
+            }
+        }
     }
 
     fun get(lemma: String): List<SentenceExample> =
         loadAll()[lemma.lowercase()].orEmpty()
 
     fun put(lemma: String, sentences: List<SentenceExample>) {
-        val all = loadAll()
-        all[lemma.lowercase()] = sentences
-        file.writeText(json.encodeToString(serializer, all))
+        synchronized(this) {
+            val all = loadAll()
+            all[lemma.lowercase()] = sentences
+            file.writeText(json.encodeToString(serializer, all))
+        }
+    }
+
+    fun clearAll() {
+        synchronized(this) {
+            memo = null
+            if (file.exists()) file.delete()
+        }
     }
 }

@@ -1,5 +1,7 @@
 package com.sponic.langbang.ui.phrase
 
+import com.sponic.langbang.ui.theme.LbColors
+
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -108,11 +110,11 @@ fun PhraseDetail(
         Spacer(Modifier.height(20.dp))
 
         Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF8EE)),
+            colors = CardDefaults.cardColors(containerColor = LbColors.SurfaceRaised),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Your turn — say it in Polish", fontSize = 14.sp, color = Color(0xFF7A5A1F))
+                Text("Your turn — say it in Polish", fontSize = 14.sp, color = LbColors.Label)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Button(
                         onClick = {
@@ -161,7 +163,7 @@ fun PhraseDetail(
         if (!prefetchReady) {
             Text(
                 "Audio still downloading — playback may use on-device TTS until cache is ready.",
-                fontSize = 11.sp, color = Color(0xFF888888)
+                fontSize = 11.sp, color = LbColors.TextMuted
             )
         }
     }
@@ -177,13 +179,13 @@ private fun PolishLine(pl: String, onWordTap: (String) -> Unit) {
             val clean = tok.trim('.', ',', '?', '!')
             Surface(
                 shape = RoundedCornerShape(8.dp),
-                color = Color(0xFFEAF1F7),
+                color = LbColors.PrimarySoft,
                 onClick = { onWordTap(clean) }
             ) {
                 Text(
                     tok,
                     fontSize = 28.sp,
-                    color = Color(0xFF0F4C81),
+                    color = LbColors.Primary,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                 )
@@ -202,7 +204,7 @@ private fun ScoreReadout(s: PronunciationScore) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             "Heard: \"${s.transcribed}\"",
-            fontSize = 13.sp, color = Color(0xFF555555)
+            fontSize = 13.sp, color = LbColors.TextSecondary
         )
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             ScoreBadge("Accuracy", s.accuracy)
@@ -214,9 +216,9 @@ private fun ScoreReadout(s: PronunciationScore) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 s.words.forEach { w ->
                     val color = when {
-                        w.accuracy >= 80 -> Color(0xFF2E7D32)
-                        w.accuracy >= 60 -> Color(0xFFE65100)
-                        else -> Color(0xFFC62828)
+                        w.accuracy >= 80 -> LbColors.Success
+                        w.accuracy >= 60 -> LbColors.Warning
+                        else -> LbColors.Danger
                     }
                     Surface(
                         shape = RoundedCornerShape(6.dp),
@@ -237,7 +239,7 @@ private fun ScoreReadout(s: PronunciationScore) {
 @Composable
 private fun ScoreBadge(label: String, v: Double) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, fontSize = 11.sp, color = Color(0xFF888888))
+        Text(label, fontSize = 11.sp, color = LbColors.TextMuted)
         Text(v.toInt().toString(), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
     }
 }

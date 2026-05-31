@@ -1,5 +1,7 @@
 package com.sponic.langbang.ui.lessons
 
+import com.sponic.langbang.ui.theme.LbColors
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -61,6 +63,8 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.Constraints
 import androidx.work.NetworkType
+import com.sponic.langbang.data.PronounFilterStore
+import com.sponic.langbang.data.VerbSentenceStore
 import com.sponic.langbang.data.model.ConjugationClass
 import com.sponic.langbang.data.model.Lesson
 import com.sponic.langbang.data.model.PERSON_KEYS
@@ -68,8 +72,12 @@ import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.data.model.VerbEntry
 import com.sponic.langbang.data.model.audioPronoun
 import com.sponic.langbang.data.model.conjugationClass
+import com.sponic.langbang.integrations.GeminiClient
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
+import com.sponic.langbang.domain.PlaybackController
+import com.sponic.langbang.domain.PlaybackTransport
+import com.sponic.langbang.domain.englishConjugate
 import com.sponic.langbang.integrations.AzureTtsClient
 import android.media.MediaMetadataRetriever
 import kotlinx.coroutines.CoroutineScope
@@ -81,8 +89,7 @@ import kotlin.coroutines.resume
 
 private enum class VerbMode(val label: String) {
     Single("Single verb"),
-    ByPronoun("By pronoun"),
-    Add("+ Add verb")
+    ByPronoun("By pronoun")
 }
 
 /**
@@ -96,6 +103,7 @@ internal class VerbsTabState(
 ) {
     var selected: VerbEntry? by mutableStateOf(null)
         private set
+    /** Sentences for the currently selected verb, present-tense first then past-tense. */
     var sentences: List<SentenceExample> by mutableStateOf(emptyList())
         private set
     var busy: Boolean by mutableStateOf(false)
@@ -106,8 +114,12 @@ internal class VerbsTabState(
     var slowFirst: Boolean by mutableStateOf(true)
     var generateProgress: String? by mutableStateOf(null)
         private set
-    var includedKeys: Set<String> by mutableStateOf(
-        app.pronounFilter.allIncluded(PERSON_KEYS)
+    var includedPresentKeys: Set<String> by mutableStateOf(
+        app.pronounFilter.allIncluded(PERSON_KEYS, PronounFilterStore.TENSE_PRESENT)
+    )
+        private set
+    var includedPastKeys: Set<String> by mutableStateOf(
+        app.pronounFilter.allIncluded(PERSON_KEYS, PronounFilterStore.TENSE_PAST)
     )
         private set
 
@@ -126,22 +138,44 @@ internal class VerbsTabState(
         private set
     val playing: Boolean get() = playJob?.isActive == true
 
+    // Holds the current quiz/play-all queue so rewind/restart can re-enter at any index
+    // without rebuilding the list. Set by playAll(), cleared by stop().
+    private var queue: List<SentenceExample> = emptyList()
+    private var queueLemma: String? = null
+    private var queueQuiz: Boolean = false
+    private var currentItemIndex: Int = 0
+
     fun selectVerb(verb: VerbEntry?) {
         if (selected?.lemma == verb?.lemma) return
         selected = verb
-        sentences = verb?.let { app.lessonRepo.sentencesFor(it.lemma) } ?: emptyList()
+        sentences = verb?.let { loadCombinedSentences(it) } ?: emptyList()
         error = null
     }
 
-    fun toggleIncluded(key: String, included: Boolean) {
-        app.pronounFilter.setIncluded(key, included)
-        includedKeys = if (included) includedKeys + key else includedKeys - key
+    private fun loadCombinedSentences(verb: VerbEntry): List<SentenceExample> {
+        val present = app.lessonRepo.sentencesFor(verb.lemma, VerbSentenceStore.TENSE_PRESENT)
+        val past = if (verb.past_forms.isNullOrEmpty()) emptyList()
+        else app.lessonRepo.sentencesFor(verb.lemma, VerbSentenceStore.TENSE_PAST)
+        return present + past
+    }
+
+    fun toggleIncluded(
+        key: String,
+        included: Boolean,
+        tense: String = PronounFilterStore.TENSE_PRESENT
+    ) {
+        app.pronounFilter.setIncluded(key, included, tense)
+        if (tense == PronounFilterStore.TENSE_PAST) {
+            includedPastKeys = if (included) includedPastKeys + key else includedPastKeys - key
+        } else {
+            includedPresentKeys = if (included) includedPresentKeys + key else includedPresentKeys - key
+        }
     }
 
     fun generate(allVerbs: List<VerbEntry> = emptyList()) {
         if (busy) return
-        if (includedKeys.isEmpty()) {
-            error = "Check at least one pronoun to generate sentences."
+        if (includedPresentKeys.isEmpty() && includedPastKeys.isEmpty()) {
+            error = "Check at least one pronoun (present or past) to generate sentences."
             return
         }
         if (allVerbsMode) {
@@ -150,29 +184,54 @@ internal class VerbsTabState(
             scope.launch {
                 val errors = mutableListOf<String>()
                 try {
-                    // Gemini-only loop — fast (one call per verb). Audio is left to the
-                    // background prefetch worker so a slow/throttled TTS never stalls us.
+                    // Gemini-only loop — fast (one call per verb × tense). Audio is left
+                    // to the background prefetch worker so a slow/throttled TTS never
+                    // stalls us.
                     allVerbs.forEachIndexed { i, vv ->
-                        generateProgress = "Gemini ${i + 1}/${allVerbs.size} · ${vv.lemma}"
-                        val existing = app.lessonRepo.sentencesFor(vv.lemma)
-                        if (existing.isNotEmpty()) {
-                            if (vv.lemma == selected?.lemma) sentences = existing
-                            return@forEachIndexed
+                        val tag = "${i + 1}/${allVerbs.size} · ${vv.lemma}"
+                        // Present.
+                        if (includedPresentKeys.isNotEmpty()) {
+                            generateProgress = "Present $tag"
+                            val existing = app.lessonRepo.sentencesFor(
+                                vv.lemma, VerbSentenceStore.TENSE_PRESENT
+                            )
+                            if (existing.isEmpty()) {
+                                app.gemini.generateSentences(
+                                    vv, includedPresentKeys, GeminiClient.TENSE_PRESENT
+                                ).onSuccess { list ->
+                                    app.lessonRepo.saveSentences(
+                                        vv.lemma, list, VerbSentenceStore.TENSE_PRESENT
+                                    )
+                                }.onFailure { err ->
+                                    errors += "${vv.lemma} (present): ${err.message}"
+                                }
+                            }
                         }
-                        app.gemini.generateSentences(vv, includedKeys)
-                            .onSuccess { list ->
-                                app.lessonRepo.saveSentences(vv.lemma, list)
-                                if (vv.lemma == selected?.lemma) sentences = list
+                        // Past — only verbs that actually have past_forms.
+                        if (includedPastKeys.isNotEmpty() && !vv.past_forms.isNullOrEmpty()) {
+                            generateProgress = "Past $tag"
+                            val existing = app.lessonRepo.sentencesFor(
+                                vv.lemma, VerbSentenceStore.TENSE_PAST
+                            )
+                            if (existing.isEmpty()) {
+                                app.gemini.generateSentences(
+                                    vv, includedPastKeys, GeminiClient.TENSE_PAST
+                                ).onSuccess { list ->
+                                    app.lessonRepo.saveSentences(
+                                        vv.lemma, list, VerbSentenceStore.TENSE_PAST
+                                    )
+                                }.onFailure { err ->
+                                    errors += "${vv.lemma} (past): ${err.message}"
+                                }
                             }
-                            .onFailure { err ->
-                                errors += "${vv.lemma}: ${err.message}"
-                            }
+                        }
+                        if (vv.lemma == selected?.lemma) sentences = loadCombinedSentences(vv)
                     }
                     generateProgress = "Kicking audio prefetch…"
                     kickPrefetchWorker(app)
                 } finally {
                     if (errors.isNotEmpty()) {
-                        error = "${errors.size} verb(s) failed: ${errors.first()}"
+                        error = "${errors.size} call(s) failed: ${errors.first()}"
                     }
                     generateProgress = null
                     busy = false
@@ -183,15 +242,32 @@ internal class VerbsTabState(
         val v = selected ?: return
         busy = true; error = null; generateProgress = "Generating sentences…"
         scope.launch {
+            val errors = mutableListOf<String>()
             try {
-                app.gemini.generateSentences(v, includedKeys)
-                    .onSuccess { list ->
-                        app.lessonRepo.saveSentences(v.lemma, list)
-                        if (selected?.lemma == v.lemma) sentences = list
-                        generateProgress = "Caching audio…"
+                if (includedPresentKeys.isNotEmpty()) {
+                    generateProgress = "Generating present-tense examples…"
+                    app.gemini.generateSentences(
+                        v, includedPresentKeys, GeminiClient.TENSE_PRESENT
+                    ).onSuccess { list ->
+                        app.lessonRepo.saveSentences(
+                            v.lemma, list, VerbSentenceStore.TENSE_PRESENT
+                        )
                         app.prefetch.prefetchSentences(list)
-                    }
-                    .onFailure { error = it.message }
+                    }.onFailure { errors += "present: ${it.message}" }
+                }
+                if (includedPastKeys.isNotEmpty() && !v.past_forms.isNullOrEmpty()) {
+                    generateProgress = "Generating past-tense examples…"
+                    app.gemini.generateSentences(
+                        v, includedPastKeys, GeminiClient.TENSE_PAST
+                    ).onSuccess { list ->
+                        app.lessonRepo.saveSentences(
+                            v.lemma, list, VerbSentenceStore.TENSE_PAST
+                        )
+                        app.prefetch.prefetchSentences(list)
+                    }.onFailure { errors += "past: ${it.message}" }
+                }
+                if (selected?.lemma == v.lemma) sentences = loadCombinedSentences(v)
+                if (errors.isNotEmpty()) error = errors.joinToString("; ")
             } finally {
                 generateProgress = null
                 busy = false
@@ -208,50 +284,78 @@ internal class VerbsTabState(
         playingEn = null
         playingLiteral = null
         playingLang = null
+        queue = emptyList()
+        queueLemma = null
+        currentItemIndex = 0
         app.audioPlayer.stop()
         NowVoicingBus.clear()
+        PlaybackController.unregister()
     }
 
-    private suspend fun playVerbSentences(
-        target: VerbEntry,
-        list: List<SentenceExample>,
-        quiz: Boolean = false
-    ) {
-        playingLemma = target.lemma
-        list.forEachIndexed { i, s ->
-            playingIndex = i
-            playingPl = s.pl
-            playingEn = s.en
-            playingLiteral = s.literal
-            val position = "${i + 1}/${list.size}"
-            if (quiz) {
-                setLang("en", s, position)
-                playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                setLang("pause", s, position)
-                val plFile = app.audioCache.fileFor(
-                    AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, s.pl
-                )
-                val pauseMs = mp3DurationMs(plFile) + 2000L
-                delay(pauseMs)
-                setLang("pl", s, position)
-                playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-            } else if (slowFirst) {
-                // First pass: slow Polish for clarity, then normal-rate.
-                setLang("en", s, position)
-                playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                setLang("pl-slow", s, position)
-                playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F_SLOW_V2)
-                setLang("en", s, position)
-                playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                setLang("pl", s, position)
-                playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-            } else {
-                // Fast-only: single EN then single PL at normal rate.
-                setLang("en", s, position)
-                playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                setLang("pl", s, position)
-                playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-            }
+    /** Re-play the previous sentence in the active quiz/play-all queue. */
+    fun rewind() {
+        if (queue.isEmpty()) return
+        playJob?.cancel()
+        playJob = null
+        app.audioPlayer.stop()
+        currentItemIndex = (currentItemIndex - 1).coerceAtLeast(0)
+        relaunchFromCurrent()
+    }
+
+    fun restartQueue() {
+        if (queue.isEmpty()) return
+        playJob?.cancel()
+        playJob = null
+        app.audioPlayer.stop()
+        currentItemIndex = 0
+        relaunchFromCurrent()
+    }
+
+    /**
+     * Plays one item from the queue at [i]. The outer loop in [relaunchFromCurrent]
+     * drives advance/rewind via [currentItemIndex] so we can re-enter the same item
+     * after a rewind tap. Returns after the item completes (or the job is cancelled).
+     */
+    private suspend fun playOneItem(s: SentenceExample, i: Int, total: Int, quiz: Boolean) {
+        playingIndex = i
+        playingPl = s.pl
+        playingEn = s.en
+        playingLiteral = s.literal
+        val position = "${i + 1}/$total"
+        if (quiz) {
+            // Floor the pre-reveal pause at 2s so the learner always gets a real
+            // recall window before the Polish text appears, even if the user dialled
+            // the configurable delay below that.
+            val configMs = (app.randomConfig.load().quizDelaySeconds * 1000).toLong()
+            val delayMs = configMs.coerceAtLeast(2000L)
+            // EN audio with PL text hidden so the learner can't peek.
+            publishQuiz("en", s, position, plHidden = true)
+            playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+            // Recall window — PL still hidden.
+            publishQuiz("pause", s, position, plHidden = true)
+            delay(delayMs)
+            // Reveal PL text, hold so eye + brain can compare.
+            publishQuiz("pause", s, position, plHidden = false)
+            delay(delayMs)
+            // Now speak the PL.
+            publishQuiz("pl", s, position, plHidden = false)
+            playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+        } else if (slowFirst) {
+            // First pass: slow Polish for clarity, then normal-rate.
+            setLang("en", s, position)
+            playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+            setLang("pl-slow", s, position)
+            playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, app.audioPrefs.slowPlVoice())
+            setLang("en", s, position)
+            playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+            setLang("pl", s, position)
+            playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+        } else {
+            // Fast-only: single EN then single PL at normal rate.
+            setLang("en", s, position)
+            playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+            setLang("pl", s, position)
+            playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
         }
     }
 
@@ -260,15 +364,89 @@ internal class VerbsTabState(
         NowVoicingBus.publish(NowVoicing(s.en, s.pl, s.literal, l, position, s.words))
     }
 
+    /** Quiz-flavored variant — stamps quizMode + plHidden so the NV panel can mask + show the delay slider. */
+    private fun publishQuiz(l: String, s: SentenceExample, position: String, plHidden: Boolean) {
+        playingLang = l
+        NowVoicingBus.publish(
+            NowVoicing(
+                en = s.en, pl = s.pl, literal = s.literal,
+                lang = l, position = position, words = s.words,
+                plHidden = plHidden, quizMode = true
+            )
+        )
+    }
+
+    private fun tokenCountOf(s: String): Int =
+        s.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
+
+    /**
+     * Quiz uses [sentences] (present+past combined) by default — but if the user has
+     * turned off all past pronouns we must keep past sentences out of the queue (and
+     * vice versa). We don't have a per-sentence tense flag stored, so we re-derive it
+     * by checking whether the sentence contains any allowed form for that tense.
+     * A sentence with no recognized verb form passes through (safer than dropping it).
+     */
+    private fun filterByTense(
+        verb: VerbEntry,
+        list: List<SentenceExample>
+    ): List<SentenceExample> {
+        val keepPresent = includedPresentKeys.isNotEmpty()
+        val keepPast = includedPastKeys.isNotEmpty() && !verb.past_forms.isNullOrEmpty()
+        if (keepPresent && keepPast) return list
+        val presentForms = verb.forms.values
+            .filter { it.isNotBlank() }.map { it.lowercase() }.toSet()
+        val pastForms = verb.past_forms.orEmpty().values
+            .filter { it.isNotBlank() }.map { it.lowercase() }.toSet()
+        return list.filter { s ->
+            val tokens = s.pl.lowercase().split(Regex("[^\\p{L}]+"))
+                .filter { it.isNotEmpty() }
+            val hitsPresent = tokens.any { it in presentForms }
+            val hitsPast = tokens.any { it in pastForms }
+            when {
+                hitsPresent && !hitsPast -> keepPresent
+                hitsPast && !hitsPresent -> keepPast
+                hitsPresent && hitsPast -> keepPresent || keepPast // ambiguous → allow
+                else -> true // unknown verb form → leave it in
+            }
+        }
+    }
+
     private suspend fun ensureSentencesFor(target: VerbEntry): List<SentenceExample> {
-        val existing = app.lessonRepo.sentencesFor(target.lemma)
-        if (existing.isNotEmpty()) return existing
-        val generated = app.gemini.generateSentences(target, includedKeys)
-            .getOrElse { return emptyList() }
-        app.lessonRepo.saveSentences(target.lemma, generated)
-        if (target.lemma == selected?.lemma) sentences = generated
-        app.prefetch.prefetchSentences(generated)
-        return generated
+        // Present.
+        if (includedPresentKeys.isNotEmpty()) {
+            val existing = app.lessonRepo.sentencesFor(
+                target.lemma, VerbSentenceStore.TENSE_PRESENT
+            )
+            if (existing.isEmpty()) {
+                app.gemini.generateSentences(
+                    target, includedPresentKeys, GeminiClient.TENSE_PRESENT
+                ).onSuccess { list ->
+                    app.lessonRepo.saveSentences(
+                        target.lemma, list, VerbSentenceStore.TENSE_PRESENT
+                    )
+                    app.prefetch.prefetchSentences(list)
+                }
+            }
+        }
+        // Past — only if the verb has past_forms.
+        if (includedPastKeys.isNotEmpty() && !target.past_forms.isNullOrEmpty()) {
+            val existing = app.lessonRepo.sentencesFor(
+                target.lemma, VerbSentenceStore.TENSE_PAST
+            )
+            if (existing.isEmpty()) {
+                app.gemini.generateSentences(
+                    target, includedPastKeys, GeminiClient.TENSE_PAST
+                ).onSuccess { list ->
+                    app.lessonRepo.saveSentences(
+                        target.lemma, list, VerbSentenceStore.TENSE_PAST
+                    )
+                    app.prefetch.prefetchSentences(list)
+                }
+            }
+        }
+        val combined = loadCombinedSentences(target)
+        if (target.lemma == selected?.lemma) sentences = combined
+        return combined
     }
 
     fun playAll(allVerbs: List<VerbEntry>, quiz: Boolean = false) {
@@ -277,16 +455,54 @@ internal class VerbsTabState(
             return
         }
         val v = selected ?: return
+        queueQuiz = quiz
+        queueLemma = v.lemma
+        scope.launch {
+            // Build the queue up-front so rewind/restart can re-enter any item.
+            val built: List<SentenceExample> = if (allVerbsMode) {
+                allVerbs.flatMap { vv ->
+                    val list = ensureSentencesFor(vv).let { all ->
+                        if (quiz) filterByTense(vv, all) else all
+                    }
+                    list
+                }
+            } else {
+                if (quiz) filterByTense(v, sentences) else sentences
+            }
+            queue = if (quiz) built.shuffled().sortedBy { tokenCountOf(it.pl) } else built
+            if (queue.isEmpty()) return@launch
+            currentItemIndex = 0
+            relaunchFromCurrent()
+        }
+    }
+
+    /**
+     * (Re)starts playback from [currentItemIndex]. Used initially by playAll and again
+     * by rewind/restart after they reposition the index. Registers a [PlaybackTransport]
+     * so the NV panel's 2x2 transport renders for this source.
+     */
+    private fun relaunchFromCurrent() {
+        PlaybackController.register(
+            PlaybackTransport(
+                stop = { stop() },
+                rewind = { rewind() },
+                restart = { restartQueue() },
+                pauseResume = null,
+                isPaused = { false }
+            )
+        )
         playJob = scope.launch {
             try {
-                if (allVerbsMode) {
-                    allVerbs.forEach { vv ->
-                        val list = ensureSentencesFor(vv)
-                        if (list.isNotEmpty()) playVerbSentences(vv, list, quiz)
+                while (currentItemIndex < queue.size) {
+                    val i = currentItemIndex
+                    val s = queue[i]
+                    playOneItem(s, i, queue.size, queueQuiz)
+                    if (currentItemIndex == i) {
+                        currentItemIndex = i + 1
+                        // +1s breathing room between items (only in non-quiz mode —
+                        // quiz already has its own reveal pauses).
+                        if (!queueQuiz && currentItemIndex < queue.size) delay(1000)
                     }
-                } else {
-                    if (sentences.isEmpty()) return@launch
-                    playVerbSentences(v, sentences, quiz)
                 }
             } finally {
                 playingIndex = -1
@@ -297,6 +513,142 @@ internal class VerbsTabState(
                 playingLang = null
                 playJob = null
                 NowVoicingBus.clear()
+                PlaybackController.unregister()
+            }
+        }
+    }
+
+    /**
+     * Plays the verb's conjugated forms only — "ja jestem", "ty jesteś", … — not the
+     * Gemini-generated example sentences. Honors the per-tense pronoun filters.
+     *
+     * Modes:
+     *   - [mode] == "play": EN gloss text + speak the PL form (slow optionally, then fast).
+     *     Plain study mode, no quizzing.
+     *   - [mode] == "conjQuiz": speak EN ("I am") + hide PL text, 2s pause, reveal PL,
+     *     2s pause, speak PL. User has to recall the conjugated form before reveal.
+     *   - [mode] == "recall": speak PL with PL text hidden + EN hidden, 2s pause,
+     *     reveal both, 2s pause. User has to identify "which verb + which person" from
+     *     hearing the form alone.
+     */
+    fun playAllConjugations(allVerbs: List<VerbEntry>, mode: String = "play") {
+        if (playJob?.isActive == true) {
+            stop()
+            return
+        }
+        val v = selected ?: return
+        val targets = if (allVerbsMode) allVerbs else listOf(v)
+        PlaybackController.register(
+            PlaybackTransport(stop = { stop() })
+        )
+        playJob = scope.launch {
+            try {
+                targets.forEach { vv ->
+                    playingLemma = vv.lemma
+                    suspend fun playFormsForTense(
+                        formMap: Map<String, String>,
+                        included: Set<String>,
+                        tenseLabel: String
+                    ) {
+                        PERSON_KEYS.forEach { k ->
+                            if (k !in included) return@forEach
+                            val form = formMap[k].orEmpty()
+                            if (form.isBlank()) return@forEach
+                            val pron = audioPronoun(k)
+                            val combined = "$pron $form".trim()
+                            val englishSubject = englishSubjectFor(k)
+                            // Render the actual conjugated form ("I am" / "she goes" / "we were")
+                            // instead of "$subject — to be". Same shared helper as Random Play —
+                            // see domain/EnglishConjugator.kt. No "(past)" suffix: "was" / "were"
+                            // already convey past tense, so the parenthetical was redundant noise
+                            // once the gloss stopped being the infinitive.
+                            val isPast = tenseLabel.equals("past", ignoreCase = true)
+                            val englishVerbForm = englishConjugate(vv.en, k, isPast)
+                            val englishGloss = "$englishSubject $englishVerbForm"
+                            playingPl = combined
+                            playingEn = englishGloss
+                            playingLiteral = null
+                            // Publish to NV so the sticky panel shows ONLY pronoun + verb
+                            // (no surrounding sentence). Two tokens, two glosses.
+                            val tokens = listOf(
+                                com.sponic.langbang.data.model.TokenPair(pron, englishSubject),
+                                com.sponic.langbang.data.model.TokenPair(form, englishVerbForm)
+                            )
+                            fun publishLang(l: String, plHidden: Boolean = false,
+                                            enHiddenLabel: String? = null) {
+                                playingLang = l
+                                NowVoicingBus.publish(
+                                    NowVoicing(
+                                        en = enHiddenLabel ?: englishGloss,
+                                        pl = combined, literal = null,
+                                        lang = l, position = null, words = tokens,
+                                        plHidden = plHidden,
+                                        quizMode = mode != "play"
+                                    )
+                                )
+                            }
+                            when (mode) {
+                                "conjQuiz" -> {
+                                    // EN cue spoken with PL hidden — user must recall the form.
+                                    publishLang("en", plHidden = true)
+                                    playAndAwait(app, englishGloss, AzureTtsClient.LOCALE_EN,
+                                        AzureTtsClient.EN_US_F)
+                                    publishLang("pause", plHidden = true)
+                                    delay(2000L)
+                                    // Reveal PL, hold so the eye + ear can compare.
+                                    publishLang("pause", plHidden = false)
+                                    delay(2000L)
+                                    publishLang("pl", plHidden = false)
+                                    playAndAwait(app, combined, AzureTtsClient.LOCALE_PL,
+                                        AzureTtsClient.PL_PL_F)
+                                }
+                                "recall" -> {
+                                    // PL spoken first with EN hidden + PL text hidden — user
+                                    // must identify "which lemma + which person".
+                                    publishLang("pl", plHidden = true,
+                                        enHiddenLabel = "•••")
+                                    playAndAwait(app, combined, AzureTtsClient.LOCALE_PL,
+                                        AzureTtsClient.PL_PL_F)
+                                    publishLang("pause", plHidden = true,
+                                        enHiddenLabel = "•••")
+                                    delay(2000L)
+                                    // Reveal both.
+                                    publishLang("pause", plHidden = false)
+                                    delay(2000L)
+                                    publishLang("pl", plHidden = false)
+                                    playAndAwait(app, combined, AzureTtsClient.LOCALE_PL,
+                                        AzureTtsClient.PL_PL_F)
+                                }
+                                else -> {
+                                    if (slowFirst) {
+                                        publishLang("pl-slow")
+                                        playAndAwait(app, combined, AzureTtsClient.LOCALE_PL,
+                                            app.audioPrefs.slowPlVoice())
+                                    }
+                                    publishLang("pl")
+                                    playAndAwait(app, combined, AzureTtsClient.LOCALE_PL,
+                                        AzureTtsClient.PL_PL_F)
+                                }
+                            }
+                            // 1s gap between items so each conjugation has a moment to land.
+                            delay(1000)
+                        }
+                    }
+                    playFormsForTense(vv.forms, includedPresentKeys, "")
+                    vv.past_forms?.let { past ->
+                        playFormsForTense(past, includedPastKeys, "past")
+                    }
+                }
+            } finally {
+                playingIndex = -1
+                playingLemma = null
+                playingPl = null
+                playingEn = null
+                playingLiteral = null
+                playingLang = null
+                playJob = null
+                NowVoicingBus.clear()
+                PlaybackController.unregister()
             }
         }
     }
@@ -350,10 +702,14 @@ private fun personLabel(k: String) = when (k) {
 }
 
 @Composable
-fun VerbsTab(app: LangbangApplication, prefetch: PrefetchProgress) {
-    // lesson is reloaded explicitly via [reloadKey] so a freshly-added user verb shows up.
-    var reloadKey by remember { mutableStateOf(0) }
-    val lesson = remember(reloadKey) { app.lessonRepo.lesson2() }
+internal fun VerbsTab(
+    app: LangbangApplication,
+    prefetch: PrefetchProgress,
+    tab: L2Tab,
+    onTabChange: (L2Tab) -> Unit,
+    nowVoicing: @Composable () -> Unit = {}
+) {
+    val lesson = remember { app.lessonRepo.lesson2() }
     var mode by remember { mutableStateOf(VerbMode.Single) }
     val state = rememberVerbsTabState(app)
 
@@ -362,55 +718,84 @@ fun VerbsTab(app: LangbangApplication, prefetch: PrefetchProgress) {
         state.selectVerb(lesson.verbs.firstOrNull())
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        TopBar(
-            mode = mode,
-            onModeSelect = { mode = it },
-            state = state,
-            allVerbs = lesson.verbs,
-            showControls = mode == VerbMode.Single && state.selected != null,
-            prefetch = prefetch
-        )
-        Box(modifier = Modifier.fillMaxSize()) {
-            when (mode) {
-                VerbMode.Single -> SingleVerbMode(app, lesson, state)
-                VerbMode.ByPronoun -> ByPronounMode(app, lesson)
-                VerbMode.Add -> AddVerbMode(app) { reloadKey++; mode = VerbMode.Single }
+    val grouped = remember(lesson) {
+        lesson.verbs
+            .groupBy { it.conjugationClass() }
+            .toSortedMap(compareBy { it.ordinal })
+    }
+
+    Row(modifier = Modifier.fillMaxSize()) {
+        // Verb list runs flush to the top (nothing above it). The right column stacks:
+        // Now Voicing band, then the Verbs/Phrases toggle + mode chips + play controls,
+        // then the conjugation paradigm.
+        if (mode == VerbMode.Single) {
+            VerbList(
+                grouped = grouped,
+                selected = state.selected,
+                onSelect = { state.selectVerb(it) },
+                modifier = Modifier
+                    .width(256.dp)
+                    .fillMaxHeight()
+                    .background(LbColors.Canvas)
+            )
+        }
+        Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+            nowVoicing()
+            TopBar(
+                tab = tab,
+                onTabChange = onTabChange,
+                mode = mode,
+                onModeSelect = { mode = it },
+                state = state,
+                allVerbs = lesson.verbs,
+                showControls = mode == VerbMode.Single && state.selected != null
+            )
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                when (mode) {
+                    VerbMode.Single ->
+                        state.selected?.let { VerbParadigm(app, it, state) }
+                    VerbMode.ByPronoun -> ByPronounMode(app, lesson)
+                }
             }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TopBar(
+    tab: L2Tab,
+    onTabChange: (L2Tab) -> Unit,
     mode: VerbMode,
     onModeSelect: (VerbMode) -> Unit,
     state: VerbsTabState,
     allVerbs: List<VerbEntry>,
-    showControls: Boolean,
-    prefetch: PrefetchProgress
+    showControls: Boolean
 ) {
-    Surface(color = Color(0xFFF7F3EA), modifier = Modifier.fillMaxWidth()) {
+    Surface(color = LbColors.SurfaceRaised, modifier = Modifier.fillMaxWidth()) {
         Column {
-            Row(
-                Modifier.padding(horizontal = 16.dp, vertical = 3.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            // Chips + controls share one FlowRow so they wrap into one or two lines
+            // inside the right pane. The Verbs/Phrases toggle leads (it used to be a
+            // full-width band above the list), then the verb mode chips, then controls.
+            FlowRow(
+                Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
+                L2TabChips(tab, onTabChange)
                 VerbMode.values().forEach { m ->
                     FilterChip(
                         selected = mode == m,
                         onClick = { onModeSelect(m) },
-                        label = { Text(m.label, fontSize = 12.sp) },
+                        label = { Text(m.label, fontSize = 11.sp) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.primary,
                             selectedLabelColor = Color.White
-                        )
+                        ),
+                        modifier = Modifier.height(30.dp)
                     )
                 }
-                Spacer(Modifier.weight(1f))
                 if (showControls) {
-                    CacheBadge(prefetch)
                     ExamplesControls(state = state, allVerbs = allVerbs)
                 }
             }
@@ -418,7 +803,7 @@ private fun TopBar(
                 Text(
                     "Generating · $it",
                     fontSize = 10.sp,
-                    color = Color(0xFF7A5A1F),
+                    color = LbColors.Label,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 1.dp)
                 )
             }
@@ -426,179 +811,120 @@ private fun TopBar(
     }
 }
 
-@Composable
-private fun CacheBadge(prefetch: PrefetchProgress) {
-    val done = prefetch.done
-    val total = prefetch.total
-    if (total == 0 && !prefetch.finished) return
-    val complete = prefetch.finished || (total > 0 && done >= total)
-    val bg = if (complete) Color(0xFFE5F2E6) else Color(0xFFFFF3DA)
-    val fg = if (complete) Color(0xFF2E7D32) else Color(0xFF8A5A1F)
-    Surface(
-        color = bg,
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Row(
-            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            if (!complete) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(10.dp),
-                    strokeWidth = 1.5.dp,
-                    color = fg
-                )
-            }
-            Text(
-                "audio ${if (total == 0) done else done}/${if (total == 0) done else total}",
-                fontSize = 11.sp,
-                color = fg,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-    }
-}
+// CacheBadge moved to AppHeader in LangbangApp.kt — single source instead of one per tab.
 
-@OptIn(ExperimentalLayoutApi::class)
+// Emits its controls directly into the caller's FlowRow (no own layout wrapper) so chips
+// and buttons wrap together as one band.
 @Composable
 private fun ExamplesControls(state: VerbsTabState, allVerbs: List<VerbEntry>) {
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(
+            checked = state.allVerbsMode,
+            onCheckedChange = { state.allVerbsMode = it },
+            enabled = !state.playing,
+            colors = CheckboxDefaults.colors(
+                checkedColor = MaterialTheme.colorScheme.primary
+            ),
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text("All verbs", fontSize = 11.sp, color = LbColors.TextSecondary)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(
+            checked = state.slowFirst,
+            onCheckedChange = { state.slowFirst = it },
+            enabled = !state.playing,
+            colors = CheckboxDefaults.colors(
+                checkedColor = MaterialTheme.colorScheme.primary
+            ),
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text("Slow first", fontSize = 11.sp, color = LbColors.TextSecondary)
+    }
+
+    // "Play all" is the conjugation reciter — always actionable (no sentence cache
+    // required). Quiz button still plays the Gemini example sentences in test mode
+    // and so depends on the sentence cache being non-empty.
+    Button(
+        onClick = { state.playAllConjugations(allVerbs) },
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary
+        ),
+        shape = RoundedCornerShape(16.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(
-                checked = state.allVerbsMode,
-                onCheckedChange = { state.allVerbsMode = it },
-                enabled = !state.playing,
-                colors = CheckboxDefaults.colors(
-                    checkedColor = MaterialTheme.colorScheme.primary
-                ),
-                modifier = Modifier.size(20.dp)
+        Icon(
+            if (state.playing) Icons.Default.Stop else Icons.Default.PlayArrow,
+            contentDescription = if (state.playing) "Stop" else "Play all",
+            tint = Color.White,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            if (state.playing) "Stop" else "Play all",
+            fontSize = 12.sp,
+            color = Color.White
+        )
+    }
+    if (!state.playing) {
+        // Conjugation drill quiz — EN cue, hide PL, reveal. No sentence cache needed.
+        Button(
+            onClick = { state.playAllConjugations(allVerbs, mode = "conjQuiz") },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = LbColors.Primary
+            ),
+            shape = RoundedCornerShape(16.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+        ) {
+            Text("Conj quiz", fontSize = 12.sp, color = Color.White)
+        }
+        // Recollection drill — speak PL, hide everything, reveal. Tests "which form is this?"
+        Button(
+            onClick = { state.playAllConjugations(allVerbs, mode = "recall") },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = LbColors.Accent
+            ),
+            shape = RoundedCornerShape(16.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+        ) {
+            Text("Recall quiz", fontSize = 12.sp, color = Color.White)
+        }
+    }
+    val hasSentences = state.allVerbsMode || state.sentences.isNotEmpty()
+    if (hasSentences && !state.playing) {
+        Button(
+            onClick = { state.playAll(allVerbs, quiz = true) },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = LbColors.Label
+            ),
+            shape = RoundedCornerShape(16.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+        ) {
+            Icon(
+                Icons.Default.PlayArrow,
+                contentDescription = "Sentence quiz",
+                tint = Color.White,
+                modifier = Modifier.size(16.dp)
             )
             Spacer(Modifier.width(4.dp))
-            Text("All verbs", fontSize = 11.sp, color = Color(0xFF555555))
+            Text("Sent. quiz", fontSize = 12.sp, color = Color.White)
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(
-                checked = state.slowFirst,
-                onCheckedChange = { state.slowFirst = it },
-                enabled = !state.playing,
-                colors = CheckboxDefaults.colors(
-                    checkedColor = MaterialTheme.colorScheme.primary
-                ),
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(Modifier.width(4.dp))
-            Text("Slow first", fontSize = 11.sp, color = Color(0xFF555555))
-        }
+    }
 
-        val canPlay = state.allVerbsMode || state.sentences.isNotEmpty()
-        if (canPlay) {
-            Button(
-                onClick = { state.playAll(allVerbs, quiz = false) },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                ),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-            ) {
-                Icon(
-                    if (state.playing) Icons.Default.Stop else Icons.Default.PlayArrow,
-                    contentDescription = if (state.playing) "Stop" else "Play all",
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    if (state.playing) "Stop" else "Play all",
-                    fontSize = 12.sp,
-                    color = Color.White
-                )
-            }
-            if (!state.playing) {
-                Button(
-                    onClick = { state.playAll(allVerbs, quiz = true) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF7A5A1F)
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-                ) {
-                    Icon(
-                        Icons.Default.PlayArrow,
-                        contentDescription = "Quiz",
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text("Quiz >", fontSize = 12.sp, color = Color.White)
-                }
-            }
-        }
-
-        if (state.busy) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(18.dp), strokeWidth = 2.dp
-            )
-        } else {
-            val isRegenerate = state.sentences.isNotEmpty()
-            Button(
-                onClick = { state.generate(allVerbs) },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isRegenerate) Color(0xFFEFE8D8)
-                    else MaterialTheme.colorScheme.primary
-                ),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-            ) {
-                Icon(
-                    if (isRegenerate) Icons.Default.Refresh else Icons.Default.Add,
-                    contentDescription = if (isRegenerate) "Regenerate" else "Generate",
-                    tint = if (isRegenerate) Color(0xFF7A5A1F) else Color.White,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    if (isRegenerate) "Regen" else "Generate",
-                    fontSize = 12.sp,
-                    color = if (isRegenerate) Color(0xFF7A5A1F) else Color.White
-                )
-            }
-        }
+    // Generate / Regen button removed — it now lives on the Settings page (a single
+    // "Generate cached sentences" action that hits every verb/adj/adv). Tiny busy
+    // spinner kept so a generate-all kicked from Settings still shows progress
+    // here while the user is on the Verbs tab.
+    if (state.busy) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(18.dp), strokeWidth = 2.dp
+        )
     }
 }
 
 // ── Mode 1 — single verb, all 6 forms ─────────────────────────────────────────
-
-@Composable
-private fun SingleVerbMode(
-    app: LangbangApplication,
-    lesson: Lesson,
-    state: VerbsTabState
-) {
-    val grouped = remember(lesson) {
-        lesson.verbs
-            .groupBy { it.conjugationClass() }
-            .toSortedMap(compareBy { it.ordinal })
-    }
-
-    Row(Modifier.fillMaxSize()) {
-        VerbList(
-            grouped = grouped,
-            selected = state.selected,
-            onSelect = { state.selectVerb(it) },
-            modifier = Modifier
-                .width(256.dp)
-                .fillMaxHeight()
-                .background(Color(0xFFF3EFE6))
-        )
-        Box(Modifier.weight(1f).fillMaxHeight()) {
-            state.selected?.let { VerbParadigm(app, it, state) }
-        }
-    }
-}
 
 @Composable
 private fun VerbList(
@@ -609,20 +935,20 @@ private fun VerbList(
 ) {
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         grouped.forEach { (cls, verbs) ->
             item(key = "h-${cls.name}") {
-                Column(Modifier.padding(top = 8.dp, bottom = 4.dp)) {
-                    Text(
-                        cls.label,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF7A5A1F)
-                    )
-                    Text(cls.description, fontSize = 10.sp, color = Color(0xFF999999))
-                }
+                // Compact class header — class label only (the longer description was
+                // eating vertical room and isn't useful for casual practice).
+                Text(
+                    cls.label,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = LbColors.Label,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 1.dp)
+                )
             }
             items(verbs, key = { "v-${it.lemma}" }) { v ->
                 val isSel = v == selected
@@ -635,23 +961,23 @@ private fun VerbList(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
-                        Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                v.lemma,
-                                color = if (isSel) Color.White else Color(0xFF0F4C81),
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 16.sp
-                            )
-                            Text(
-                                v.en,
-                                color = if (isSel) Color.White.copy(alpha = 0.85f)
-                                else Color(0xFF666666),
-                                fontSize = 12.sp
-                            )
-                        }
+                        Text(
+                            v.lemma,
+                            color = if (isSel) Color.White else LbColors.Primary,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            v.en,
+                            color = if (isSel) Color.White.copy(alpha = 0.85f)
+                            else LbColors.TextSecondary,
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                 }
             }
@@ -674,82 +1000,105 @@ private fun VerbParadigm(
     ) {
         Row(verticalAlignment = Alignment.Bottom) {
             Text(verb.lemma, fontSize = 26.sp, fontWeight = FontWeight.Bold,
-                color = Color(0xFF0F4C81))
+                color = LbColors.Primary)
             Spacer(Modifier.width(12.dp))
-            Text(verb.en, fontSize = 14.sp, color = Color(0xFF666666),
+            Text(verb.en, fontSize = 14.sp, color = LbColors.TextSecondary,
                 modifier = Modifier.padding(bottom = 4.dp))
             Spacer(Modifier.width(12.dp))
             Text(
                 verb.conjugationClass().label,
                 fontSize = 11.sp,
-                color = Color(0xFF7A5A1F),
+                color = LbColors.Label,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(bottom = 6.dp)
             )
         }
-        Text(
-            "Present",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color(0xFF7A5A1F),
-            modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
-        )
-        PERSON_KEYS.forEach { k ->
-            val form = verb.forms[k].orEmpty()
-            val spoken = "${audioPronoun(k)} $form".trim()
-            val englishGloss = when (k) {
-                "1sg" -> "I"
-                "2sg" -> "you"
-                "3sg" -> "he / she / it"
-                "1pl" -> "we"
-                "2pl" -> "y'all"
-                "3pl" -> "they"
-                else -> ""
-            }
-            ConjRow(
-                spoken = spoken,
-                englishGloss = englishGloss,
-                included = k in state.includedKeys,
-                onToggleIncluded = { now -> state.toggleIncluded(k, now) },
-                onPlay = { playConjugation(app, k, form) }
-            )
-        }
-        verb.past_forms?.let { past ->
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Past",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF7A5A1F)
-            )
-            Text(
-                "Masculine-singular for 1sg/2sg/3sg, virile-plural for 1pl/2pl/3pl. " +
-                    "Feminine/non-virile variants are coming.",
-                fontSize = 10.sp,
-                color = Color(0xFF999999),
-                modifier = Modifier.padding(bottom = 2.dp)
-            )
-            PERSON_KEYS.forEach { k ->
-                val form = past[k].orEmpty()
-                if (form.isEmpty()) return@forEach
-                val spoken = "${audioPronoun(k)} $form".trim()
-                val englishGloss = when (k) {
-                    "1sg" -> "I (did)"
-                    "2sg" -> "you (did)"
-                    "3sg" -> "he (did)"
-                    "1pl" -> "we (did)"
-                    "2pl" -> "y'all (did)"
-                    "3pl" -> "they (did)"
-                    else -> ""
-                }
-                ConjRow(
-                    spoken = spoken,
-                    englishGloss = englishGloss,
-                    included = false,
-                    onToggleIncluded = { /* past tense filter not yet plumbed */ },
-                    onPlay = { playConjugation(app, k, form) }
+        // Present + Past side-by-side. Each column has its tense header + 6 ConjRows.
+        // When the verb has no past_forms, the past column drops out and present
+        // takes the full width — keeps the layout sane for irregular verbs.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Present",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = LbColors.Label,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
                 )
+                PERSON_KEYS.forEach { k ->
+                    val form = verb.forms[k].orEmpty()
+                    val spoken = "${audioPronoun(k)} $form".trim()
+                    val englishGloss = when (k) {
+                        "1sg" -> "I"
+                        "2sg" -> "you"
+                        "3sg" -> "he / she / it"
+                        "1pl" -> "we"
+                        "2pl" -> "y'all"
+                        "3pl" -> "they"
+                        else -> ""
+                    }
+                    ConjRow(
+                        spoken = spoken,
+                        englishGloss = englishGloss,
+                        included = k in state.includedPresentKeys,
+                        onToggleIncluded = { now ->
+                            state.toggleIncluded(k, now, PronounFilterStore.TENSE_PRESENT)
+                        },
+                        onPlay = { playConjugation(app, k, form) }
+                    )
+                }
             }
+            verb.past_forms?.let { past ->
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Past",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = LbColors.Label,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+                    )
+                    PERSON_KEYS.forEach { k ->
+                        val form = past[k].orEmpty()
+                        if (form.isEmpty()) {
+                            // Keep rows aligned with the present column even when a past
+                            // form is missing (rare — usually the whole map is populated).
+                            Spacer(Modifier.height(32.dp))
+                            return@forEach
+                        }
+                        val spoken = "${audioPronoun(k)} $form".trim()
+                        val englishGloss = when (k) {
+                            "1sg" -> "I (did)"
+                            "2sg" -> "you (did)"
+                            "3sg" -> "he (did)"
+                            "1pl" -> "we (did)"
+                            "2pl" -> "y'all (did)"
+                            "3pl" -> "they (did)"
+                            else -> ""
+                        }
+                        ConjRow(
+                            spoken = spoken,
+                            englishGloss = englishGloss,
+                            included = k in state.includedPastKeys,
+                            onToggleIncluded = { now ->
+                                state.toggleIncluded(k, now, PronounFilterStore.TENSE_PAST)
+                            },
+                            onPlay = { playConjugation(app, k, form) }
+                        )
+                    }
+                }
+            }
+        }
+        verb.past_forms?.let {
+            Text(
+                "Past forms shown as masculine-singular (1sg/2sg/3sg) + virile-plural " +
+                    "(1pl/2pl/3pl). Feminine / non-virile variants are deferred.",
+                fontSize = 10.sp,
+                color = LbColors.TextMuted,
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
         Spacer(Modifier.height(8.dp))
         SentencesList(app, verb, state)
@@ -767,14 +1116,14 @@ private fun SentencesList(
             "Examples",
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
-            color = Color(0xFF7A5A1F)
+            color = LbColors.Label
         )
 
         if (state.sentences.isEmpty()) {
             Text(
                 "No examples yet — tap Generate examples above to make 10 short sentences using the checked pronouns.",
                 fontSize = 12.sp,
-                color = Color(0xFF888888)
+                color = LbColors.TextMuted
             )
         } else {
             state.sentences.forEachIndexed { i, s ->
@@ -802,7 +1151,7 @@ private fun SentenceRow(
     Card(
         onClick = onPlay,
         colors = CardDefaults.cardColors(
-            containerColor = if (highlighted) Color(0xFFE6F0FA) else Color(0xFFFBF7EC)
+            containerColor = if (highlighted) LbColors.PrimarySoft else LbColors.SurfaceRaised
         ),
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -812,27 +1161,19 @@ private fun SentenceRow(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    sentence.pl,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFF0F4C81)
-                )
-                Text(
                     sentence.en,
                     fontSize = 12.sp,
-                    color = Color(0xFF777777)
+                    color = LbColors.TextMuted
                 )
-                sentence.literal?.let {
-                    Text(
-                        it,
-                        fontSize = 10.sp,
-                        fontStyle = FontStyle.Italic,
-                        color = Color(0xFFA08868)
-                    )
-                }
+                com.sponic.langbang.ui.common.WordAlignedPolish(
+                    sentence = sentence,
+                    plFontSize = 16.sp,
+                    plFontWeight = FontWeight.Medium,
+                    glossFontSize = 10.sp
+                )
             }
             Icon(Icons.Default.PlayArrow, contentDescription = "Play",
-                tint = Color(0xFF0F4C81), modifier = Modifier.size(20.dp))
+                tint = LbColors.Primary, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -871,7 +1212,7 @@ private fun ConjRow(
 ) {
     Card(
         onClick = onPlay,
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F2EA)),
+        colors = CardDefaults.cardColors(containerColor = LbColors.SurfaceTint),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -889,11 +1230,11 @@ private fun ConjRow(
             Spacer(Modifier.width(6.dp))
             Column(Modifier.weight(1f)) {
                 Text(spoken, fontSize = 18.sp, fontWeight = FontWeight.Medium,
-                    color = Color(0xFF0F4C81))
-                Text(englishGloss, fontSize = 11.sp, color = Color(0xFF888888))
+                    color = LbColors.Primary)
+                Text(englishGloss, fontSize = 11.sp, color = LbColors.TextMuted)
             }
             Icon(Icons.Default.PlayArrow, contentDescription = "Play",
-                tint = Color(0xFF0F4C81), modifier = Modifier.size(20.dp))
+                tint = LbColors.Primary, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -903,23 +1244,43 @@ private fun ConjRow(
 @Composable
 private fun ByPronounMode(app: LangbangApplication, lesson: Lesson) {
     var personKey by remember { mutableStateOf("1sg") }
+    var tense by remember { mutableStateOf(PronounFilterStore.TENSE_PRESENT) }
 
     Column(Modifier.fillMaxSize()) {
-        Surface(color = Color(0xFFFFF8EE), modifier = Modifier.fillMaxWidth()) {
-            Row(
-                Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                PERSON_KEYS.forEach { k ->
-                    FilterChip(
-                        selected = personKey == k,
-                        onClick = { personKey = k },
-                        label = { Text(personLabel(k), fontSize = 11.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primary,
-                            selectedLabelColor = Color.White
+        Surface(color = LbColors.SurfaceRaised, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    PERSON_KEYS.forEach { k ->
+                        FilterChip(
+                            selected = personKey == k,
+                            onClick = { personKey = k },
+                            label = { Text(personLabel(k), fontSize = 11.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = Color.White
+                            )
                         )
-                    )
+                    }
+                }
+                Row(
+                    Modifier.padding(top = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf(
+                        PronounFilterStore.TENSE_PRESENT to "Present",
+                        PronounFilterStore.TENSE_PAST to "Past"
+                    ).forEach { (t, label) ->
+                        FilterChip(
+                            selected = tense == t,
+                            onClick = { tense = t },
+                            label = { Text(label, fontSize = 11.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = LbColors.Label,
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                    }
                 }
             }
         }
@@ -934,17 +1295,21 @@ private fun ByPronounMode(app: LangbangApplication, lesson: Lesson) {
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             grouped.forEach { (cls, verbs) ->
-                item(key = "h-${cls.name}-$personKey") {
+                item(key = "h-${cls.name}-$personKey-$tense") {
                     Text(
                         cls.label,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF7A5A1F),
+                        color = LbColors.Label,
                         modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
                     )
                 }
-                items(verbs, key = { "p-${it.lemma}-$personKey" }) { v ->
-                    val form = v.forms[personKey].orEmpty()
+                items(verbs, key = { "p-${it.lemma}-$personKey-$tense" }) { v ->
+                    val form = if (tense == PronounFilterStore.TENSE_PAST) {
+                        v.past_forms?.get(personKey).orEmpty()
+                    } else {
+                        v.forms[personKey].orEmpty()
+                    }
                     Card(
                         onClick = { playConjugation(app, personKey, form) },
                         colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -957,106 +1322,20 @@ private fun ByPronounMode(app: LangbangApplication, lesson: Lesson) {
                             Column(Modifier.width(160.dp)) {
                                 Text(v.lemma, fontSize = 14.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF0F4C81))
-                                Text(v.en, fontSize = 10.sp, color = Color(0xFF888888))
+                                    color = LbColors.Primary)
+                                Text(v.en, fontSize = 10.sp, color = LbColors.TextMuted)
                             }
-                            val spoken = "${audioPronoun(personKey)} $form".trim()
+                            val spoken = if (form.isEmpty()) "—"
+                            else "${audioPronoun(personKey)} $form".trim()
                             Text(spoken, fontSize = 18.sp, fontWeight = FontWeight.Medium,
-                                color = Color(0xFF2A2A2A), modifier = Modifier.weight(1f))
-                            Icon(Icons.Default.PlayArrow, contentDescription = "Play",
-                                tint = Color(0xFF0F4C81), modifier = Modifier.size(20.dp))
+                                color = if (form.isEmpty()) LbColors.TextMuted.copy(alpha = 0.5f) else LbColors.TextPrimary,
+                                modifier = Modifier.weight(1f))
+                            if (form.isNotEmpty()) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = "Play",
+                                    tint = LbColors.Primary, modifier = Modifier.size(20.dp))
+                            }
                         }
                     }
-                }
-            }
-        }
-    }
-}
-
-// ── Mode 3 — add a verb via Gemini ────────────────────────────────────────────
-
-@Composable
-private fun AddVerbMode(app: LangbangApplication, onAdded: () -> Unit) {
-    val scope = rememberCoroutineScope()
-    var input by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var preview by remember { mutableStateOf<VerbEntry?>(null) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(32.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text("Add a verb", fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
-            color = Color(0xFF0F4C81))
-        Text(
-            "Type an English infinitive (e.g. \"to write\"). Gemini will translate to Polish " +
-                "and conjugate all six present-tense forms, then we'll generate audio.",
-            fontSize = 13.sp, color = Color(0xFF666666)
-        )
-
-        OutlinedTextField(
-            value = input,
-            onValueChange = { input = it },
-            label = { Text("English verb") },
-            singleLine = true,
-            enabled = !busy,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Button(
-                onClick = {
-                    val trimmed = input.trim().removePrefix("to ").trim()
-                    if (trimmed.isEmpty()) return@Button
-                    busy = true; error = null; preview = null
-                    scope.launch {
-                        app.gemini.translateVerb(trimmed)
-                            .onSuccess { v ->
-                                preview = v
-                                app.lessonRepo.addUserVerb(v)
-                                app.prefetch.prefetchVerb(v)
-                                onAdded()
-                            }
-                            .onFailure { error = it.message }
-                        busy = false
-                    }
-                },
-                enabled = !busy && input.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                ),
-                shape = RoundedCornerShape(24.dp)
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null, tint = Color.White)
-                Spacer(Modifier.width(8.dp))
-                Text(if (busy) "Translating…" else "Translate & add", color = Color.White)
-            }
-            if (busy) {
-                Spacer(Modifier.width(12.dp))
-                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-            }
-        }
-
-        error?.let {
-            Text("Error: $it", color = Color.Red, fontSize = 12.sp)
-        }
-        preview?.let {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F4EA)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Added ✓ — ${it.lemma}", fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF2E7D32))
-                    Text(it.en, fontSize = 12.sp, color = Color(0xFF555555))
-                    Text(
-                        PERSON_KEYS.joinToString("  ·  ") { k -> "${k}: ${it.forms[k] ?: "—"}" },
-                        fontSize = 12.sp, color = Color(0xFF555555)
-                    )
                 }
             }
         }
@@ -1077,4 +1356,15 @@ private fun playConjugation(app: LangbangApplication, personKey: String, form: S
     if (form.isEmpty()) return
     val combined = "${audioPronoun(personKey)} $form".trim()
     playPolish(app, combined)
+}
+
+/** Short English subject pronoun for NV panel gloss. */
+private fun englishSubjectFor(personKey: String): String = when (personKey) {
+    "1sg" -> "I"
+    "2sg" -> "you"
+    "3sg" -> "he"
+    "1pl" -> "we"
+    "2pl" -> "y'all"
+    "3pl" -> "they"
+    else -> personKey
 }

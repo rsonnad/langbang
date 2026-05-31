@@ -1,5 +1,7 @@
 package com.sponic.langbang.ui.lessons
 
+import com.sponic.langbang.ui.theme.LbColors
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -37,55 +40,54 @@ import com.sponic.langbang.domain.PrefetchProgress
 import com.sponic.langbang.ui.phrase.PhraseDetail
 import com.sponic.langbang.ui.word.WordSheet
 
-private enum class L2Tab(val label: String) {
+internal enum class L2Tab(val label: String) {
     Verbs("Verbs"),
     Phrases("Phrases")
 }
 
 @Composable
-fun LessonScreen(app: LangbangApplication, prefetch: PrefetchProgress) {
-    val lesson = remember { app.lessonRepo.lesson2() }
-    var tab by remember { mutableStateOf(L2Tab.Verbs) }
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        Header(tab = tab, onSelect = { tab = it })
-        Box(modifier = Modifier.fillMaxSize()) {
-            when (tab) {
-                L2Tab.Verbs -> VerbsTab(app, prefetch)
-                L2Tab.Phrases -> PhrasesPane(app, prefetch)
-            }
-        }
-    }
-}
-
-@Composable
-private fun Header(
-    tab: L2Tab,
-    onSelect: (L2Tab) -> Unit
+fun LessonScreen(
+    app: LangbangApplication,
+    prefetch: PrefetchProgress,
+    nowVoicing: @Composable () -> Unit = {}
 ) {
-    Surface(color = Color(0xFFEDE5D2), modifier = Modifier.fillMaxWidth()) {
-        Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            L2Tab.values().forEach { t ->
-                FilterChip(
-                    selected = tab == t,
-                    onClick = { onSelect(t) },
-                    label = { Text(t.label, fontSize = 12.sp) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = Color.White
-                    )
-                )
-            }
+    // The Verbs/Phrases toggle used to sit in a full-width band ABOVE the list, which
+    // pushed the word list down. It now lives in each pane's right-hand control column
+    // so the list runs flush to the top, directly under the app header.
+    var tab by remember { mutableStateOf(L2Tab.Verbs) }
+    Box(modifier = Modifier.fillMaxSize()) {
+        when (tab) {
+            L2Tab.Verbs -> VerbsTab(app, prefetch, tab, { tab = it }, nowVoicing)
+            L2Tab.Phrases -> PhrasesPane(app, prefetch, tab, { tab = it }, nowVoicing)
         }
     }
 }
 
+/** The Verbs/Phrases segmented toggle — emitted into the caller's chip row. */
 @Composable
-private fun PhrasesPane(app: LangbangApplication, prefetch: PrefetchProgress) {
+internal fun L2TabChips(tab: L2Tab, onSelect: (L2Tab) -> Unit) {
+    L2Tab.values().forEach { t ->
+        FilterChip(
+            selected = tab == t,
+            onClick = { onSelect(t) },
+            label = { Text(t.label, fontSize = 11.sp) },
+            colors = FilterChipDefaults.filterChipColors(
+                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                selectedLabelColor = Color.White
+            ),
+            modifier = Modifier.height(30.dp)
+        )
+    }
+}
+
+@Composable
+private fun PhrasesPane(
+    app: LangbangApplication,
+    prefetch: PrefetchProgress,
+    tab: L2Tab,
+    onTabChange: (L2Tab) -> Unit,
+    nowVoicing: @Composable () -> Unit
+) {
     val lesson = remember { app.lessonRepo.lesson2() }
     var selected by remember { mutableStateOf(lesson.phrases.firstOrNull()) }
     var wordSheet by remember { mutableStateOf<String?>(null) }
@@ -98,24 +100,36 @@ private fun PhrasesPane(app: LangbangApplication, prefetch: PrefetchProgress) {
             modifier = Modifier
                 .width(288.dp)
                 .fillMaxHeight()
-                .background(Color(0xFFF3EFE6))
+                .background(LbColors.Canvas)
         )
-        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-            selected?.let { phrase ->
-                PhraseDetail(
-                    app = app,
-                    phrase = phrase,
-                    prefetchReady = prefetch.finished,
-                    onWordTap = { wordSheet = it }
-                )
+        Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+            nowVoicing()
+            Surface(color = LbColors.SurfaceRaised, modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    L2TabChips(tab, onTabChange)
+                }
             }
-            wordSheet?.let { word ->
-                WordSheet(
-                    app = app,
-                    polishToken = word,
-                    onDismiss = { wordSheet = null },
-                    modifier = Modifier.align(Alignment.CenterEnd)
-                )
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                selected?.let { phrase ->
+                    PhraseDetail(
+                        app = app,
+                        phrase = phrase,
+                        prefetchReady = prefetch.finished,
+                        onWordTap = { wordSheet = it }
+                    )
+                }
+                wordSheet?.let { word ->
+                    WordSheet(
+                        app = app,
+                        polishToken = word,
+                        onDismiss = { wordSheet = null },
+                        modifier = Modifier.align(Alignment.CenterEnd)
+                    )
+                }
             }
         }
     }
@@ -130,8 +144,8 @@ private fun PhraseList(
 ) {
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         items(phrases) { p ->
             val isSelected = p == selected
@@ -143,7 +157,9 @@ private fun PhraseList(
                 ),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(Modifier.padding(12.dp)) {
+                // Tight vertical padding — the two short lines (en + pl) don't need the
+                // old 12dp box; cards were eating far more height than their text.
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 5.dp)) {
                     Text(
                         p.en,
                         color = if (isSelected) Color.White else Color.Black,
@@ -153,7 +169,7 @@ private fun PhraseList(
                     Text(
                         p.pl,
                         color = if (isSelected) Color.White.copy(alpha = 0.85f)
-                        else Color(0xFF555555),
+                        else LbColors.TextSecondary,
                         fontSize = 14.sp
                     )
                 }

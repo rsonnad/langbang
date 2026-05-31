@@ -21,7 +21,9 @@ class RandomConfigStore(context: Context) {
         tenses = readSet(KEY_TENSES, DEFAULT_TENSES),
         prepositions = readSet(KEY_PREPS, emptySet()),
         adjectiveMode = readMode(KEY_ADJ_MODE, IncludeMode.YES),
-        adverbMode = readMode(KEY_ADV_MODE, IncludeMode.OFF)
+        adverbMode = readMode(KEY_ADV_MODE, IncludeMode.OFF),
+        playMode = readPlayMode(KEY_PLAY_MODE, PlayMode.PHRASES),
+        quizDelaySeconds = prefs.getFloat(KEY_QUIZ_DELAY, 1.5f)
     )
 
     fun save(config: RandomConfig) {
@@ -32,6 +34,8 @@ class RandomConfigStore(context: Context) {
             .putString(KEY_PREPS, config.prepositions.joinToString(","))
             .putString(KEY_ADJ_MODE, config.adjectiveMode.name)
             .putString(KEY_ADV_MODE, config.adverbMode.name)
+            .putString(KEY_PLAY_MODE, config.playMode.name)
+            .putFloat(KEY_QUIZ_DELAY, config.quizDelaySeconds)
             .apply()
     }
 
@@ -45,6 +49,11 @@ class RandomConfigStore(context: Context) {
         return runCatching { IncludeMode.valueOf(raw) }.getOrDefault(default)
     }
 
+    private fun readPlayMode(key: String, default: PlayMode): PlayMode {
+        val raw = prefs.getString(key, null) ?: return default
+        return runCatching { PlayMode.valueOf(raw) }.getOrDefault(default)
+    }
+
     companion object {
         private const val KEY_MUST_CONTAIN = "must-contain"
         private const val KEY_PERSONS = "persons"
@@ -52,6 +61,8 @@ class RandomConfigStore(context: Context) {
         private const val KEY_PREPS = "preps"
         private const val KEY_ADJ_MODE = "adj-mode"
         private const val KEY_ADV_MODE = "adv-mode"
+        private const val KEY_PLAY_MODE = "play-mode"
+        private const val KEY_QUIZ_DELAY = "quiz-delay-seconds"
         val DEFAULT_PERSONS = setOf("1sg", "2sg", "3sg")
         val DEFAULT_TENSES = setOf("present")
     }
@@ -74,6 +85,17 @@ enum class IncludeMode {
 }
 
 /**
+ * What "Play Phrases" actually plays. PHRASES → Gemini-generated example sentences (the
+ * historical behavior). VERBS → just the pronoun + verb conjugation, no surrounding
+ * sentence ("ja jestem", "ty jesteś"). Adj/Adv toggles in the now-voicing panel only
+ * apply in PHRASES mode.
+ */
+enum class PlayMode {
+    VERBS,
+    PHRASES,
+}
+
+/**
  * Snapshot of every user choice that gates the random play queue. All filters compose
  * as ANDs across categories. Within a multi-select category (persons, tenses, prepositions)
  * a sentence passes if it matches ANY of the selected values.
@@ -85,6 +107,9 @@ data class RandomConfig(
     val prepositions: Set<String> = emptySet(),
     val adjectiveMode: IncludeMode = IncludeMode.YES,
     val adverbMode: IncludeMode = IncludeMode.OFF,
+    val playMode: PlayMode = PlayMode.PHRASES,
+    /** Seconds the quiz pauses between English audio → reveal Polish, and reveal → speak. */
+    val quizDelaySeconds: Float = 1.5f,
 ) {
     companion object {
         /** Top-5 most common Polish prepositions for the chip row. */

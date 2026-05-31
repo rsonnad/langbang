@@ -38,6 +38,7 @@ class R2AudioDownloader(
         val lesson = repo.lesson2()
         val adjLesson = repo.lesson3()
         val advLesson = repo.lesson4()
+        val nounLesson = repo.lesson6()
         val pron = repo.pronunciation()
         return buildList {
             fun addPl(text: String) {
@@ -64,6 +65,11 @@ class R2AudioDownloader(
                 a.acc.values.forEach { addPl(it) }
             }
             advLesson.adverbs.forEach { adv -> addPl(adv.lemma) }
+            nounLesson.nouns.forEach { n ->
+                n.nom.values.forEach { addPl(it) }
+                n.acc.values.forEach { addPl(it) }
+                n.gen.values.forEach { addPl(it) }
+            }
             pron.phonemes.forEach { ph -> ph.examples.forEach { addPl(it.pl) } }
             lesson.verbs.forEach { v ->
                 repo.sentencesFor(v.lemma, VerbSentenceStore.TENSE_PRESENT).forEach { s ->
@@ -83,6 +89,12 @@ class R2AudioDownloader(
             }
             advLesson.adverbs.forEach { adv ->
                 repo.adverbSentencesFor(adv.lemma).forEach { s ->
+                    add(Phrase(s.en, AzureTtsClient.EN_US_F, AzureTtsClient.LOCALE_EN))
+                    addPl(s.pl)
+                }
+            }
+            nounLesson.nouns.forEach { n ->
+                repo.nounSentencesFor(n.lemma).forEach { s ->
                     add(Phrase(s.en, AzureTtsClient.EN_US_F, AzureTtsClient.LOCALE_EN))
                     addPl(s.pl)
                 }

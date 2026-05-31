@@ -17,7 +17,16 @@ data class NowVoicing(
     val literal: String?,
     val lang: String,
     val position: String? = null,
-    val words: List<TokenPair>? = null
+    val words: List<TokenPair>? = null,
+    /**
+     * True while the verb-quiz flow is in the post-English / pre-Polish pause and the
+     * Polish text should stay hidden so the learner can try to recall it. The panel
+     * masks the Polish tokens when this is set; once the reveal delay elapses the
+     * publisher emits a fresh NowVoicing with this false.
+     */
+    val plHidden: Boolean = false,
+    /** True for any NowVoicing emitted by Quiz mode — surfaces the delay slider in the panel. */
+    val quizMode: Boolean = false,
 )
 
 object NowVoicingBus {

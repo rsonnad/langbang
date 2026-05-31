@@ -35,22 +35,31 @@ class AzureTtsClient(
                 return@withContext Result.failure(IOException("Offline — TTS skipped."))
             }
             try {
-                // Two slow tiers exist so cache keys don't collide when the rate is bumped:
-                //   - slow50v3  → -50%  (old phrases, kept stable so existing mp3s replay)
-                //   - slow60v1  → -60%  (new phrases generated after 2026-05-20)
-                val slow60 = voice.endsWith(SLOW_SUFFIX_V2)
-                val slow50 = !slow60 && voice.endsWith(SLOW_SUFFIX)
-                val slow = slow50 || slow60
+                // Three slow tiers exist so cache keys don't collide when the rate is bumped:
+                //   - slow50v3 → -50% time-stretch (legacy, kept so existing mp3s replay)
+                //   - slow60v1 → -60% time-stretch ("stretch" style — slowed normal speech)
+                //   - slowart1 → -10% rate + 250ms <break/> between words ("articulate"
+                //                style — each word re-articulated, like a teacher repeating
+                //                them one at a time. Avoids the muddied feel of time-stretch.)
+                val slowArt = voice.endsWith(SLOW_SUFFIX_V3)
+                val slow60 = !slowArt && voice.endsWith(SLOW_SUFFIX_V2)
+                val slow50 = !slowArt && !slow60 && voice.endsWith(SLOW_SUFFIX)
                 val realVoice = when {
+                    slowArt -> voice.removeSuffix(SLOW_SUFFIX_V3)
                     slow60 -> voice.removeSuffix(SLOW_SUFFIX_V2)
                     slow50 -> voice.removeSuffix(SLOW_SUFFIX)
                     else -> voice
                 }
-                val ratePct = if (slow60) "-60%" else "-50%"
-                val body = if (slow)
-                    "<prosody rate=\"$ratePct\">${escapeXml(text)}</prosody>"
-                else
-                    escapeXml(text)
+                val body = when {
+                    slowArt -> {
+                        val tokens = text.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                        val joined = tokens.joinToString("<break time=\"250ms\"/>") { escapeXml(it) }
+                        "<prosody rate=\"-10%\">$joined</prosody>"
+                    }
+                    slow60 -> "<prosody rate=\"-60%\">${escapeXml(text)}</prosody>"
+                    slow50 -> "<prosody rate=\"-50%\">${escapeXml(text)}</prosody>"
+                    else -> escapeXml(text)
+                }
                 // Azure Neural voices require the SSML namespace on <speak>, otherwise
                 // <prosody> is silently dropped and the result plays at normal rate.
                 val ssml = """
@@ -100,11 +109,16 @@ class AzureTtsClient(
         const val LOCALE_PL = "pl-PL"
         // Rate suffix is baked into the cache key — bumping the version forces fresh
         // synthesis so a rate change isn't masked by stale mp3s in the AudioCache.
-        //   - slow50v3 (-50%) kept for backward compat: existing cached mp3s replay.
-        //   - slow60v1 (-60%) is the current default for all newly synthesized slow audio.
+        //   - slow50v3 (-50% stretch)  kept for backward compat: existing cached mp3s replay.
+        //   - slow60v1 (-60% stretch)  the "stretch" style (default).
+        //   - slowart1 (rearticulated) the "articulate" style: -10% rate + 250ms breaks
+        //                              between words. User picks between V2 and ART in
+        //                              Settings → Slow audio style.
         const val SLOW_SUFFIX = "|slow50v3"
         const val SLOW_SUFFIX_V2 = "|slow60v1"
+        const val SLOW_SUFFIX_V3 = "|slowart1"
         const val PL_PL_F_SLOW = "pl-PL-ZofiaNeural|slow50v3"
         const val PL_PL_F_SLOW_V2 = "pl-PL-ZofiaNeural|slow60v1"
+        const val PL_PL_F_SLOW_ART = "pl-PL-ZofiaNeural|slowart1"
     }
 }

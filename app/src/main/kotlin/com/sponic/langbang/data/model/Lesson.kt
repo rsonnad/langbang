@@ -103,3 +103,48 @@ data class AdverbEntry(
     val lemma: String,
     val en: String
 )
+
+@Serializable
+data class NounLesson(
+    val id: String,
+    val title: String,
+    val summary: String,
+    val nouns: List<NounEntry>
+)
+
+/**
+ * A Polish noun shown across its three workhorse cases — nominative (subject),
+ * accusative (direct object), genitive ("of" / negation / after numbers) — each in
+ * singular and plural. [gender] is "m" / "f" / "n"; the masculine accusative already
+ * encodes animacy in the stored forms (animate acc.sg = gen.sg, inanimate acc.sg =
+ * nom.sg) so the UI doesn't have to derive it. Each case map is keyed "sg" / "pl".
+ */
+@Serializable
+data class NounEntry(
+    val lemma: String,
+    val en: String,
+    val gender: String,
+    val nom: Map<String, String>,
+    val acc: Map<String, String>,
+    val gen: Map<String, String>
+)
+
+/**
+ * Lesson 5 — multi-sentence real-world phrase groups (introductions, small-talk, etc.).
+ * Each group is a runnable monologue: 6-10 sentences played in order, EN cue → PL target.
+ */
+@Serializable
+data class PhrasesLesson(
+    val id: String,
+    val title: String,
+    val summary: String,
+    val groups: List<PhraseGroup>
+)
+
+@Serializable
+data class PhraseGroup(
+    val id: String,
+    val title: String,
+    val subtitle: String = "",
+    val sentences: List<SentenceExample>
+)

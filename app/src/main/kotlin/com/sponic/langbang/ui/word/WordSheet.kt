@@ -1,5 +1,7 @@
 package com.sponic.langbang.ui.word
 
+import com.sponic.langbang.ui.theme.LbColors
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -64,7 +66,7 @@ fun WordSheet(
         Column(Modifier.fillMaxHeight().padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(polishToken, fontSize = 26.sp, fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF0F4C81))
+                    color = LbColors.Primary)
                 Spacer(Modifier.width(8.dp))
                 IconButton(onClick = onDismiss) {
                     Icon(Icons.Default.Close, contentDescription = "Close")
@@ -75,7 +77,7 @@ fun WordSheet(
                 verbMatch != null -> {
                     Text(
                         "${verbMatch.lemma}  —  ${verbMatch.en}",
-                        fontSize = 14.sp, color = Color(0xFF666666)
+                        fontSize = 14.sp, color = LbColors.TextSecondary
                     )
                     Spacer(Modifier.height(12.dp))
                     Text("Present tense", fontSize = 13.sp, fontWeight = FontWeight.Medium)
@@ -97,7 +99,7 @@ fun WordSheet(
                 pronounMatch != null -> {
                     Text(
                         "${pronounMatch.lemma}  —  ${pronounMatch.en}",
-                        fontSize = 14.sp, color = Color(0xFF666666)
+                        fontSize = 14.sp, color = LbColors.TextSecondary
                     )
                     Spacer(Modifier.height(12.dp))
                     Text("Case forms", fontSize = 13.sp, fontWeight = FontWeight.Medium)
@@ -116,7 +118,7 @@ fun WordSheet(
                 else -> {
                     Text(
                         "No paradigm found for this word in Lesson 1. Tap support coming with the Worker pipeline.",
-                        fontSize = 13.sp, color = Color(0xFF888888),
+                        fontSize = 13.sp, color = LbColors.TextMuted,
                         modifier = Modifier.padding(top = 16.dp)
                     )
                 }
@@ -129,18 +131,18 @@ fun WordSheet(
 private fun FormRow(label: String, form: String, onPlay: () -> Unit) {
     Card(
         onClick = onPlay,
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F2EA)),
+        colors = CardDefaults.cardColors(containerColor = LbColors.SurfaceTint),
         modifier = Modifier.height(44.dp)
     ) {
         Row(
             Modifier.padding(horizontal = 12.dp).fillMaxHeight(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(label, fontSize = 12.sp, color = Color(0xFF777777),
+            Text(label, fontSize = 12.sp, color = LbColors.TextMuted,
                 modifier = Modifier.width(70.dp))
             Text(form, fontSize = 16.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.width(8.dp))
-            Text("▶", fontSize = 12.sp, color = Color(0xFF0F4C81))
+            Text("▶", fontSize = 12.sp, color = LbColors.Primary)
         }
     }
 }

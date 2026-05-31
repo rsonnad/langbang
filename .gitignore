@@ -17,3 +17,5 @@ memory/sessions.md
 
 # Misc
 captures/
+__pycache__/
+*.pyc

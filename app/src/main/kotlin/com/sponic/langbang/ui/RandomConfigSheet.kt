@@ -1,5 +1,7 @@
 package com.sponic.langbang.ui
 
+import com.sponic.langbang.ui.theme.LbColors
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,24 +19,28 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,22 +55,22 @@ import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.data.IncludeMode
 import com.sponic.langbang.data.RandomConfig
+import com.sponic.langbang.data.VerbSentenceStore
+import com.sponic.langbang.domain.NowVoicingBus
 import kotlinx.coroutines.launch
 
 /**
  * Full-screen modal sheet — appears when the user taps the "Play random" pill while
- * playback is idle. Captures every filter that gates the random queue, persists choices
- * to RandomConfigStore on Play, then dismisses + starts playback.
- *
- * Past tense and Adverbs chips/dropdowns render in a "coming soon" disabled state for
- * now — the data model + content lands in tasks #6, #7, #8 respectively.
+ * playback is idle. Two-column compact layout: every control fits on the landscape
+ * tablet without scrolling. Play button lives top-right; the X icon next to it cancels.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun RandomConfigSheet(
+internal fun RandomConfigSheet(
     app: LangbangApplication,
     initial: RandomConfig,
     initialMustContain: String = initial.mustContainWord,
+    randomPlayer: RandomPlayerState,
     onCancel: () -> Unit,
     onPlay: (RandomConfig) -> Unit,
 ) {
@@ -81,7 +88,7 @@ fun RandomConfigSheet(
     // when must-contain filter has < 8 hits.
     var preflight by remember { mutableStateOf(Preflight()) }
     var preflightBusy by remember { mutableStateOf(false) }
-    val config = RandomConfig(
+    val config = initial.copy(
         mustContainWord = mustContain.trim(),
         personKeys = persons,
         tenses = tenses,
@@ -96,10 +103,10 @@ fun RandomConfigSheet(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xCC0F4C81)) // scrim
+            .background(LbColors.Scrim)
     ) {
         Surface(
-            color = Color(0xFFFAF6EC),
+            color = LbColors.Sheet,
             modifier = Modifier
                 .fillMaxWidth()
                 .wrapContentHeight()
@@ -107,112 +114,144 @@ fun RandomConfigSheet(
             shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
         ) {
             Column(
-                Modifier
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // ── Header: title (left) · cancel · Play (top-right) ───────────
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "Play random — what to drill",
+                        "Play Phrases",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF0F4C81),
+                        color = LbColors.PrimaryDeep,
                         modifier = Modifier.weight(1f)
                     )
                     IconButton(onClick = onCancel, modifier = Modifier.size(32.dp)) {
                         Icon(
                             Icons.Filled.Close,
                             contentDescription = "Cancel",
-                            tint = Color(0xFF7A5A1F)
+                            tint = LbColors.Label
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = { onPlay(config) },
+                        enabled = preflight.eligibleCount > 0,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        ),
+                        shape = RoundedCornerShape(20.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.PlayArrow,
+                            contentDescription = null,
+                            tint = LbColors.OnPrimary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            "Play (${preflight.eligibleCount})",
+                            color = LbColors.OnPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
                 }
 
-                // ── Must contain word ───────────────────────────────────────────
-                SectionLabel(
-                    "Must contain word",
-                    "If set, every sentence will include this word (or one of its inflections)."
-                )
-                OutlinedTextField(
-                    value = mustContain,
-                    onValueChange = { mustContain = it },
-                    placeholder = { Text("e.g. kawa", fontSize = 13.sp) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                // ── Verb persons ────────────────────────────────────────────────
-                SectionLabel("Verb persons", "Subjects to drill across all verbs.")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    RandomConfig.PERSONS.forEach { k ->
-                        ToggleChip(
-                            label = personChipLabel(k),
-                            selected = k in persons,
-                            onToggle = {
-                                persons = if (k in persons) persons - k else persons + k
-                            }
-                        )
-                    }
+                // ── Now Playing (only when a queue is loaded) ──────────────────
+                if (randomPlayer.hasQueue) {
+                    NowPlayingPanel(player = randomPlayer)
                 }
 
-                // ── Tense ───────────────────────────────────────────────────────
-                SectionLabel("Tense", "Past tense content lands in a follow-up.")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ToggleChip(
-                        label = "Present",
-                        selected = "present" in tenses,
-                        onToggle = {
-                            tenses = if ("present" in tenses) tenses - "present"
-                            else tenses + "present"
+                // ── Two-column body — labels inline with chips/field ───────────
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(20.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        InlineRow("Words") {
+                            OutlinedTextField(
+                                value = mustContain,
+                                onValueChange = { mustContain = it },
+                                placeholder = {
+                                    Text("e.g. kawa duża", fontSize = 12.sp)
+                                },
+                                singleLine = true,
+                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
+                                modifier = Modifier
+                                    .width(280.dp)
+                                    .defaultMinSize(minHeight = 44.dp)
+                            )
                         }
-                    )
-                    ToggleChip(
-                        label = "Past (soon)",
-                        selected = false,
-                        enabled = false,
-                        onToggle = { }
-                    )
-                }
-
-                // ── Prepositions ────────────────────────────────────────────────
-                SectionLabel(
-                    "Prepositions",
-                    "Restrict to sentences containing one of these. Off when none picked."
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    RandomConfig.PREPOSITIONS.forEach { p ->
-                        ToggleChip(
-                            label = "$p (${prepositionGloss(p)})",
-                            selected = p in preps,
-                            onToggle = {
-                                preps = if (p in preps) preps - p else preps + p
+                        InlineRow("Persons") {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                RandomConfig.PERSONS.forEach { k ->
+                                    ToggleChip(
+                                        label = personChipLabel(k),
+                                        selected = k in persons,
+                                        onToggle = {
+                                            persons = if (k in persons) persons - k
+                                            else persons + k
+                                        }
+                                    )
+                                }
                             }
-                        )
+                        }
+                        InlineRow("Tense") {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                ToggleChip(
+                                    label = "Present",
+                                    selected = VerbSentenceStore.TENSE_PRESENT in tenses,
+                                    onToggle = {
+                                        tenses = if (VerbSentenceStore.TENSE_PRESENT in tenses)
+                                            tenses - VerbSentenceStore.TENSE_PRESENT
+                                        else tenses + VerbSentenceStore.TENSE_PRESENT
+                                    }
+                                )
+                                ToggleChip(
+                                    label = "Past",
+                                    selected = VerbSentenceStore.TENSE_PAST in tenses,
+                                    onToggle = {
+                                        tenses = if (VerbSentenceStore.TENSE_PAST in tenses)
+                                            tenses - VerbSentenceStore.TENSE_PAST
+                                        else tenses + VerbSentenceStore.TENSE_PAST
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        InlineRow("Preps") {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                RandomConfig.PREPOSITIONS.forEach { p ->
+                                    ToggleChip(
+                                        label = p,
+                                        selected = p in preps,
+                                        onToggle = {
+                                            preps = if (p in preps) preps - p else preps + p
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        InlineRow("Adj") {
+                            TriStateRow(selected = adjMode, onSelect = { adjMode = it })
+                        }
+                        InlineRow("Adv") {
+                            TriStateRow(selected = advMode, onSelect = { advMode = it })
+                        }
                     }
                 }
 
-                // ── Adjectives tri-state ────────────────────────────────────────
-                SectionLabel(
-                    "Adjectives",
-                    "'All' cycles every adjective so each sentence uses a different one."
-                )
-                TriStateRow(selected = adjMode, onSelect = { adjMode = it })
-
-                // ── Adverbs tri-state (disabled until content lands) ────────────
-                SectionLabel(
-                    "Adverbs",
-                    "Adverb content lands in a follow-up; the toggle is here for layout."
-                )
-                TriStateRow(
-                    selected = advMode,
-                    onSelect = { advMode = it },
-                    enabled = false
-                )
-
-                // ── Preflight status (#9 + #10) ─────────────────────────────────
-                Spacer(Modifier.height(4.dp))
-                PreflightPanel(
+                // ── Preflight (compact, only renders when there's something to say) ──
+                CompactPreflight(
                     preflight = preflight,
                     busy = preflightBusy,
                     isOnline = app.network.isOnline(),
@@ -233,42 +272,70 @@ fun RandomConfigSheet(
                         }
                     }
                 )
+            }
+        }
+    }
+}
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = onCancel,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFEFE8D8),
-                            contentColor = Color(0xFF7A5A1F)
-                        ),
-                        shape = RoundedCornerShape(20.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Cancel", fontSize = 14.sp)
-                    }
-                    Button(
-                        onClick = { onPlay(config) },
-                        enabled = preflight.eligibleCount > 0,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        ),
-                        shape = RoundedCornerShape(20.dp),
-                        modifier = Modifier.weight(2f)
-                    ) {
-                        Icon(
-                            Icons.Filled.PlayArrow,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            "Play (${preflight.eligibleCount} phrases)",
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
+/**
+ * In-sheet Now Voicing panel. Delegates the body to the shared
+ * [com.sponic.langbang.ui.common.NowVoicingBody] so it stays in lockstep with the
+ * sticky-header panel. The sheet adds its own 2x2 transport on the right (these
+ * transport callbacks bypass PlaybackController because the sheet has direct
+ * access to RandomPlayerState and needs sheet-local pause-state semantics).
+ */
+@Composable
+private fun NowPlayingPanel(player: RandomPlayerState) {
+    val nv by NowVoicingBus.state.collectAsState()
+    val statusLabel = when {
+        player.playing -> "NOW PLAYING"
+        player.paused -> "PAUSED"
+        else -> "QUEUE"
+    }
+    Surface(
+        color = LbColors.SurfaceRaised,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(modifier = Modifier.weight(1f)) {
+                com.sponic.langbang.ui.common.NowVoicingBody(
+                    pinned = nv,
+                    live = nv,
+                    statusText = "$statusLabel · ${player.position} / ${player.queueSize}",
+                    idlePlaceholder = "—"
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    TransportButton(
+                        icon = Icons.Filled.Replay,
+                        label = "Start over",
+                        onClick = { player.restart() }
+                    )
+                    TransportButton(
+                        icon = Icons.Filled.SkipPrevious,
+                        label = "Rewind",
+                        onClick = { player.rewind() }
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    TransportButton(
+                        icon = if (player.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        label = if (player.playing) "Pause" else "Play",
+                        onClick = {
+                            if (player.playing) player.pause() else player.resume()
+                        }
+                    )
+                    TransportButton(
+                        icon = Icons.Filled.Stop,
+                        label = "Stop",
+                        onClick = { player.stop() }
+                    )
                 }
             }
         }
@@ -276,15 +343,35 @@ fun RandomConfigSheet(
 }
 
 @Composable
-private fun SectionLabel(label: String, hint: String) {
-    Column {
+private fun TransportButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier.size(36.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = LbColors.Primary,
+            modifier = Modifier.size(22.dp)
+        )
+    }
+}
+
+@Composable
+private fun InlineRow(label: String, content: @Composable () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
             label,
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
-            color = Color(0xFF7A5A1F)
+            color = LbColors.Label,
+            modifier = Modifier.width(60.dp)
         )
-        Text(hint, fontSize = 10.sp, color = Color(0xFF999999))
+        content()
     }
 }
 
@@ -299,10 +386,21 @@ private fun ToggleChip(
         selected = selected,
         onClick = onToggle,
         enabled = enabled,
-        label = { Text(label, fontSize = 12.sp) },
+        label = {
+            Text(
+                label,
+                fontSize = 12.sp,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+            )
+        },
+        modifier = Modifier.height(30.dp),
         colors = FilterChipDefaults.filterChipColors(
+            containerColor = LbColors.ChipIdle,
+            labelColor = LbColors.TextSecondary,
             selectedContainerColor = MaterialTheme.colorScheme.primary,
-            selectedLabelColor = Color.White
+            selectedLabelColor = LbColors.OnPrimary,
+            disabledContainerColor = LbColors.ChipIdle.copy(alpha = 0.45f),
+            disabledLabelColor = LbColors.TextMuted
         )
     )
 }
@@ -314,7 +412,7 @@ private fun TriStateRow(
     onSelect: (IncludeMode) -> Unit,
     enabled: Boolean = true
 ) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         IncludeMode.values().forEach { mode ->
             ToggleChip(
                 label = when (mode) {
@@ -331,22 +429,13 @@ private fun TriStateRow(
 }
 
 private fun personChipLabel(key: String): String = when (key) {
-    "1sg" -> "ja (I)"
-    "2sg" -> "ty (you)"
-    "3sg" -> "on / ona"
-    "1pl" -> "my (we)"
-    "2pl" -> "wy (y'all)"
-    "3pl" -> "oni / one"
+    "1sg" -> "ja"
+    "2sg" -> "ty"
+    "3sg" -> "on/ona"
+    "1pl" -> "my"
+    "2pl" -> "wy"
+    "3pl" -> "oni/one"
     else -> key
-}
-
-private fun prepositionGloss(p: String): String = when (p) {
-    "w" -> "in"
-    "na" -> "on"
-    "do" -> "to"
-    "z" -> "with/from"
-    "o" -> "about"
-    else -> ""
 }
 
 // ── Preflight (#9 + #10) ─────────────────────────────────────────────────────
@@ -365,7 +454,14 @@ private data class Preflight(
 private const val MUST_CONTAIN_HIT_THRESHOLD = 8
 
 private fun computePreflight(app: LangbangApplication, config: RandomConfig): Preflight {
-    val mustContain = config.mustContainWord.lowercase().takeIf { it.isNotEmpty() }
+    // Multi-token "must contain": split the input on whitespace and require every
+    // token to appear (substring match) in the sentence. Lets the user narrow with
+    // e.g. "kawa duża" — both must appear, in any order, in any morphological form.
+    val mustContainTokens = config.mustContainWord
+        .lowercase()
+        .split(Regex("\\s+"))
+        .filter { it.isNotEmpty() }
+        .takeIf { it.isNotEmpty() }
     val prepFilter = config.prepositions.takeIf { it.isNotEmpty() }
 
     fun passesPreps(pl: String): Boolean {
@@ -373,19 +469,23 @@ private fun computePreflight(app: LangbangApplication, config: RandomConfig): Pr
         return pl.lowercase().split(Regex("[^\\p{L}]+")).any { it in prepFilter }
     }
     fun passesMustContain(pl: String): Boolean {
-        if (mustContain == null) return true
-        return pl.lowercase().contains(mustContain)
+        if (mustContainTokens == null) return true
+        val hay = pl.lowercase()
+        return mustContainTokens.all { hay.contains(it) }
     }
 
     var total = 0
     val verbLesson = app.lessonRepo.lesson2()
-    if ("present" in config.tenses) {
+
+    fun countForTense(tense: String, formsFor: (com.sponic.langbang.data.model.VerbEntry) -> Map<String, String>) {
         verbLesson.verbs.forEach { verb ->
-            val allowedForms = verb.forms
+            val src = formsFor(verb)
+            if (src.isEmpty()) return@forEach
+            val allowedForms = src
                 .filterKeys { it in config.personKeys }
                 .values.filter { it.isNotBlank() }.map { it.lowercase() }.toSet()
             if (allowedForms.isEmpty()) return@forEach
-            total += app.lessonRepo.sentencesFor(verb.lemma).count { s ->
+            total += app.lessonRepo.sentencesFor(verb.lemma, tense).count { s ->
                 val tokens = s.pl.lowercase().split(Regex("[^\\p{L}]+"))
                 tokens.any { it.isNotEmpty() && it in allowedForms } &&
                     passesPreps(s.pl) && passesMustContain(s.pl)
@@ -393,11 +493,39 @@ private fun computePreflight(app: LangbangApplication, config: RandomConfig): Pr
         }
     }
 
+    if (VerbSentenceStore.TENSE_PRESENT in config.tenses) {
+        countForTense(VerbSentenceStore.TENSE_PRESENT) { it.forms }
+    }
+    if (VerbSentenceStore.TENSE_PAST in config.tenses) {
+        countForTense(VerbSentenceStore.TENSE_PAST) { it.past_forms.orEmpty() }
+    }
+
+    // Same gating set the player uses: only verb forms for the selected persons ×
+    // tenses count. Keeps the preflight tally honest for adj/adv sentences.
+    val allowedVerbForms = mutableSetOf<String>()
+    verbLesson.verbs.forEach { verb ->
+        if (VerbSentenceStore.TENSE_PRESENT in config.tenses) {
+            verb.forms.filterKeys { it in config.personKeys }.values.forEach {
+                if (it.isNotBlank()) allowedVerbForms += it.lowercase()
+            }
+        }
+        if (VerbSentenceStore.TENSE_PAST in config.tenses) {
+            verb.past_forms.orEmpty().filterKeys { it in config.personKeys }.values.forEach {
+                if (it.isNotBlank()) allowedVerbForms += it.lowercase()
+            }
+        }
+    }
+    fun matchesAllowedVerb(pl: String): Boolean {
+        val tokens = pl.lowercase().split(Regex("[^\\p{L}]+"))
+        return tokens.any { it.isNotEmpty() && it in allowedVerbForms }
+    }
+
     val missingAdj = mutableListOf<String>()
     if (config.adjectiveMode != IncludeMode.OFF) {
         val adjLesson = app.lessonRepo.lesson3()
         adjLesson.adjectives.forEach { adj ->
             val sentences = app.lessonRepo.adjectiveSentencesFor(adj.lemma)
+                .filter { matchesAllowedVerb(it.pl) }
             val eligible = sentences.count { passesPreps(it.pl) && passesMustContain(it.pl) }
             if (eligible == 0 && config.adjectiveMode == IncludeMode.ALL) {
                 missingAdj += adj.lemma
@@ -411,11 +539,12 @@ private fun computePreflight(app: LangbangApplication, config: RandomConfig): Pr
         val advLesson = app.lessonRepo.lesson4()
         advLesson.adverbs.forEach { adv ->
             val sentences = app.lessonRepo.adverbSentencesFor(adv.lemma)
+                .filter { matchesAllowedVerb(it.pl) }
             total += sentences.count { passesPreps(it.pl) && passesMustContain(it.pl) }
         }
     }
 
-    val hits = if (mustContain != null) total else null
+    val hits = if (mustContainTokens != null) total else null
     return Preflight(eligibleCount = total, mustContainHits = hits, missingAdjectives = missingAdj)
 }
 
@@ -439,10 +568,13 @@ private suspend fun generateMissingAdjectiveSentences(
  * — Gemini sometimes returns sentences without the requested word — but it's a useful
  * nudge.
  */
-private suspend fun regenerateForMustContain(app: LangbangApplication, word: String) {
-    if (word.isEmpty()) return
+private suspend fun regenerateForMustContain(app: LangbangApplication, words: String) {
+    if (words.isEmpty()) return
+    // Lemma lookup uses the first token; the rest narrow the must-contain filter at
+    // playback time but don't usefully steer verb selection here.
+    val firstToken = words.split(Regex("\\s+")).firstOrNull { it.isNotEmpty() } ?: return
     val verbLesson = app.lessonRepo.lesson2()
-    val verb = verbLesson.verbs.firstOrNull { it.lemma.contains(word, ignoreCase = true) }
+    val verb = verbLesson.verbs.firstOrNull { it.lemma.contains(firstToken, ignoreCase = true) }
         ?: verbLesson.verbs.randomOrNull()
         ?: return
     app.gemini.generateSentences(verb, allowedPersonKeys = setOf("1sg", "2sg", "3sg"))
@@ -454,8 +586,9 @@ private suspend fun regenerateForMustContain(app: LangbangApplication, word: Str
         }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PreflightPanel(
+private fun CompactPreflight(
     preflight: Preflight,
     busy: Boolean,
     isOnline: Boolean,
@@ -465,81 +598,65 @@ private fun PreflightPanel(
     val hits = preflight.mustContainHits
     val showMustContainCta = hits != null && hits < MUST_CONTAIN_HIT_THRESHOLD
     val showMissingAdjCta = preflight.missingAdjectives.isNotEmpty()
-    if (preflight.eligibleCount == 0 && hits == null && !showMissingAdjCta) return
+    val showEmpty = preflight.eligibleCount == 0
+    if (!showEmpty && hits == null && !showMissingAdjCta) return
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        if (preflight.eligibleCount == 0) {
+        if (showEmpty) {
             Text(
-                "No phrases match these filters. Loosen the matrix above, or generate " +
-                    "more examples from the Verbs / Adjectives tabs.",
+                "No phrases match — loosen filters.",
                 fontSize = 11.sp,
-                color = Color(0xFFB04A2A)
+                color = LbColors.Danger
             )
         }
         if (hits != null) {
             Text(
-                "“${preflight.mustContainHits}” hits for that word in cached sentences.",
+                "“$hits” cached hits",
                 fontSize = 11.sp,
-                color = if (showMustContainCta) Color(0xFFB04A2A) else Color(0xFF555555)
+                color = if (showMustContainCta) LbColors.Danger else LbColors.TextSecondary
             )
             if (showMustContainCta) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Button(
-                        onClick = onRegenerateForWord,
-                        enabled = !busy && isOnline,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFEFE8D8),
-                            contentColor = Color(0xFF7A5A1F)
-                        ),
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            if (busy) "Generating…" else "Generate more with that word",
-                            fontSize = 11.sp
-                        )
-                    }
-                    if (!isOnline) {
-                        Spacer(Modifier.width(8.dp))
-                        Text("Offline — cached only", fontSize = 10.sp, color = Color(0xFFB04A2A))
-                    }
+                Button(
+                    onClick = onRegenerateForWord,
+                    enabled = !busy && isOnline,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = LbColors.SurfaceTint,
+                        contentColor = LbColors.Label
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                ) {
+                    Text(if (busy) "Generating…" else "Generate more", fontSize = 11.sp)
                 }
             }
         }
         if (showMissingAdjCta) {
             Text(
-                "${preflight.missingAdjectives.size} adjectives have no cached examples " +
+                "${preflight.missingAdjectives.size} adj. missing " +
                     "(${preflight.missingAdjectives.take(3).joinToString(", ")}" +
                     if (preflight.missingAdjectives.size > 3) ", …)" else ")",
                 fontSize = 11.sp,
-                color = Color(0xFFB04A2A)
+                color = LbColors.Danger
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(
-                    onClick = onGenerateMissingAdjectives,
-                    enabled = !busy && isOnline,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFEFE8D8),
-                        contentColor = Color(0xFF7A5A1F)
-                    ),
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        if (busy) "Generating…" else "Generate missing sentences",
-                        fontSize = 11.sp
-                    )
-                }
-                if (!isOnline) {
-                    Spacer(Modifier.width(8.dp))
-                    Text("Offline — cached only", fontSize = 10.sp, color = Color(0xFFB04A2A))
-                }
+            Button(
+                onClick = onGenerateMissingAdjectives,
+                enabled = !busy && isOnline,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = LbColors.SurfaceTint,
+                    contentColor = LbColors.Label
+                ),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+            ) {
+                Text(if (busy) "Generating…" else "Generate missing", fontSize = 11.sp)
             }
+        }
+        if (!isOnline && (showMustContainCta || showMissingAdjCta)) {
+            Text("Offline — cached only", fontSize = 10.sp, color = LbColors.Danger)
         }
     }
 }

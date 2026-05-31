@@ -1,0 +1,265 @@
+{
+  "id": "lesson-05",
+  "title": "Lesson 5 — Phrases",
+  "summary": "Multi-sentence real-world phrases. Each group strings together a useful run of sentences you'd actually say — introductions, small-talk, asking for help — so the audio drill mirrors a real conversation, not isolated grammar drills.",
+  "groups": [
+    {
+      "id": "intro-rahul",
+      "title": "Introduction — Rahul",
+      "subtitle": "Meeting someone new and explaining what you do.",
+      "sentences": [
+        {
+          "pl": "Cześć, miło mi cię poznać.",
+          "en": "Hello, nice to meet you.",
+          "literal": "Hi, pleasant me you to-meet.",
+          "words": [
+            {"pl": "Cześć,",  "en": "Hi,"},
+            {"pl": "miło",    "en": "pleasant"},
+            {"pl": "mi",      "en": "to-me"},
+            {"pl": "cię",     "en": "you"},
+            {"pl": "poznać.", "en": "to-meet."}
+          ]
+        },
+        {
+          "pl": "Mam na imię Rahul.",
+          "en": "My name is Rahul.",
+          "literal": "I-have on name Rahul.",
+          "words": [
+            {"pl": "Mam",    "en": "I-have"},
+            {"pl": "na",     "en": "on"},
+            {"pl": "imię",   "en": "name"},
+            {"pl": "Rahul.", "en": "Rahul."}
+          ]
+        },
+        {
+          "pl": "Jestem z Austin, w Teksasie.",
+          "en": "I am from Austin, Texas.",
+          "literal": "I-am from Austin, in Texas.",
+          "words": [
+            {"pl": "Jestem",    "en": "I-am"},
+            {"pl": "z",         "en": "from"},
+            {"pl": "Austin,",   "en": "Austin,"},
+            {"pl": "w",         "en": "in"},
+            {"pl": "Teksasie.", "en": "Texas."}
+          ]
+        },
+        {
+          "pl": "Niedawno przyjechałem do Polski.",
+          "en": "I just came to Poland recently.",
+          "literal": "Recently I-came to Poland.",
+          "words": [
+            {"pl": "Niedawno",     "en": "recently"},
+            {"pl": "przyjechałem", "en": "I-came"},
+            {"pl": "do",           "en": "to"},
+            {"pl": "Polski.",      "en": "Poland."}
+          ]
+        },
+        {
+          "pl": "Więc mój polski nie jest jeszcze najlepszy.",
+          "en": "So my Polish is not very good yet.",
+          "literal": "So my Polish not is yet best.",
+          "words": [
+            {"pl": "Więc",       "en": "so"},
+            {"pl": "mój",        "en": "my"},
+            {"pl": "polski",     "en": "Polish"},
+            {"pl": "nie",        "en": "not"},
+            {"pl": "jest",       "en": "is"},
+            {"pl": "jeszcze",    "en": "yet"},
+            {"pl": "najlepszy.", "en": "best."}
+          ]
+        },
+        {
+          "pl": "Pracuję nad nowym startupem AI.",
+          "en": "I'm working on a new AI startup.",
+          "literal": "I-work on new startup AI.",
+          "words": [
+            {"pl": "Pracuję",   "en": "I-work"},
+            {"pl": "nad",       "en": "on"},
+            {"pl": "nowym",     "en": "new"},
+            {"pl": "startupem", "en": "startup"},
+            {"pl": "AI.",       "en": "AI."}
+          ]
+        },
+        {
+          "pl": "Łączy społeczność, fitness i uprawę roślin.",
+          "en": "It combines community, fitness, and plant cultivation.",
+          "literal": "Combines community, fitness and cultivation of-plants.",
+          "words": [
+            {"pl": "Łączy",        "en": "combines"},
+            {"pl": "społeczność,", "en": "community,"},
+            {"pl": "fitness",      "en": "fitness"},
+            {"pl": "i",            "en": "and"},
+            {"pl": "uprawę",       "en": "cultivation"},
+            {"pl": "roślin.",      "en": "of-plants."}
+          ]
+        },
+        {
+          "pl": "Niedługo będziemy organizować wydarzenia.",
+          "en": "We'll be organizing events soon.",
+          "literal": "Soon we-will-be to-organize events.",
+          "words": [
+            {"pl": "Niedługo",    "en": "soon"},
+            {"pl": "będziemy",    "en": "we-will-be"},
+            {"pl": "organizować", "en": "to-organize"},
+            {"pl": "wydarzenia.", "en": "events."}
+          ]
+        },
+        {
+          "pl": "Jeśli brzmi to ciekawie, mogę cię zaprosić.",
+          "en": "If this sounds interesting, I can invite you.",
+          "literal": "If sounds this interestingly, I-can you to-invite.",
+          "words": [
+            {"pl": "Jeśli",     "en": "if"},
+            {"pl": "brzmi",     "en": "sounds"},
+            {"pl": "to",        "en": "this"},
+            {"pl": "ciekawie,", "en": "interestingly,"},
+            {"pl": "mogę",      "en": "I-can"},
+            {"pl": "cię",       "en": "you"},
+            {"pl": "zaprosić.", "en": "to-invite."}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "language-icebreakers",
+      "title": "Language icebreakers",
+      "subtitle": "Honest small-talk when you're new to Polish — apologize, ask for help, switch to English.",
+      "sentences": [
+        {
+          "pl": "Mój polski jest fatalny.",
+          "en": "My Polish is terrible.",
+          "literal": "My Polish is terrible.",
+          "words": [
+            {"pl": "Mój",     "en": "my"},
+            {"pl": "polski",  "en": "Polish"},
+            {"pl": "jest",    "en": "is"},
+            {"pl": "fatalny.","en": "terrible."}
+          ]
+        },
+        {
+          "pl": "Cieszę się, że mówisz po angielsku.",
+          "en": "I'm glad you speak English.",
+          "literal": "I-am-glad self, that you-speak in English.",
+          "words": [
+            {"pl": "Cieszę",   "en": "I-am-glad"},
+            {"pl": "się,",     "en": "self,"},
+            {"pl": "że",       "en": "that"},
+            {"pl": "mówisz",   "en": "you-speak"},
+            {"pl": "po",       "en": "in"},
+            {"pl": "angielsku.","en": "English."}
+          ]
+        },
+        {
+          "pl": "Czy mogę mówić po angielsku?",
+          "en": "Can I speak in English?",
+          "literal": "Whether I-can to-speak in English?",
+          "words": [
+            {"pl": "Czy",       "en": "whether"},
+            {"pl": "mogę",      "en": "I-can"},
+            {"pl": "mówić",     "en": "to-speak"},
+            {"pl": "po",        "en": "in"},
+            {"pl": "angielsku?","en": "English?"}
+          ]
+        },
+        {
+          "pl": "Proszę mówić wolniej.",
+          "en": "Please speak more slowly.",
+          "literal": "Please to-speak more-slowly.",
+          "words": [
+            {"pl": "Proszę",  "en": "please"},
+            {"pl": "mówić",   "en": "to-speak"},
+            {"pl": "wolniej.","en": "more-slowly."}
+          ]
+        },
+        {
+          "pl": "Nie rozumiem.",
+          "en": "I don't understand.",
+          "literal": "Not I-understand.",
+          "words": [
+            {"pl": "Nie",        "en": "not"},
+            {"pl": "rozumiem.",  "en": "I-understand."}
+          ]
+        },
+        {
+          "pl": "Możesz powtórzyć?",
+          "en": "Can you repeat that?",
+          "literal": "You-can to-repeat?",
+          "words": [
+            {"pl": "Możesz",     "en": "you-can"},
+            {"pl": "powtórzyć?", "en": "to-repeat?"}
+          ]
+        },
+        {
+          "pl": "Uczę się polskiego.",
+          "en": "I'm learning Polish.",
+          "literal": "I-learn self of-Polish.",
+          "words": [
+            {"pl": "Uczę",      "en": "I-learn"},
+            {"pl": "się",       "en": "self"},
+            {"pl": "polskiego.","en": "of-Polish."}
+          ]
+        },
+        {
+          "pl": "Przepraszam za mój polski.",
+          "en": "Sorry about my Polish.",
+          "literal": "Sorry for my Polish.",
+          "words": [
+            {"pl": "Przepraszam","en": "sorry"},
+            {"pl": "za",         "en": "for"},
+            {"pl": "mój",        "en": "my"},
+            {"pl": "polski.",    "en": "Polish."}
+          ]
+        },
+        {
+          "pl": "Uczę się polskiego z aplikacją, którą zbudowałem.",
+          "en": "I study Polish with an application I built.",
+          "literal": "I-learn self of-Polish with app, which I-built.",
+          "words": [
+            {"pl": "Uczę",         "en": "I-learn"},
+            {"pl": "się",          "en": "self"},
+            {"pl": "polskiego",    "en": "of-Polish"},
+            {"pl": "z",            "en": "with"},
+            {"pl": "aplikacją,",   "en": "app,"},
+            {"pl": "którą",        "en": "which"},
+            {"pl": "zbudowałem.",  "en": "I-built."}
+          ]
+        },
+        {
+          "pl": "Jak widzisz, nie jest bardzo dobra.",
+          "en": "As you can tell, it's not very good.",
+          "literal": "As you-see, not is very good.",
+          "words": [
+            {"pl": "Jak",     "en": "as"},
+            {"pl": "widzisz,","en": "you-see,"},
+            {"pl": "nie",     "en": "not"},
+            {"pl": "jest",    "en": "is"},
+            {"pl": "bardzo",  "en": "very"},
+            {"pl": "dobra.",  "en": "good."}
+          ]
+        },
+        {
+          "pl": "Czy mówisz trochę po angielsku?",
+          "en": "Do you speak a little English?",
+          "literal": "Whether you-speak a-little in English?",
+          "words": [
+            {"pl": "Czy",       "en": "whether"},
+            {"pl": "mówisz",    "en": "you-speak"},
+            {"pl": "trochę",    "en": "a-little"},
+            {"pl": "po",        "en": "in"},
+            {"pl": "angielsku?","en": "English?"}
+          ]
+        },
+        {
+          "pl": "Szukam korepetytora polskiego.",
+          "en": "I'm looking for a Polish tutor.",
+          "literal": "I-look-for of-tutor of-Polish.",
+          "words": [
+            {"pl": "Szukam",       "en": "I-look-for"},
+            {"pl": "korepetytora", "en": "tutor"},
+            {"pl": "polskiego.",   "en": "Polish."}
+          ]
+        }
+      ]
+    }
+  ]
+}
