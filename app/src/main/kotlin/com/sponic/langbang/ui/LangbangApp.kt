@@ -102,8 +102,8 @@ private enum class Section(val tabLabel: String) {
     Adverbs("4. Adv"),
     Nouns("5. Nouns"),
     Phrases("6. Phrases"),
-    Numbers("7. Num"),
-    Quizzes("8. Quiz"),
+    Quizzes("7. Quiz"),
+    Numbers("8. Num"),
     Settings("Settings")
 }
 
@@ -114,8 +114,8 @@ private val TabSections = listOf(
     Section.Adverbs,
     Section.Nouns,
     Section.Phrases,
-    Section.Numbers,
-    Section.Quizzes
+    Section.Quizzes,
+    Section.Numbers
 )
 
 @Composable

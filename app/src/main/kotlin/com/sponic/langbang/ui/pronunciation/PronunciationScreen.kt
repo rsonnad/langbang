@@ -241,7 +241,7 @@ private fun PhonemeDetail(
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    "Flashcard quiz",
+                    "?? Flashcard",
                     color = Color.White,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold

@@ -907,7 +907,7 @@ private fun ExamplesControls(state: VerbsTabState, allVerbs: List<VerbEntry>) {
             shape = RoundedCornerShape(16.dp),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
         ) {
-            Text("Conj quiz", fontSize = 12.sp, color = Color.White)
+            Text("?? Conj", fontSize = 12.sp, color = Color.White)
         }
         // Recollection drill — speak PL, hide everything, reveal. Tests "which form is this?"
         Button(
@@ -918,7 +918,7 @@ private fun ExamplesControls(state: VerbsTabState, allVerbs: List<VerbEntry>) {
             shape = RoundedCornerShape(16.dp),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
         ) {
-            Text("Recall quiz", fontSize = 12.sp, color = Color.White)
+            Text("?? Recall", fontSize = 12.sp, color = Color.White)
         }
     }
     val hasSentences = state.checkedLemmas.isNotEmpty() || state.sentences.isNotEmpty()
@@ -938,7 +938,7 @@ private fun ExamplesControls(state: VerbsTabState, allVerbs: List<VerbEntry>) {
                 modifier = Modifier.size(16.dp)
             )
             Spacer(Modifier.width(4.dp))
-            Text("Sent. quiz", fontSize = 12.sp, color = Color.White)
+            Text("?? Sent.", fontSize = 12.sp, color = Color.White)
         }
     }
 

@@ -452,7 +452,7 @@ private fun ExamplesControls(state: NounsScreenState) {
                     shape = RoundedCornerShape(16.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
                 ) {
-                    Text("Recall quiz", fontSize = 12.sp, color = Color.White)
+                    Text("?? Recall", fontSize = 12.sp, color = Color.White)
                 }
             }
             if (state.sentences.isNotEmpty() && !state.playing) {
@@ -465,7 +465,7 @@ private fun ExamplesControls(state: NounsScreenState) {
                     Icon(Icons.Default.PlayArrow, contentDescription = "Sentence quiz",
                         tint = Color.White, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Sent. quiz", fontSize = 12.sp, color = Color.White)
+                    Text("?? Sent.", fontSize = 12.sp, color = Color.White)
                 }
             }
             val isRegenerate = state.sentences.isNotEmpty()

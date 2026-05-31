@@ -422,7 +422,7 @@ private fun AdvExamplesControls(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(Modifier.width(4.dp))
-                    Text("Sent. quiz", fontSize = 12.sp, color = Color.White)
+                    Text("?? Sent.", fontSize = 12.sp, color = Color.White)
                 }
             }
             if (state.busy) {

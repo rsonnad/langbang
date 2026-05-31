@@ -310,7 +310,7 @@ private fun PhraseDetail(app: LangbangApplication, group: PhraseGroup) {
                     shape = RoundedCornerShape(20.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp)
                 ) {
-                    Text("Quiz", color = Color.White, fontSize = 13.sp,
+                    Text("?? Phrase", color = Color.White, fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold)
                 }
             }
