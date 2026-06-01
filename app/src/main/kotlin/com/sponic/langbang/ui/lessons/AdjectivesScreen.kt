@@ -19,7 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -62,14 +62,22 @@ import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.PlaybackTransport
+import com.sponic.langbang.domain.ensureCachedAudio
+import com.sponic.langbang.domain.playAudioAndAwait
 import com.sponic.langbang.integrations.AzureTtsClient
+import com.sponic.langbang.ui.common.CompactLessonListCard
+import com.sponic.langbang.ui.common.CompactLessonListDefaults
+import com.sponic.langbang.ui.common.DelayedEnglishTranslation
+import com.sponic.langbang.ui.common.GrammarVisuals
+import com.sponic.langbang.ui.common.SelectionNavButtons
+import com.sponic.langbang.ui.common.VariablePolishText
+import com.sponic.langbang.ui.common.variableEndForPolishForm
+import com.sponic.langbang.ui.common.variableStartForPolishForm
 import android.media.MediaMetadataRetriever
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
 
 private val GENDER_KEYS = listOf("m", "f", "n", "mp", "other")
 private fun genderLabel(k: String): String = when (k) {
@@ -176,9 +184,11 @@ internal class AdjectivesScreenState(
     /**
      * Recall drill across the selected adjective's full paradigm (nom + acc × 5 genders).
      * Each entry is a synthetic SentenceExample where pl = the bare adjective form and
-     * en = the case+gender label. Quiz semantics: speak EN cue → hide PL → 2s → reveal
-     * → 2s → speak PL. The learner has to remember the inflected form from the cue.
-     * Built items missed during reveal can be re-listened via the standard rewind button.
+     * en = the literal English gloss. Gender/case context lives on TokenPair metadata so
+     * Now Voicing can render it as small secondary text instead of speaking it as English.
+     * Quiz semantics: speak EN cue → hide PL → 2s → reveal → 2s → speak PL. The learner
+     * has to remember the inflected form from the cue. Built items missed during reveal
+     * can be re-listened via the standard rewind button.
      */
     fun recallQuiz() {
         if (playJob?.isActive == true) { stop(); return }
@@ -186,12 +196,12 @@ internal class AdjectivesScreenState(
         val items = buildList {
             adj.nom.forEach { (g, form) ->
                 if (form.isNotBlank()) {
-                    add(makeRecallItem(adj.en, "nominative", g, form))
+                    add(makeRecallItem(adj.en, "nominative", g, form, adj.lemma))
                 }
             }
             adj.acc.forEach { (g, form) ->
                 if (form.isNotBlank()) {
-                    add(makeRecallItem(adj.en, "accusative", g, form))
+                    add(makeRecallItem(adj.en, "accusative", g, form, adj.lemma))
                 }
             }
         }
@@ -203,27 +213,22 @@ internal class AdjectivesScreenState(
     }
 
     private fun makeRecallItem(
-        adjEn: String, case: String, gender: String, form: String
+        adjEn: String, case: String, gender: String, form: String, baseForm: String
     ): SentenceExample {
-        val genderLabel = when (gender) {
-            "m" -> "masculine"
-            "f" -> "feminine"
-            "n" -> "neuter"
-            "mp" -> "men or mixed plural"
-            "other" -> "other plural"
-            else -> gender
-        }
-        val cue = "$adjEn — $genderLabel — $case"
         return SentenceExample(
             pl = form,
-            en = cue,
-            literal = null,
+            en = adjEn,
+            literal = adjEn,
             words = listOf(
                 com.sponic.langbang.data.model.TokenPair(
                     pl = form,
                     en = adjEn,
                     gender = gender,
-                    caseKey = case
+                    caseKey = case,
+                    caseLabel = case,
+                    variableStart = variableStartForPolishForm(baseForm, form),
+                    variableEnd = variableEndForPolishForm(baseForm, form),
+                    variableKind = "case"
                 )
             )
         )
@@ -265,16 +270,19 @@ internal class AdjectivesScreenState(
                         pub("pl", plHidden = false)
                         playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
                     } else if (app.practicePrefs.slowFirst()) {
+                        val slowPlVoice = app.audioPrefs.slowPlVoice()
+                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
                         pub("en")
                         playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
                         pub("pl-slow")
-                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL,
-                            app.audioPrefs.slowPlVoice())
+                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
                         pub("en")
                         playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
                         pub("pl")
                         playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
                     } else {
+                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
                         pub("en")
                         playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
                         pub("pl")
@@ -378,7 +386,14 @@ fun AdjectivesScreen(
                 )
             }
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                state.selected?.let { AdjectiveParadigm(app, it, state) }
+                state.selected?.let {
+                    AdjectiveParadigm(
+                        app = app,
+                        adj = it,
+                        state = state,
+                        adjectives = lesson.adjectives
+                    )
+                }
             }
         }
     }
@@ -549,32 +564,29 @@ private fun AdjectiveList(
 ) {
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        contentPadding = CompactLessonListDefaults.ContentPadding,
+        verticalArrangement = Arrangement.spacedBy(CompactLessonListDefaults.ItemGap)
     ) {
-        items(adjectives, key = { "a-${it.lemma}" }) { a ->
+        itemsIndexed(adjectives, key = { _, a -> "a-${a.lemma}" }) { index, a ->
             val isSel = a == selected
-            Card(
+            CompactLessonListCard(
+                selected = isSel,
                 onClick = { onSelect(a) },
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isSel) MaterialTheme.colorScheme.primary
-                    else Color.White
-                ),
-                modifier = Modifier.fillMaxWidth()
+                alternate = index % 2 == 1
             ) {
                 Row(
-                    Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         a.lemma,
                         color = if (isSel) Color.White else LbColors.Primary,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Bold,
                         fontSize = 16.sp
                     )
                     Spacer(Modifier.width(10.dp))
-                    Text(
-                        a.en,
+                    DelayedEnglishTranslation(
+                        text = a.en,
                         color = if (isSel) Color.White.copy(alpha = 0.85f)
                         else LbColors.TextSecondary,
                         fontSize = 12.sp,
@@ -590,7 +602,8 @@ private fun AdjectiveList(
 private fun AdjectiveParadigm(
     app: LangbangApplication,
     adj: AdjectiveEntry,
-    state: AdjectivesScreenState
+    state: AdjectivesScreenState,
+    adjectives: List<AdjectiveEntry>
 ) {
     Column(
         modifier = Modifier
@@ -599,12 +612,23 @@ private fun AdjectiveParadigm(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Row(verticalAlignment = Alignment.Bottom) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom
+        ) {
             Text(adj.lemma, fontSize = 26.sp, fontWeight = FontWeight.Bold,
                 color = LbColors.Primary)
             Spacer(Modifier.width(12.dp))
-            Text(adj.en, fontSize = 14.sp, color = LbColors.TextSecondary,
+            DelayedEnglishTranslation(text = adj.en, fontSize = 14.sp, color = LbColors.TextSecondary,
                 modifier = Modifier.padding(bottom = 4.dp))
+            Spacer(Modifier.weight(1f))
+            SelectionNavButtons(
+                items = adjectives,
+                selected = adj,
+                onSelect = { state.select(it) },
+                previousContentDescription = "Previous adjective",
+                nextContentDescription = "Next adjective"
+            )
         }
 
         com.sponic.langbang.ui.common.CaseHeader(
@@ -612,7 +636,7 @@ private fun AdjectiveParadigm(
         )
         GENDER_KEYS.forEach { k ->
             val form = adj.nom[k].orEmpty()
-            FormRow(label = genderLabel(k), form = form) { playForm(app, form) }
+            FormRow(label = genderLabel(k), form = form, baseForm = adj.lemma, gender = k) { playForm(app, form) }
         }
 
         Spacer(Modifier.height(4.dp))
@@ -623,7 +647,7 @@ private fun AdjectiveParadigm(
         )
         GENDER_KEYS.forEach { k ->
             val form = adj.acc[k].orEmpty()
-            FormRow(label = genderLabel(k), form = form) { playForm(app, form) }
+            FormRow(label = genderLabel(k), form = form, baseForm = adj.lemma, gender = k) { playForm(app, form) }
         }
 
         Spacer(Modifier.height(8.dp))
@@ -632,7 +656,13 @@ private fun AdjectiveParadigm(
 }
 
 @Composable
-private fun FormRow(label: String, form: String, onPlay: () -> Unit) {
+private fun FormRow(
+    label: String,
+    form: String,
+    baseForm: String,
+    gender: String,
+    onPlay: () -> Unit
+) {
     Card(
         onClick = onPlay,
         colors = CardDefaults.cardColors(containerColor = LbColors.SurfaceTint),
@@ -648,8 +678,16 @@ private fun FormRow(label: String, form: String, onPlay: () -> Unit) {
                 color = LbColors.TextMuted,
                 modifier = Modifier.width(170.dp)
             )
-            Text(form, fontSize = 18.sp, fontWeight = FontWeight.Medium,
-                color = LbColors.Primary, modifier = Modifier.weight(1f))
+            VariablePolishText(
+                text = form,
+                fixedColor = LbColors.TextPrimary,
+                variableColor = GrammarVisuals.Gender.color(gender),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                baseText = baseForm,
+                fallbackWholeWord = true,
+                modifier = Modifier.weight(1f)
+            )
             Icon(Icons.Default.PlayArrow, contentDescription = "Play",
                 tint = LbColors.Primary, modifier = Modifier.size(20.dp))
         }
@@ -678,7 +716,7 @@ private fun SentencesSection(app: LangbangApplication, state: AdjectivesScreenSt
                 SentenceRow(
                     sentence = s,
                     highlighted = i == state.playingIndex,
-                    onPlay = { playForm(app, s.pl) }
+                    onPlay = { playSentence(app, s) }
                 )
             }
         }
@@ -707,15 +745,15 @@ private fun SentenceRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text(
-                    sentence.en,
+                DelayedEnglishTranslation(
+                    text = sentence.en,
                     fontSize = 12.sp,
                     color = LbColors.TextMuted
                 )
                 com.sponic.langbang.ui.common.WordAlignedPolish(
                     sentence = sentence,
                     plFontSize = 16.sp,
-                    plFontWeight = FontWeight.Medium,
+                    plFontWeight = FontWeight.Bold,
                     glossFontSize = 10.sp
                 )
             }
@@ -733,18 +771,7 @@ private suspend fun playAndAwait(
     locale: String,
     voice: String
 ) {
-    if (text.isEmpty()) return
-    val file = app.audioCache.fileFor(locale, voice, text)
-    if (!app.audioCache.has(file)) {
-        app.tts.synthesize(text, voice, locale, file)
-    }
-    if (!app.audioCache.has(file)) return
-    suspendCancellableCoroutine<Unit> { cont ->
-        app.audioPlayer.play(file) {
-            if (cont.isActive) cont.resume(Unit)
-        }
-        cont.invokeOnCancellation { app.audioPlayer.stop() }
-    }
+    app.playAudioAndAwait(text, locale, voice)
 }
 
 private fun mp3DurationMs(file: java.io.File): Long {
@@ -764,4 +791,17 @@ private fun playForm(app: LangbangApplication, form: String) {
         AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, form
     )
     app.audioPlayer.play(f)
+}
+
+private fun playSentence(app: LangbangApplication, sentence: SentenceExample) {
+    NowVoicingBus.publish(
+        NowVoicing(
+            en = sentence.en,
+            pl = sentence.pl,
+            literal = sentence.literal,
+            lang = "pl",
+            words = sentence.words
+        )
+    )
+    playForm(app, sentence.pl)
 }

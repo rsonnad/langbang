@@ -19,7 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -62,14 +62,18 @@ import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.PrefetchProgress
+import com.sponic.langbang.domain.ensureCachedAudio
+import com.sponic.langbang.domain.playAudioAndAwait
 import com.sponic.langbang.integrations.AzureTtsClient
+import com.sponic.langbang.ui.common.CompactLessonListCard
+import com.sponic.langbang.ui.common.CompactLessonListDefaults
+import com.sponic.langbang.ui.common.DelayedEnglishTranslation
+import com.sponic.langbang.ui.common.SelectionNavButtons
 import android.media.MediaMetadataRetriever
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
 
 /**
  * Per-adverb state hoisted to screen root so the play/regenerate controls live in the
@@ -195,12 +199,16 @@ internal class AdverbsScreenState(
                         playAndAwaitAdv(app, s.pl, AzureTtsClient.LOCALE_PL,
                             AzureTtsClient.PL_PL_F)
                     } else if (app.practicePrefs.slowFirst()) {
+                        val slowPlVoice = app.audioPrefs.slowPlVoice()
+                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL,
+                            AzureTtsClient.PL_PL_F)
                         pub("en")
                         playAndAwaitAdv(app, s.en, AzureTtsClient.LOCALE_EN,
                             AzureTtsClient.EN_US_F)
                         pub("pl-slow")
                         playAndAwaitAdv(app, s.pl, AzureTtsClient.LOCALE_PL,
-                            app.audioPrefs.slowPlVoice())
+                            slowPlVoice)
                         pub("en")
                         playAndAwaitAdv(app, s.en, AzureTtsClient.LOCALE_EN,
                             AzureTtsClient.EN_US_F)
@@ -208,6 +216,8 @@ internal class AdverbsScreenState(
                         playAndAwaitAdv(app, s.pl, AzureTtsClient.LOCALE_PL,
                             AzureTtsClient.PL_PL_F)
                     } else {
+                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL,
+                            AzureTtsClient.PL_PL_F)
                         pub("en")
                         playAndAwaitAdv(app, s.en, AzureTtsClient.LOCALE_EN,
                             AzureTtsClient.EN_US_F)
@@ -312,7 +322,14 @@ fun AdverbsScreen(
                 )
             }
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                state.selected?.let { AdverbSentences(app, it, state) }
+                state.selected?.let {
+                    AdverbSentences(
+                        app = app,
+                        adv = it,
+                        state = state,
+                        adverbs = lesson.adverbs
+                    )
+                }
             }
         }
     }
@@ -469,32 +486,29 @@ private fun AdverbList(
 ) {
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        contentPadding = CompactLessonListDefaults.ContentPadding,
+        verticalArrangement = Arrangement.spacedBy(CompactLessonListDefaults.ItemGap)
     ) {
-        items(adverbs, key = { "adv-${it.lemma}" }) { a ->
+        itemsIndexed(adverbs, key = { _, a -> "adv-${a.lemma}" }) { index, a ->
             val isSel = a == selected
-            Card(
+            CompactLessonListCard(
+                selected = isSel,
                 onClick = { onSelect(a) },
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isSel) MaterialTheme.colorScheme.primary
-                    else Color.White
-                ),
-                modifier = Modifier.fillMaxWidth()
+                alternate = index % 2 == 1
             ) {
                 Row(
-                    Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         a.lemma,
                         color = if (isSel) Color.White else LbColors.Primary,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Bold,
                         fontSize = 16.sp
                     )
                     Spacer(Modifier.width(10.dp))
-                    Text(
-                        a.en,
+                    DelayedEnglishTranslation(
+                        text = a.en,
                         color = if (isSel) Color.White.copy(alpha = 0.85f)
                         else LbColors.TextSecondary,
                         fontSize = 12.sp,
@@ -510,7 +524,8 @@ private fun AdverbList(
 private fun AdverbSentences(
     app: LangbangApplication,
     adv: AdverbEntry,
-    state: AdverbsScreenState
+    state: AdverbsScreenState,
+    adverbs: List<AdverbEntry>
 ) {
     Column(
         modifier = Modifier
@@ -519,12 +534,23 @@ private fun AdverbSentences(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Row(verticalAlignment = Alignment.Bottom) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom
+        ) {
             Text(adv.lemma, fontSize = 26.sp, fontWeight = FontWeight.Bold,
                 color = LbColors.Primary)
             Spacer(Modifier.width(12.dp))
-            Text(adv.en, fontSize = 14.sp, color = LbColors.TextSecondary,
+            DelayedEnglishTranslation(text = adv.en, fontSize = 14.sp, color = LbColors.TextSecondary,
                 modifier = Modifier.padding(bottom = 4.dp))
+            Spacer(Modifier.weight(1f))
+            SelectionNavButtons(
+                items = adverbs,
+                selected = adv,
+                onSelect = { state.select(it) },
+                previousContentDescription = "Previous adverb",
+                nextContentDescription = "Next adverb"
+            )
         }
         Spacer(Modifier.height(8.dp))
         Text(
@@ -545,7 +571,7 @@ private fun AdverbSentences(
                 AdvSentenceRow(
                     sentence = s,
                     highlighted = i == state.playingIndex,
-                    onPlay = { playFormAdv(app, s.pl) }
+                    onPlay = { playSentenceAdv(app, s) }
                 )
             }
         }
@@ -573,15 +599,15 @@ private fun AdvSentenceRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text(
-                    sentence.en,
+                DelayedEnglishTranslation(
+                    text = sentence.en,
                     fontSize = 12.sp,
                     color = LbColors.TextMuted
                 )
                 com.sponic.langbang.ui.common.WordAlignedPolish(
                     sentence = sentence,
                     plFontSize = 16.sp,
-                    plFontWeight = FontWeight.Medium,
+                    plFontWeight = FontWeight.Bold,
                     glossFontSize = 10.sp
                 )
             }
@@ -599,18 +625,7 @@ private suspend fun playAndAwaitAdv(
     locale: String,
     voice: String
 ) {
-    if (text.isEmpty()) return
-    val file = app.audioCache.fileFor(locale, voice, text)
-    if (!app.audioCache.has(file)) {
-        app.tts.synthesize(text, voice, locale, file)
-    }
-    if (!app.audioCache.has(file)) return
-    suspendCancellableCoroutine<Unit> { cont ->
-        app.audioPlayer.play(file) {
-            if (cont.isActive) cont.resume(Unit)
-        }
-        cont.invokeOnCancellation { app.audioPlayer.stop() }
-    }
+    app.playAudioAndAwait(text, locale, voice)
 }
 
 private fun mp3DurationMsAdv(file: java.io.File): Long {
@@ -630,4 +645,17 @@ private fun playFormAdv(app: LangbangApplication, form: String) {
         AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, form
     )
     app.audioPlayer.play(f)
+}
+
+private fun playSentenceAdv(app: LangbangApplication, sentence: SentenceExample) {
+    NowVoicingBus.publish(
+        NowVoicing(
+            en = sentence.en,
+            pl = sentence.pl,
+            literal = sentence.literal,
+            lang = "pl",
+            words = sentence.words
+        )
+    )
+    playFormAdv(app, sentence.pl)
 }

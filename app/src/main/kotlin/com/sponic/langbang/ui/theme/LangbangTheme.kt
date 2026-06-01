@@ -1,50 +1,84 @@
 package com.sponic.langbang.ui.theme
 
-import com.sponic.langbang.ui.theme.LbColors
-
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sponic.langbang.R
 
 object LbColors {
-    val Primary = Color(0xFF155E63)
-    val PrimaryDeep = Color(0xFF0B3438)
-    val PrimarySoft = Color(0xFFE3F1F0)
+    val Primary = Color(0xFF2F6FE6)
+    val PrimaryDeep = Color(0xFF102230)
+    val PrimarySoft = Color(0xFFE9F1FF)
     val OnPrimary = Color.White
 
-    val Accent = Color(0xFFE05E46)
-    val AccentSoft = Color(0xFFFFE7DF)
-    val Gold = Color(0xFFD99A2B)
-    val GoldSoft = Color(0xFFFFF1D6)
+    val Audio = Color(0xFF0FAE89)
+    val AudioDark = Color(0xFF0C9676)
+    val AudioBright = Color(0xFF27D3A8)
+    val Stop = Color(0xFFE0533A)
+    val Star = Color(0xFFF2B13C)
+    val Chrome = Color(0xFF102230)
+    val Bar = Color(0xFFE0E6ED)
+    val OnDark = Color(0xFFEAF0F3)
+    val OnDark2 = Color(0xFF9FB3BF)
+    val DarkScope = Color(0xFF4F86F7)
 
-    val Canvas = Color(0xFFF4F7F2)
+    val Accent = Audio
+    val AccentSoft = Color(0xFFE4F8F3)
+    val Gold = Star
+    val GoldSoft = Color(0xFFFFF4DE)
+
+    val Canvas = Color(0xFFEEF1F5)
     val Surface = Color(0xFFFFFFFF)
-    val SurfaceRaised = Color(0xFFFAFCF8)
-    val SurfaceTint = Color(0xFFEAF1ED)
-    val Sheet = Color(0xFFFBFCF7)
-    val Scrim = Color(0xCC0B3438)
+    val SurfaceRaised = Color(0xFFFFFFFF)
+    val SurfaceTint = Color(0xFFF7F9FB)
+    val Sheet = Color(0xFFFFFFFF)
+    val Scrim = Color(0xCC102230)
+    val Line = Color(0xFFE1E7EB)
 
-    val TextPrimary = Color(0xFF172322)
-    val TextSecondary = Color(0xFF586765)
-    val TextMuted = Color(0xFF7A8784)
-    val Label = Color(0xFF5C6F2C)
+    val TextPrimary = Color(0xFF16222C)
+    val TextSecondary = Color(0xFF586772)
+    val TextMuted = Color(0xFF8B99A3)
+    val Label = TextMuted
 
-    val ChipIdle = Color(0xFFF0F4EE)
-    val ChipBorder = Color(0xFFC8D4CF)
-    val ChipRing = Color(0xFF8EA19A)
+    val ChipIdle = Color(0xFFFFFFFF)
+    val ChipBorder = Line
+    val ChipRing = Color(0xFFC8D4DC)
 
-    val Success = Color(0xFF1F7A4D)
-    val SuccessSoft = Color(0xFFE4F4EA)
-    val Warning = Color(0xFFA86117)
-    val WarningSoft = Color(0xFFFFF1D6)
-    val Danger = Color(0xFFB53B2D)
-    val DangerSoft = Color(0xFFFFE7DF)
+    val Success = AudioDark
+    val SuccessSoft = Color(0xFFE4F8F3)
+    val Warning = Color(0xFFA86F00)
+    val WarningSoft = Color(0xFFFFF4DE)
+    val Danger = Stop
+    val DangerSoft = Color(0xFFFFE8E3)
+}
+
+object LbShapes {
+    val Card = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+    val Button = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+    val Inset = androidx.compose.foundation.shape.RoundedCornerShape(11.dp)
+    val Pill = androidx.compose.foundation.shape.RoundedCornerShape(999.dp)
+}
+
+object LbType {
+    val Ui = FontFamily(
+        Font(R.font.hanken_grotesk_variable, FontWeight.Normal),
+        Font(R.font.hanken_grotesk_variable, FontWeight.Medium),
+        Font(R.font.hanken_grotesk_variable, FontWeight.SemiBold),
+        Font(R.font.hanken_grotesk_variable, FontWeight.Bold),
+        Font(R.font.hanken_grotesk_variable, FontWeight.ExtraBold)
+    )
+    val Mono = FontFamily(
+        Font(R.font.jetbrains_mono_variable, FontWeight.Medium),
+        Font(R.font.jetbrains_mono_variable, FontWeight.SemiBold)
+    )
 }
 
 private val langbangScheme = lightColorScheme(
@@ -67,34 +101,36 @@ private val langbangScheme = lightColorScheme(
 
 private val langbangTypography = Typography(
     bodyLarge = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontSize = 16.sp,
-        lineHeight = 22.sp,
+        fontFamily = LbType.Ui,
+        fontSize = 15.sp,
+        lineHeight = 21.sp,
+        fontWeight = FontWeight.Medium,
         color = LbColors.TextPrimary
     ),
     bodyMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = LbType.Ui,
         fontSize = 14.sp,
         lineHeight = 20.sp,
+        fontWeight = FontWeight.Medium,
         color = LbColors.TextPrimary
     ),
     labelLarge = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontSize = 13.sp,
-        lineHeight = 16.sp,
-        fontWeight = FontWeight.SemiBold
+        fontFamily = LbType.Ui,
+        fontSize = 15.sp,
+        lineHeight = 18.sp,
+        fontWeight = FontWeight.Bold
     ),
     titleMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = LbType.Ui,
         fontSize = 18.sp,
         lineHeight = 23.sp,
-        fontWeight = FontWeight.SemiBold
+        fontWeight = FontWeight.Bold
     ),
     headlineSmall = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontSize = 26.sp,
+        fontFamily = LbType.Ui,
+        fontSize = 25.sp,
         lineHeight = 31.sp,
-        fontWeight = FontWeight.Bold
+        fontWeight = FontWeight.ExtraBold
     )
 )
 

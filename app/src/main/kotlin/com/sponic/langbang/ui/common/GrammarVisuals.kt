@@ -2,18 +2,19 @@ package com.sponic.langbang.ui.common
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.sponic.langbang.data.model.TokenPair
 
 object GrammarVisuals {
     object Gender {
-        val Masculine = Color(0xFF1565C0)
-        val Feminine = Color(0xFFC2185B)
-        val Neuter = Color(0xFF4B5563)
-        val Fallback = Color(0xFF155E63)
+        val Masculine = Color(0xFF2F6FE6)
+        val Feminine = Color(0xFFB8366E)
+        val Neuter = Color(0xFF0C9676)
+        val Fallback = Color(0xFF2F6FE6)
 
         fun color(gender: String): Color = when (gender.lowercase()) {
-            "m", "masculine", "masc." -> Masculine
+            "m", "mp", "masculine", "masc.", "virile" -> Masculine
             "f", "feminine", "fem." -> Feminine
-            "n", "neuter", "neut." -> Neuter
+            "n", "other", "neuter", "neut.", "non-virile" -> Neuter
             else -> Fallback
         }
 
@@ -25,45 +26,27 @@ object GrammarVisuals {
         }
     }
 
-    object Case {
-        val Nominative = Color(0xFF0B7A3B)
-        val Accusative = Color(0xFFC75A00)
-        val Genitive = Color(0xFF6D28D9)
-        val Fallback = Color(0xFF8EA19A)
+    object Variable {
+        val CaseOrGender = Color(0xFF2F6FE6)
+        val Conjugation = Color(0xFF0FAE89)
 
-        fun color(caseKey: String): Color = when (caseKey.lowercase()) {
-            "nom", "nominative" -> Nominative
-            "acc", "accusative" -> Accusative
-            "gen", "genitive" -> Genitive
-            else -> Fallback
+        fun color(token: TokenPair): Color? = when {
+            token.gender != null -> Gender.color(token.gender)
+            token.variableKind.equals("conjugation", ignoreCase = true) -> Conjugation
+            token.variableStart != null || token.caseKey != null -> CaseOrGender
+            else -> null
         }
     }
 
-    object NounForm {
-        val OutlineBacking = Color(0xFF111111)
-
-        const val NowVoicingOutlineWidth = 14f
-        const val NowVoicingBackingExtraWidth = 3f
-        val NowVoicingGlyphGap = 10.dp
-
-        const val RowOutlineWidth = 5f
-        const val RowBackingExtraWidth = 2f
-        val RowGlyphGap = 2.dp
-
-        const val LegendOutlineWidth = 5f
-        const val LegendBackingExtraWidth = 1.5f
-        val LegendGlyphGap = 2.dp
-    }
-
     object NowVoicingPanel {
-        val Background = Color(0xFFF2F4F3)
-        val Border = Color(0xFF111111)
-        val BorderWidth = 2.dp
-        val FilterLabel = Color(0xFF6B4E00)
+        val Background = Color(0xFF102230)
+        val Border = Color(0xFF21394A)
+        val BorderWidth = 1.dp
+        val FilterLabel = Color(0xFF9FB3BF)
     }
 
     object Selector {
-        val CaseBand = Color(0xFFFFF1D6)
-        val NumberBand = Color(0xFFE3F1F0)
+        val CaseBand = Color(0xFFE9F1FF)
+        val NumberBand = Color(0xFFE4F8F3)
     }
 }

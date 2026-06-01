@@ -6,8 +6,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,9 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +35,10 @@ import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.data.model.PhraseEntry
 import com.sponic.langbang.domain.PrefetchProgress
+import com.sponic.langbang.ui.common.CompactLessonListCard
+import com.sponic.langbang.ui.common.CompactLessonListDefaults
+import com.sponic.langbang.ui.common.DelayedEnglishTranslation
+import com.sponic.langbang.ui.common.SelectionNavButtons
 import com.sponic.langbang.ui.phrase.PhraseDetail
 import com.sponic.langbang.ui.word.WordSheet
 
@@ -111,6 +113,17 @@ private fun PhrasesPane(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     L2TabChips(tab, onTabChange)
+                    Spacer(Modifier.weight(1f))
+                    SelectionNavButtons(
+                        items = lesson.phrases,
+                        selected = selected,
+                        onSelect = {
+                            selected = it
+                            wordSheet = null
+                        },
+                        previousContentDescription = "Previous phrase",
+                        nextContentDescription = "Next phrase"
+                    )
                 }
             }
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -144,30 +157,26 @@ private fun PhraseList(
 ) {
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        contentPadding = CompactLessonListDefaults.ContentPadding,
+        verticalArrangement = Arrangement.spacedBy(CompactLessonListDefaults.ItemGap)
     ) {
-        items(phrases) { p ->
+        itemsIndexed(phrases) { index, p ->
             val isSelected = p == selected
-            Card(
+            CompactLessonListCard(
+                selected = isSelected,
                 onClick = { onSelect(p) },
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isSelected) MaterialTheme.colorScheme.primary
-                    else Color.White
-                ),
-                modifier = Modifier.fillMaxWidth()
+                alternate = index % 2 == 1,
+                contentPadding = CompactLessonListDefaults.MultiLineItemPadding
             ) {
-                // Tight vertical padding — the two short lines (en + pl) don't need the
-                // old 12dp box; cards were eating far more height than their text.
-                Column(Modifier.padding(horizontal = 12.dp, vertical = 5.dp)) {
-                    Text(
-                        p.en,
-                        color = if (isSelected) Color.White else Color.Black,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 15.sp
-                    )
+                Column {
                     Text(
                         p.pl,
+                        color = if (isSelected) Color.White else Color.Black,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
+                    DelayedEnglishTranslation(
+                        text = p.en,
                         color = if (isSelected) Color.White.copy(alpha = 0.85f)
                         else LbColors.TextSecondary,
                         fontSize = 14.sp

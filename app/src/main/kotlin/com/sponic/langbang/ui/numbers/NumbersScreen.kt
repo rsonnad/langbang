@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.integrations.AzureTtsClient
+import com.sponic.langbang.ui.common.CompactLessonListDefaults
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -151,13 +152,18 @@ fun NumbersScreen(app: LangbangApplication) {
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            items(NUMBERS) { n ->
+            itemsIndexed(NUMBERS) { index, n ->
                 val isPlaying = playingPl == n.pl
+                val rowColor = when {
+                    isPlaying -> LbColors.GoldSoft
+                    index % 2 == 1 -> CompactLessonListDefaults.AlternateItemColor
+                    else -> LbColors.Sheet
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(8.dp))
-                        .background(if (isPlaying) LbColors.GoldSoft else LbColors.Sheet)
+                        .background(rowColor)
                         .clickable {
                             // Single tap plays just this number (cancels any queue).
                             job?.cancel()

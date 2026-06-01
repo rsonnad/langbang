@@ -13,14 +13,14 @@ import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.PlaybackTransport
+import com.sponic.langbang.domain.ensureCachedAudio
 import com.sponic.langbang.domain.englishConjugate
+import com.sponic.langbang.domain.playAudioAndAwait
 import com.sponic.langbang.integrations.AzureTtsClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
 
 /**
  * Drives the top-level "Play random" button. Reads a [RandomConfig] to decide which
@@ -203,11 +203,17 @@ internal class RandomPlayerState(
                 val s = phrases[i]
                 position = i + 1
                 val pos = "${i + 1}/${phrases.size}"
+                val slowFirst = app.practicePrefs.slowFirst()
+                val slowPlVoice = app.audioPrefs.slowPlVoice()
+                if (slowFirst) {
+                    app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                }
+                app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
                 pub(s, "en", pos)
                 playAndAwait(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                if (app.practicePrefs.slowFirst()) {
+                if (slowFirst) {
                     pub(s, "pl-slow", pos)
-                    playAndAwait(s.pl, AzureTtsClient.LOCALE_PL, app.audioPrefs.slowPlVoice())
+                    playAndAwait(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
                     pub(s, "en", pos)
                     playAndAwait(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
                 }
@@ -233,16 +239,7 @@ internal class RandomPlayerState(
     }
 
     private suspend fun playAndAwait(text: String, locale: String, voice: String) {
-        if (text.isEmpty()) return
-        val file = app.audioCache.fileFor(locale, voice, text)
-        if (!app.audioCache.has(file)) {
-            app.tts.synthesize(text, voice, locale, file)
-        }
-        if (!app.audioCache.has(file)) return
-        suspendCancellableCoroutine<Unit> { cont ->
-            app.audioPlayer.play(file) { if (cont.isActive) cont.resume(Unit) }
-            cont.invokeOnCancellation { app.audioPlayer.stop() }
-        }
+        app.playAudioAndAwait(text, locale, voice)
     }
 
     private fun collectPhrases(config: RandomConfig): List<SentenceExample> {

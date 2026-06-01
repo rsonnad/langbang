@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -47,8 +47,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
@@ -58,6 +60,9 @@ import com.sponic.langbang.data.model.TokenPair
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.integrations.AzureTtsClient
+import com.sponic.langbang.ui.common.CompactLessonListCard
+import com.sponic.langbang.ui.common.CompactLessonListDefaults
+import com.sponic.langbang.ui.common.SelectionNavButtons
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import kotlin.coroutines.resume
@@ -87,7 +92,9 @@ fun PronunciationScreen(app: LangbangApplication) {
                     PhonemeDetail(
                         app = app,
                         phoneme = ph,
+                        phonemes = data.phonemes,
                         online = online,
+                        onSelectPhoneme = { selected = it },
                         onStartQuiz = { quizOpen = true }
                     )
                 }
@@ -115,50 +122,53 @@ private fun PhonemeList(
     // all"), so the list runs flush to the top and shows more rows.
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        contentPadding = CompactLessonListDefaults.ContentPadding,
+        verticalArrangement = Arrangement.spacedBy(CompactLessonListDefaults.ItemGap)
     ) {
-        items(phonemes) { ph ->
+        itemsIndexed(phonemes) { index, ph ->
             val isSelected = ph == selected
-            Card(
+            CompactLessonListCard(
+                selected = isSelected,
                 onClick = { onSelect(ph) },
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isSelected) MaterialTheme.colorScheme.primary
-                    else Color.White
-                ),
-                modifier = Modifier.fillMaxWidth()
+                alternate = index % 2 == 1,
+                contentPadding = CompactLessonListDefaults.MultiLineItemPadding
             ) {
-                // Letter + IPA on the first line (top-left justified); the english
-                // approximation wraps on its own line UNDERNEATH, spanning the full card
-                // width. Stacking instead of a single row lets a long hint use the whole
-                // width — fewer lines, no skinny right-hand column eating horizontal space.
-                Column(
-                    Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            ph.letter,
-                            color = if (isSelected) Color.White else LbColors.Primary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            ph.ipa,
-                            color = if (isSelected) Color.White else LbColors.TextSecondary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    Text(
-                        ph.englishApproximation,
-                        color = if (isSelected) Color.White.copy(alpha = 0.85f)
-                        else LbColors.TextMuted,
-                        fontSize = 11.sp,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
+                val glyphColor = if (isSelected) Color.White else LbColors.Primary
+                val ipaColor = if (isSelected) Color.White.copy(alpha = 0.9f)
+                else LbColors.TextSecondary
+                val hintColor = if (isSelected) Color.White.copy(alpha = 0.85f)
+                else LbColors.TextMuted
+                Text(
+                    text = buildAnnotatedString {
+                        withStyle(
+                            SpanStyle(
+                                color = glyphColor,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        ) {
+                            append(ph.letter)
+                        }
+                        append("  ")
+                        withStyle(
+                            SpanStyle(
+                                color = ipaColor,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        ) {
+                            append(ph.ipa)
+                        }
+                        append("  ")
+                        withStyle(SpanStyle(color = hintColor)) {
+                            append(ph.englishApproximation)
+                        }
+                    },
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    color = hintColor,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
     }
@@ -168,7 +178,9 @@ private fun PhonemeList(
 private fun PhonemeDetail(
     app: LangbangApplication,
     phoneme: PhonemeEntry,
+    phonemes: List<PhonemeEntry>,
     online: Boolean,
+    onSelectPhoneme: (PhonemeEntry) -> Unit,
     onStartQuiz: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -206,7 +218,10 @@ private fun PhonemeDetail(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
                 phoneme.letter,
                 fontSize = 48.sp,
@@ -314,6 +329,14 @@ private fun PhonemeDetail(
                     fontWeight = FontWeight.SemiBold
                 )
             }
+            Spacer(Modifier.width(10.dp))
+            SelectionNavButtons(
+                items = phonemes,
+                selected = phoneme,
+                onSelect = onSelectPhoneme,
+                previousContentDescription = "Previous phoneme",
+                nextContentDescription = "Next phoneme"
+            )
         }
 
         Card(

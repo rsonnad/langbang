@@ -56,7 +56,7 @@ import com.sponic.langbang.data.PronounFilterStore
 import com.sponic.langbang.data.SlowStyle
 import com.sponic.langbang.domain.UsageSnapshot
 import com.sponic.langbang.ui.common.GrammarVisuals
-import com.sponic.langbang.ui.common.OutlinedPolishText
+import com.sponic.langbang.ui.common.VariablePolishText
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -152,7 +152,7 @@ private fun NounColorLegendCard() {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             SectionHeader("Noun colors")
             Text(
-                "Only Polish noun forms are colored: fill by gender, letter outline by case.",
+                "Color marks the variable ending. Full-word color means an irregular form or zero ending.",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
             )
@@ -160,17 +160,9 @@ private fun NounColorLegendCard() {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                LegendChip("masculine", "pies", textColor = GrammarVisuals.Gender.Masculine)
-                LegendChip("feminine", "kobieta", textColor = GrammarVisuals.Gender.Feminine)
-                LegendChip("neuter", "dziecko", textColor = GrammarVisuals.Gender.Neuter)
-            }
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                LegendChip("Nominative", "pies", outlineColor = GrammarVisuals.Case.Nominative)
-                LegendChip("Accusative", "psa", outlineColor = GrammarVisuals.Case.Accusative)
-                LegendChip("Genitive", "psa", outlineColor = GrammarVisuals.Case.Genitive)
+                LegendChip("masculine", "pies", baseText = "pies", textColor = GrammarVisuals.Gender.Masculine)
+                LegendChip("feminine", "kobietę", baseText = "kobieta", textColor = GrammarVisuals.Gender.Feminine)
+                LegendChip("neuter", "dziecka", baseText = "dziecko", textColor = GrammarVisuals.Gender.Neuter)
             }
         }
     }
@@ -180,8 +172,8 @@ private fun NounColorLegendCard() {
 private fun LegendChip(
     label: String,
     sample: String,
-    textColor: Color = MaterialTheme.colorScheme.primary,
-    outlineColor: Color? = null
+    baseText: String,
+    textColor: Color = MaterialTheme.colorScheme.primary
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
@@ -190,15 +182,14 @@ private fun LegendChip(
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
             modifier = Modifier.padding(end = 6.dp)
         )
-        OutlinedPolishText(
+        VariablePolishText(
             text = sample,
-            fillColor = textColor,
-            outlineColor = outlineColor,
+            fixedColor = MaterialTheme.colorScheme.onSurface,
+            variableColor = textColor,
             fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
-            outlineWidth = GrammarVisuals.NounForm.LegendOutlineWidth,
-            backingOutlineExtraWidth = GrammarVisuals.NounForm.LegendBackingExtraWidth,
-            glyphGap = GrammarVisuals.NounForm.LegendGlyphGap,
+            baseText = baseText,
+            fallbackWholeWord = true,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
         )
     }

@@ -56,8 +56,8 @@ class GeminiClient(
          *
          * v4 (2026-05-31): all four sentence prompts (verb/adj/adv/noun) now ask
          * Gemini to tag each noun/pronoun/adjective token with "gender" (m/f/n)
-         * and "caseKey" (nom/acc/gen/…) so the Now Voicing panel can color-code by
-         * gender (fill) and case (outline). All four wipe versions bumped because
+         * and "caseKey" (nom/acc/gen/…) so the Now Voicing panel can identify
+         * inflected grammar tokens. All four wipe versions bumped because
          * every prompt's `words` shape changed; the matching Edge Function + R2 v4
          * tree are regenerated in the same change.
          *
@@ -355,8 +355,20 @@ class GeminiClient(
                     ?.takeIf { it.isNotEmpty() }
                 val wcase = wo["caseKey"]?.jsonPrimitive?.content?.trim()?.lowercase()
                     ?.takeIf { it.isNotEmpty() }
+                val variableStart = wo["variableStart"]?.jsonPrimitive?.intOrNull
+                val variableEnd = wo["variableEnd"]?.jsonPrimitive?.intOrNull
+                val variableKind = wo["variableKind"]?.jsonPrimitive?.content?.trim()?.lowercase()
+                    ?.takeIf { it.isNotEmpty() }
                 if (wpl.isEmpty()) null
-                else TokenPair(wpl, wen, gender = wgender, caseKey = wcase)
+                else TokenPair(
+                    pl = wpl,
+                    en = wen,
+                    gender = wgender,
+                    caseKey = wcase,
+                    variableStart = variableStart,
+                    variableEnd = variableEnd,
+                    variableKind = variableKind
+                )
             }?.takeIf { it.isNotEmpty() }
             if (pl.isEmpty() || en.isEmpty()) null
             else SentenceExample(pl, en, literal, words)

@@ -6,8 +6,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -19,10 +17,11 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sponic.langbang.data.model.SentenceExample
+import com.sponic.langbang.data.model.TokenPair
 
 /**
  * One row in any phrase / sentence card: Polish tokens laid out in a FlowRow with
- * the matching English gloss directly underneath each Polish word. Replaces the old
+ * the matching English gloss delayed underneath each Polish word. Replaces the old
  * pattern of "Polish on one line, literal as one separate text line below" — keeps
  * the eye lined up across the two languages.
  *
@@ -44,17 +43,20 @@ fun WordAlignedPolish(
     modifier: Modifier = Modifier,
     plFontSize: TextUnit = 16.sp,
     glossFontSize: TextUnit = 10.sp,
-    plColor: Color = LbColors.Primary,
+    plColor: Color = LbColors.TextPrimary,
     glossColor: Color = LbColors.Label,
     plFontWeight: FontWeight = FontWeight.Medium,
-    horizontalSpacing: androidx.compose.ui.unit.Dp = 8.dp
+    horizontalSpacing: androidx.compose.ui.unit.Dp = 8.dp,
+    glossDelayMillis: Long = EnglishTranslationDelayMillis
 ) {
     val plTokens: List<String>
     val glossTokens: List<String>
+    val structuredTokens: List<TokenPair?>
     val explicit = sentence.words?.takeIf { it.isNotEmpty() }
     if (explicit != null) {
         plTokens = explicit.map { it.pl }
         glossTokens = explicit.map { it.en }
+        structuredTokens = explicit
     } else {
         plTokens = sentence.pl.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
         glossTokens = sentence.literal
@@ -62,7 +64,12 @@ fun WordAlignedPolish(
             ?.split(Regex("\\s+"))
             ?.filter { it.isNotEmpty() }
             ?: emptyList()
+        structuredTokens = List(plTokens.size) { null }
     }
+    val showGloss = rememberDelayedTranslationVisible(
+        key = "${sentence.pl}\n${sentence.en}\n${sentence.literal.orEmpty()}",
+        delayMillis = glossDelayMillis
+    )
 
     FlowRow(
         modifier = modifier,
@@ -71,24 +78,34 @@ fun WordAlignedPolish(
     ) {
         plTokens.forEachIndexed { i, plTok ->
             val gloss = glossTokens.getOrNull(i).orEmpty()
+            val token = structuredTokens.getOrNull(i)
+            val variableColor = token?.let { GrammarVisuals.Variable.color(it) }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    plTok,
-                    fontSize = plFontSize,
-                    fontWeight = plFontWeight,
-                    color = plColor
-                )
-                if (gloss.isNotEmpty()) {
-                    Text(
-                        gloss,
-                        fontSize = glossFontSize,
-                        color = glossColor,
-                        fontStyle = FontStyle.Italic
+                if (variableColor != null) {
+                    VariablePolishText(
+                        text = plTok,
+                        fixedColor = plColor,
+                        variableColor = variableColor,
+                        fontSize = plFontSize,
+                        fontWeight = plFontWeight,
+                        variableStart = token.variableStart,
+                        variableEnd = token.variableEnd,
+                        fallbackWholeWord = token.variableStart == null
                     )
                 } else {
-                    // Reserve the gloss row height so adjacent columns stay aligned.
-                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        plTok,
+                        fontSize = plFontSize,
+                        fontWeight = plFontWeight,
+                        color = plColor
+                    )
                 }
+                Text(
+                    if (gloss.isNotEmpty()) gloss else " ",
+                    fontSize = glossFontSize,
+                    color = if (gloss.isNotEmpty() && showGloss) glossColor else Color.Transparent,
+                    fontStyle = FontStyle.Italic
+                )
             }
         }
     }

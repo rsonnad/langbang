@@ -1,112 +1,133 @@
 package com.sponic.langbang.ui.common
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.TextUnit
-import androidx.compose.ui.unit.dp
+
+private data class VariableRange(val start: Int, val end: Int)
 
 @Composable
-fun OutlinedPolishText(
+fun VariablePolishText(
     text: String,
-    fillColor: Color,
-    outlineColor: Color?,
+    fixedColor: Color,
+    variableColor: Color,
     fontSize: TextUnit,
     fontWeight: FontWeight,
     modifier: Modifier = Modifier,
-    outlineWidth: Float = 3f,
-    backingOutlineColor: Color? = GrammarVisuals.NounForm.OutlineBacking,
-    backingOutlineExtraWidth: Float = 2f,
-    glyphGap: Dp = 2.dp,
+    baseText: String? = null,
+    variableStart: Int? = null,
+    variableEnd: Int? = null,
+    fallbackWholeWord: Boolean = false,
     maxLines: Int = Int.MAX_VALUE,
     softWrap: Boolean = true
 ) {
-    if (outlineColor != null && outlineWidth > 0f) {
-        Row(
-            modifier = modifier,
-            horizontalArrangement = Arrangement.spacedBy(glyphGap),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            text.forEach { glyph ->
-                OutlinedGlyph(
-                    text = glyph.toString(),
-                    fillColor = fillColor,
-                    outlineColor = outlineColor,
-                    fontSize = fontSize,
-                    fontWeight = fontWeight,
-                    outlineWidth = outlineWidth,
-                    backingOutlineColor = backingOutlineColor,
-                    backingOutlineExtraWidth = backingOutlineExtraWidth,
-                    maxLines = maxLines,
-                    softWrap = softWrap
-                )
-            }
-        }
+    val range = inferVariableRange(
+        text = text,
+        baseText = baseText,
+        variableStart = variableStart,
+        variableEnd = variableEnd,
+        fallbackWholeWord = fallbackWholeWord
+    )
+    if (range == null) {
+        Text(
+            text = text,
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            maxLines = maxLines,
+            softWrap = softWrap,
+            color = fixedColor,
+            modifier = modifier
+        )
         return
     }
     Text(
-        text = text,
+        text = buildAnnotatedString {
+            append(text.substring(0, range.start))
+            withStyle(SpanStyle(color = variableColor)) {
+                append(text.substring(range.start, range.end))
+            }
+            append(text.substring(range.end))
+        },
         fontSize = fontSize,
         fontWeight = fontWeight,
         maxLines = maxLines,
         softWrap = softWrap,
-        color = fillColor,
+        color = fixedColor,
         modifier = modifier
     )
 }
 
-@Composable
-private fun OutlinedGlyph(
+fun variableStartForPolishForm(baseText: String?, text: String): Int? =
+    inferVariableRange(
+        text = text,
+        baseText = baseText,
+        fallbackWholeWord = true
+    )?.start
+
+fun variableEndForPolishForm(baseText: String?, text: String): Int? =
+    inferVariableRange(
+        text = text,
+        baseText = baseText,
+        fallbackWholeWord = true
+    )?.end
+
+private fun inferVariableRange(
     text: String,
-    fillColor: Color,
-    outlineColor: Color,
-    fontSize: TextUnit,
-    fontWeight: FontWeight,
-    outlineWidth: Float,
-    backingOutlineColor: Color?,
-    backingOutlineExtraWidth: Float,
-    maxLines: Int,
-    softWrap: Boolean
-) {
-    Box {
-        if (backingOutlineColor != null && backingOutlineExtraWidth > 0f) {
-            Text(
-                text = text,
-                fontSize = fontSize,
-                fontWeight = fontWeight,
-                maxLines = maxLines,
-                softWrap = softWrap,
-                color = backingOutlineColor,
-                style = TextStyle(
-                    drawStyle = Stroke(width = outlineWidth + backingOutlineExtraWidth)
-                )
-            )
+    baseText: String? = null,
+    variableStart: Int? = null,
+    variableEnd: Int? = null,
+    fallbackWholeWord: Boolean = false
+): VariableRange? {
+    val bounds = wordBounds(text) ?: return null
+    if (variableStart != null) {
+        val start = variableStart.coerceIn(bounds.start, bounds.end)
+        val end = (variableEnd ?: bounds.end).coerceIn(start, bounds.end)
+        return if (start < end) VariableRange(start, end) else null
+    }
+
+    val base = baseText?.trim()?.takeIf { it.isNotEmpty() }
+    if (base != null) {
+        val word = text.substring(bounds.start, bounds.end)
+        val prefix = commonPrefixLength(base, word)
+        if (prefix in 1 until word.length && prefix >= 2) {
+            return VariableRange(bounds.start + prefix, bounds.end)
         }
-        Text(
-            text = text,
-            fontSize = fontSize,
-            fontWeight = fontWeight,
-            maxLines = maxLines,
-            softWrap = softWrap,
-            color = outlineColor,
-            style = TextStyle(drawStyle = Stroke(width = outlineWidth))
-        )
-        Text(
-            text = text,
-            fontSize = fontSize,
-            fontWeight = fontWeight,
-            maxLines = maxLines,
-            softWrap = softWrap,
-            color = fillColor
-        )
+        if (prefix >= word.length) {
+            val endingStart = defaultEndingStart(word)
+            return VariableRange(bounds.start + endingStart, bounds.end)
+        }
+        if (fallbackWholeWord) return bounds
+    }
+
+    return if (fallbackWholeWord) bounds else null
+}
+
+private fun wordBounds(text: String): VariableRange? {
+    val start = text.indexOfFirst { it.isLetter() }
+    if (start < 0) return null
+    val end = text.indexOfLast { it.isLetter() } + 1
+    return if (start < end) VariableRange(start, end) else null
+}
+
+private fun commonPrefixLength(base: String, word: String): Int {
+    val max = minOf(base.length, word.length)
+    var i = 0
+    while (i < max && base[i].lowercaseChar() == word[i].lowercaseChar()) i += 1
+    return i
+}
+
+private fun defaultEndingStart(word: String): Int {
+    if (word.length <= 1) return 0
+    val last = word.last().lowercaseChar()
+    return if (last in setOf('a', 'ą', 'e', 'ę', 'i', 'o', 'u', 'y')) {
+        word.length - 1
+    } else {
+        0
     }
 }

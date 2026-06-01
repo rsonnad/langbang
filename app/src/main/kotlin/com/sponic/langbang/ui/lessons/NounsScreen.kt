@@ -21,7 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -34,8 +34,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -64,15 +62,22 @@ import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.PlaybackTransport
+import com.sponic.langbang.domain.ensureCachedAudio
+import com.sponic.langbang.domain.playAudioAndAwait
+import com.sponic.langbang.ui.common.CompactLessonListCard
+import com.sponic.langbang.ui.common.CompactLessonListDefaults
+import com.sponic.langbang.ui.common.DelayedEnglishTranslation
 import com.sponic.langbang.integrations.AzureTtsClient
 import com.sponic.langbang.ui.common.GrammarVisuals
-import com.sponic.langbang.ui.common.OutlinedPolishText
+import com.sponic.langbang.ui.common.SelectionNavButtons
+import com.sponic.langbang.ui.common.SubtleCheckbox
+import com.sponic.langbang.ui.common.VariablePolishText
+import com.sponic.langbang.ui.common.variableEndForPolishForm
+import com.sponic.langbang.ui.common.variableStartForPolishForm
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
 
 // Each case map is keyed "sg" / "pl"; we always render in this order.
 private val NUMBER_KEYS = listOf("sg", "pl")
@@ -258,7 +263,7 @@ internal class NounsScreenState(
                 NUMBER_KEYS.filter { it in selectedNumberKeys }.forEach { num ->
                     val form = map[num].orEmpty()
                     if (form.isNotBlank()) {
-                        add(makeRecallItem(noun.en, block.title, block.key, num, form, noun.gender))
+                        add(makeRecallItem(noun.en, block.title, block.key, num, form, noun.gender, noun.lemma))
                     }
                 }
             }
@@ -272,7 +277,8 @@ internal class NounsScreenState(
         caseKey: String,
         number: String,
         form: String,
-        gender: String
+        gender: String,
+        baseForm: String
     ): SentenceExample {
         val numLabel = numberLabel(number)
         return SentenceExample(
@@ -286,7 +292,10 @@ internal class NounsScreenState(
                     gender = gender,
                     caseKey = caseKey,
                     caseLabel = case,
-                    numberLabel = numLabel
+                    numberLabel = numLabel,
+                    variableStart = variableStartForPolishForm(baseForm, form),
+                    variableEnd = variableEndForPolishForm(baseForm, form),
+                    variableKind = "case"
                 )
             )
         )
@@ -326,16 +335,19 @@ internal class NounsScreenState(
                         pub("pl", plHidden = false)
                         playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
                     } else if (app.practicePrefs.slowFirst()) {
+                        val slowPlVoice = app.audioPrefs.slowPlVoice()
+                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
                         pub("en")
                         playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
                         pub("pl-slow")
-                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL,
-                            app.audioPrefs.slowPlVoice())
+                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
                         pub("en")
                         playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
                         pub("pl")
                         playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
                     } else {
+                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
                         pub("en")
                         playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
                         pub("pl")
@@ -395,7 +407,14 @@ fun NounsScreen(
                 state = state
             )
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                state.selected?.let { NounParadigm(app, it, state) }
+                state.selected?.let {
+                    NounParadigm(
+                        app = app,
+                        noun = it,
+                        state = state,
+                        nouns = lesson.nouns
+                    )
+                }
             }
         }
     }
@@ -563,11 +582,10 @@ private fun NounToggle(
     onCheckedChange: (Boolean) -> Unit
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Checkbox(
+        SubtleCheckbox(
             checked = checked,
             onCheckedChange = onCheckedChange,
             enabled = enabled,
-            colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary),
             modifier = Modifier.size(20.dp)
         )
         Spacer(Modifier.width(4.dp))
@@ -586,27 +604,24 @@ private fun NounList(
 ) {
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        contentPadding = CompactLessonListDefaults.ContentPadding,
+        verticalArrangement = Arrangement.spacedBy(CompactLessonListDefaults.ItemGap)
     ) {
-        items(nouns, key = { "n-${it.lemma}" }) { n ->
+        itemsIndexed(nouns, key = { _, n -> "n-${n.lemma}" }) { index, n ->
             val isSel = n == selected
-            Card(
+            CompactLessonListCard(
+                selected = isSel,
                 onClick = { onSelect(n) },
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isSel) MaterialTheme.colorScheme.primary
-                    else Color.White
-                ),
-                modifier = Modifier.fillMaxWidth()
+                alternate = index % 2 == 1
             ) {
                 Row(
-                    Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         n.lemma,
                         color = if (isSel) Color.White else LbColors.Primary,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Bold,
                         fontSize = 16.sp
                     )
                     // Gender tag (m/f/n) so the learner sees it at a glance.
@@ -618,8 +633,8 @@ private fun NounList(
                         fontWeight = FontWeight.SemiBold
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text(
-                        n.en,
+                    DelayedEnglishTranslation(
+                        text = n.en,
                         color = if (isSel) Color.White.copy(alpha = 0.85f)
                         else LbColors.TextSecondary,
                         fontSize = 12.sp,
@@ -635,7 +650,8 @@ private fun NounList(
 private fun NounParadigm(
     app: LangbangApplication,
     noun: NounEntry,
-    state: NounsScreenState
+    state: NounsScreenState,
+    nouns: List<NounEntry>
 ) {
     Column(
         modifier = Modifier
@@ -644,14 +660,25 @@ private fun NounParadigm(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Row(verticalAlignment = Alignment.Bottom) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom
+        ) {
             Text(noun.lemma, fontSize = 26.sp, fontWeight = FontWeight.Bold,
                 color = LbColors.Primary)
             Spacer(Modifier.width(12.dp))
-            Text(
-                "${noun.en}  ·  ${genderName(noun.gender)}",
+            DelayedEnglishTranslation(
+                text = "${noun.en}  ·  ${genderName(noun.gender)}",
                 fontSize = 14.sp, color = LbColors.TextSecondary,
                 modifier = Modifier.padding(bottom = 4.dp)
+            )
+            Spacer(Modifier.weight(1f))
+            SelectionNavButtons(
+                items = nouns,
+                selected = noun,
+                onSelect = { state.select(it) },
+                previousContentDescription = "Previous noun",
+                nextContentDescription = "Next noun"
             )
         }
 
@@ -662,6 +689,7 @@ private fun NounParadigm(
                 block = block,
                 map = map,
                 nounEn = noun.en,
+                baseForm = noun.lemma,
                 gender = noun.gender
             )
         }
@@ -677,6 +705,7 @@ private fun CompactCaseRows(
     block: CaseBlock,
     map: Map<String, String>,
     nounEn: String,
+    baseForm: String,
     gender: String
 ) {
     Card(
@@ -710,9 +739,9 @@ private fun CompactCaseRows(
                     FormRow(
                         label = number,
                         form = form,
-                        gender = gender,
-                        caseKey = block.key
-                    ) { playForm(app, form, nounEn, number, block.title, gender, block.key) }
+                        baseForm = baseForm,
+                        gender = gender
+                    ) { playForm(app, form, nounEn, number, block.title, gender, block.key, baseForm) }
                 }
             }
         }
@@ -723,8 +752,8 @@ private fun CompactCaseRows(
 private fun FormRow(
     label: String,
     form: String,
+    baseForm: String,
     gender: String,
-    caseKey: String,
     onPlay: () -> Unit
 ) {
     Card(
@@ -742,15 +771,14 @@ private fun FormRow(
                 color = LbColors.TextMuted,
                 modifier = Modifier.width(110.dp)
             )
-            OutlinedPolishText(
+            VariablePolishText(
                 text = form,
-                fillColor = GrammarVisuals.Gender.color(gender),
-                outlineColor = GrammarVisuals.Case.color(caseKey),
+                fixedColor = LbColors.TextPrimary,
+                variableColor = GrammarVisuals.Gender.color(gender),
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
-                outlineWidth = GrammarVisuals.NounForm.RowOutlineWidth,
-                backingOutlineExtraWidth = GrammarVisuals.NounForm.RowBackingExtraWidth,
-                glyphGap = GrammarVisuals.NounForm.RowGlyphGap,
+                baseText = baseForm,
+                fallbackWholeWord = true,
                 modifier = Modifier.weight(1f)
             )
             Icon(Icons.Default.PlayArrow, contentDescription = "Play",
@@ -810,15 +838,15 @@ private fun SentenceRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text(
-                    sentence.en,
+                DelayedEnglishTranslation(
+                    text = sentence.en,
                     fontSize = 12.sp,
                     color = LbColors.TextMuted
                 )
                 com.sponic.langbang.ui.common.WordAlignedPolish(
                     sentence = sentence,
                     plFontSize = 16.sp,
-                    plFontWeight = FontWeight.Medium,
+                    plFontWeight = FontWeight.Bold,
                     glossFontSize = 10.sp
                 )
             }
@@ -836,18 +864,7 @@ private suspend fun playAndAwait(
     locale: String,
     voice: String
 ) {
-    if (text.isEmpty()) return
-    val file = app.audioCache.fileFor(locale, voice, text)
-    if (!app.audioCache.has(file)) {
-        app.tts.synthesize(text, voice, locale, file)
-    }
-    if (!app.audioCache.has(file)) return
-    suspendCancellableCoroutine<Unit> { cont ->
-        app.audioPlayer.play(file) {
-            if (cont.isActive) cont.resume(Unit)
-        }
-        cont.invokeOnCancellation { app.audioPlayer.stop() }
-    }
+    app.playAudioAndAwait(text, locale, voice)
 }
 
 private fun playSentence(app: LangbangApplication, sentence: SentenceExample) {
@@ -870,7 +887,8 @@ private fun playForm(
     number: String,
     caseLabel: String,
     gender: String,
-    caseKey: String
+    caseKey: String,
+    baseForm: String
 ) {
     if (form.isEmpty()) return
     NowVoicingBus.publish(
@@ -886,7 +904,10 @@ private fun playForm(
                     gender = gender,
                     caseKey = caseKey,
                     caseLabel = caseLabel,
-                    numberLabel = number
+                    numberLabel = number,
+                    variableStart = variableStartForPolishForm(baseForm, form),
+                    variableEnd = variableEndForPolishForm(baseForm, form),
+                    variableKind = "case"
                 )
             )
         )

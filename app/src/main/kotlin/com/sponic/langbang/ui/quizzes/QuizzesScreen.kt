@@ -71,7 +71,11 @@ fun QuizzesScreen(
         nowVoicing()
         Box(modifier = Modifier.weight(1f)) {
             when (val m = mode) {
-                QuizMode.Hub -> Hub(app = app, onPick = { mode = it })
+                QuizMode.Hub -> Hub(onPick = { mode = it })
+                QuizMode.Practice -> PracticeQuiz(
+                    app = app,
+                    onExit = { mode = QuizMode.Hub }
+                )
                 is QuizMode.PerVerbPick -> PerVerbPicker(app = app,
                     onPick = { v, t -> mode = QuizMode.PerVerb(v, t) },
                     onBack = { mode = QuizMode.Hub })
@@ -117,6 +121,7 @@ fun QuizzesScreen(
 
 private sealed interface QuizMode {
     data object Hub : QuizMode
+    data object Practice : QuizMode
     data object PerVerbPick : QuizMode
     data object CrossVerbPick : QuizMode
     data class PerVerb(val verb: VerbEntry, val tense: String) : QuizMode {
@@ -136,7 +141,7 @@ private sealed interface QuizMode {
 }
 
 @Composable
-private fun Hub(app: LangbangApplication, onPick: (QuizMode) -> Unit) {
+private fun Hub(onPick: (QuizMode) -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -149,9 +154,14 @@ private fun Hub(app: LangbangApplication, onPick: (QuizMode) -> Unit) {
             color = LbColors.Primary
         )
         Text(
-            "Tap-to-answer multiple choice. No audio — pure text recall. Pick a drill " +
-                "below; each question shows a prompt and four options.",
+            "Practice is the main self-graded drill. Multiple choice remains below " +
+                "as a lightweight recognition test.",
             fontSize = 13.sp, color = LbColors.TextSecondary
+        )
+        QuizCard(
+            title = "Practice — adaptive check / X",
+            subtitle = "Self-grade cards. Misses repeat once, then return as four variations.",
+            onClick = { onPick(QuizMode.Practice) }
         )
         QuizCard(
             title = "Verb forms — one verb",

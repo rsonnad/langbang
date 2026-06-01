@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -45,7 +46,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
-import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -80,6 +80,8 @@ import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.PrefetchProgress
 import com.sponic.langbang.domain.PrefetchWorker
 import com.sponic.langbang.ui.common.GrammarVisuals
+import com.sponic.langbang.ui.common.FilterGroup
+import com.sponic.langbang.ui.common.LbChip
 import com.sponic.langbang.ui.lessons.AdjectivesScreen
 import com.sponic.langbang.ui.lessons.AdverbsScreen
 import com.sponic.langbang.ui.lessons.LessonScreen
@@ -130,6 +132,7 @@ fun LangbangApp(app: LangbangApplication) {
     var section by remember { mutableStateOf(Section.Pronunciation) }
     var lastTabSection by remember { mutableStateOf(Section.Pronunciation) }
     val nowVoicing by NowVoicingBus.state.collectAsState()
+    val playbackTransport by PlaybackController.transport.collectAsState()
     val online by app.network.online.collectAsState()
     // Starred phrases — lets the user add whatever is currently voicing to their
     // personal quiz deck straight from the sticky Now Voicing panel.
@@ -271,7 +274,9 @@ fun LangbangApp(app: LangbangApplication) {
                     prefetch = progress
                 )
             }
-            if (pinnedVoicing != null || nowVoicing != null || randomPlayer.playing || randomPlayer.paused) {
+            if (pinnedVoicing != null || nowVoicing != null || playbackTransport != null ||
+                randomPlayer.playing || randomPlayer.paused
+            ) {
                 nowVoicingSlot()
             }
             val noNowVoicingSlot: @Composable () -> Unit = {}
@@ -333,38 +338,39 @@ private fun AppHeader(
     onTitleClick: () -> Unit
 ) {
     Surface(
-        color = LbColors.PrimaryDeep,
+        color = LbColors.Bar,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column {
             Row(
                 modifier = Modifier.fillMaxWidth()
-                    .padding(start = 4.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
+                    .border(0.dp, Color.Transparent)
+                    .padding(start = 10.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(
                     onClick = onToggleSettings,
-                    modifier = Modifier.size(36.dp),
+                    modifier = Modifier.size(34.dp),
                     colors = IconButtonDefaults.iconButtonColors(
-                        contentColor = if (section == Section.Settings) LbColors.Gold
-                        else LbColors.OnPrimary
+                        contentColor = if (section == Section.Settings) LbColors.Primary
+                        else LbColors.TextPrimary
                     )
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.Settings,
+                        imageVector = Icons.Filled.Tune,
                         contentDescription = "Settings",
                         modifier = Modifier.size(20.dp)
                     )
                 }
                 Text(
                     "LangBang",
-                    color = LbColors.OnPrimary.copy(alpha = 0.62f),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    color = LbColors.TextPrimary,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.ExtraBold,
                     // Tap the title to check R2 for a newer build and update on the spot.
                     modifier = Modifier
                         .clickable(onClick = onTitleClick)
-                        .padding(start = 4.dp, end = 16.dp)
+                        .padding(start = 6.dp, end = 16.dp)
                 )
                 Row(
                     modifier = Modifier
@@ -393,17 +399,6 @@ private fun AppHeader(
                     },
                     onConfigure = onOpenConfig
                 )
-                // Build tag pinned to the far right, immediately after Play Phrases —
-                // tiny + tightly tracked so it barely takes any width. Glanceable
-                // version without opening Settings.
-                Text(
-                    ".${com.sponic.langbang.BuildConfig.BUILD_NUMBER.toString().takeLast(3)}",
-                    color = LbColors.OnPrimary.copy(alpha = 0.55f),
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    modifier = Modifier.padding(start = 4.dp)
-                )
             }
             if (!prefetch.finished && prefetch.total > 0) {
                 // Thin progress bar only — the numeric counter lives in CacheBadge
@@ -414,8 +409,8 @@ private fun AppHeader(
                         .fillMaxWidth()
                         .height(2.dp)
                         .clip(RoundedCornerShape(2.dp)),
-                    color = LbColors.Gold,
-                    trackColor = LbColors.OnPrimary.copy(alpha = 0.18f)
+                    color = LbColors.Audio,
+                    trackColor = LbColors.Line
                 )
             }
             // NowVoicingPanel used to live here as a full-width band below the tab
@@ -448,66 +443,65 @@ private fun NowVoicingPanel(
         ),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .padding(horizontal = 0.dp, vertical = 0.dp)
     ) {
-        Column {
-            Row(
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TransportGrid()
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 16.dp)
+                    .width(1.dp)
+                    .height(86.dp)
+                    .background(LbColors.OnDark2.copy(alpha = 0.22f))
+            )
+            Box(modifier = Modifier.weight(1f).padding(end = 18.dp)) {
+                NowVoicingContent(pinned, live, onPlWordClick, showStatus = false)
+            }
+            Column(
+                modifier = Modifier.width(340.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    nowVoicingStatus(pinned, live),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = LbColors.TextPrimary,
-                    maxLines = 1
-                )
-                Spacer(Modifier.width(8.dp))
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    NowVoicingFilterChecks(
-                        config = config,
-                        onConfigChange = onConfigChange,
-                        showQuizDelay = live?.quizMode == true,
-                        prefetch = prefetch
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                // Star the phrase currently shown in the panel into the personal quiz deck.
-                if (pinned != null) {
-                    IconButton(onClick = onToggleStar, modifier = Modifier.size(32.dp)) {
-                        Icon(
-                            if (isStarred) Icons.Default.Star else Icons.Default.StarBorder,
-                            contentDescription = if (isStarred) "Unstar phrase" else "Star phrase",
-                            tint = if (isStarred) LbColors.Accent else LbColors.TextMuted,
-                            modifier = Modifier.size(22.dp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (pinned != null) {
+                        IconButton(onClick = onToggleStar, modifier = Modifier.size(34.dp)) {
+                            Icon(
+                                if (isStarred) Icons.Default.Star else Icons.Default.StarBorder,
+                                contentDescription = if (isStarred) "Unstar phrase" else "Star phrase",
+                                tint = if (isStarred) LbColors.Star else LbColors.OnDark2,
+                                modifier = Modifier.size(21.dp)
+                            )
+                        }
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            nowVoicingStatus(pinned, live).uppercase(),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = LbColors.OnDark2,
+                            maxLines = 1
+                        )
+                        LinearProgressIndicator(
+                            progress = { nowVoicingProgress(pinned) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(3.dp)
+                                .clip(RoundedCornerShape(4.dp)),
+                            color = LbColors.AudioBright,
+                            trackColor = LbColors.OnDark2.copy(alpha = 0.22f)
                         )
                     }
-                    Spacer(Modifier.width(4.dp))
                 }
-                TransportGrid()
-            }
-            nowVoicingGrammarReference(pinned)?.let { reference ->
-                Text(
-                    reference,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = LbColors.TextSecondary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 1.dp)
-                        .wrapContentWidth(Alignment.End)
+                NowVoicingFilterChecks(
+                    config = config,
+                    onConfigChange = onConfigChange,
+                    showQuizDelay = live?.quizMode == true,
+                    prefetch = prefetch
                 )
-            }
-            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
-                NowVoicingContent(pinned, live, onPlWordClick, showStatus = false)
             }
         }
     }
@@ -527,15 +521,12 @@ private fun nowVoicingStatus(pinned: NowVoicing?, live: NowVoicing?): String {
     return if (tag.isEmpty()) "NOW VOICING$pos" else "NOW VOICING$pos  ·  $tag"
 }
 
-private fun nowVoicingGrammarReference(pinned: NowVoicing?): String? {
-    val token = pinned?.words?.firstOrNull { it.gender != null || it.caseLabel != null || it.numberLabel != null }
-        ?: return null
-    val parts = listOfNotNull(
-        token.numberLabel,
-        token.caseLabel,
-        token.gender?.let { GrammarVisuals.Gender.abbrev(it) }
-    )
-    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+private fun nowVoicingProgress(pinned: NowVoicing?): Float {
+    val raw = pinned?.position ?: return 0f
+    val m = Regex("(\\d+)\\s*/\\s*(\\d+)").find(raw) ?: return 0f
+    val idx = m.groupValues[1].toFloatOrNull() ?: return 0f
+    val total = m.groupValues[2].toFloatOrNull()?.takeIf { it > 0f } ?: return 0f
+    return (idx / total).coerceIn(0f, 1f)
 }
 
 /**
@@ -555,7 +546,9 @@ private fun NowVoicingContent(
         pinned = pinned,
         live = live,
         statusText = if (showStatus) nowVoicingStatus(pinned, live) else "",
-        onPlWordClick = onPlWordClick
+        onPlWordClick = onPlWordClick,
+        idlePlaceholder = "Playback is starting...",
+        dark = true
     )
 }
 
@@ -573,7 +566,13 @@ private fun TransportGrid() {
     val playPauseIcon = if (isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause
     val playPauseLabel = if (isPaused) "Resume" else "Pause"
 
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .border(1.dp, LbColors.OnDark2.copy(alpha = 0.22f), RoundedCornerShape(14.dp))
+            .padding(6.dp)
+    ) {
         TransportIcon(
             icon = Icons.Filled.Replay,
             label = "Restart",
@@ -608,68 +607,85 @@ private fun NowVoicingFilterChecks(
     showQuizDelay: Boolean,
     prefetch: PrefetchProgress
 ) {
-    val labelColor = GrammarVisuals.NowVoicingPanel.FilterLabel
-    FilterCheck(
-        label = "Verb",
-        selected = config.playMode == PlayMode.VERBS,
-        labelColor = labelColor,
-        onToggle = { onConfigChange(config.copy(playMode = PlayMode.VERBS)) }
-    )
-    FilterCheck(
-        label = "Sent.",
-        selected = config.playMode == PlayMode.PHRASES,
-        labelColor = labelColor,
-        onToggle = { onConfigChange(config.copy(playMode = PlayMode.PHRASES)) }
-    )
-    FilterCheck(
-        label = "Pres.",
-        selected = "present" in config.tenses,
-        labelColor = labelColor,
-        onToggle = {
-            val now = if ("present" in config.tenses) config.tenses - "present"
-                      else config.tenses + "present"
-            onConfigChange(config.copy(tenses = now))
-        }
-    )
-    FilterCheck(
-        label = "Past",
-        selected = "past" in config.tenses,
-        labelColor = labelColor,
-        onToggle = {
-            val now = if ("past" in config.tenses) config.tenses - "past"
-                      else config.tenses + "past"
-            onConfigChange(config.copy(tenses = now))
-        }
-    )
-    if (config.playMode == PlayMode.PHRASES) {
-        FilterCheck(
-            label = "Adj",
-            selected = config.adjectiveMode != IncludeMode.OFF,
-            labelColor = labelColor,
-            onToggle = {
-                val now = if (config.adjectiveMode == IncludeMode.OFF) IncludeMode.YES
-                          else IncludeMode.OFF
-                onConfigChange(config.copy(adjectiveMode = now))
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        FilterGroup(label = "Voice", dark = true) {
+            LbChip(
+                "Sentence",
+                selected = config.playMode == PlayMode.PHRASES,
+                selectedColor = LbColors.DarkScope,
+                dark = true,
+                showCheck = false,
+                onClick = { onConfigChange(config.copy(playMode = PlayMode.PHRASES)) }
+            )
+            LbChip(
+                "Verb",
+                selected = config.playMode == PlayMode.VERBS,
+                selectedColor = LbColors.DarkScope,
+                dark = true,
+                showCheck = false,
+                onClick = { onConfigChange(config.copy(playMode = PlayMode.VERBS)) }
+            )
+            if (config.playMode == PlayMode.PHRASES) {
+                LbChip(
+                    "Adjective",
+                    selected = config.adjectiveMode != IncludeMode.OFF,
+                    selectedColor = LbColors.DarkScope,
+                    dark = true,
+                    showCheck = false,
+                    onClick = {
+                        val now = if (config.adjectiveMode == IncludeMode.OFF) IncludeMode.YES
+                                  else IncludeMode.OFF
+                        onConfigChange(config.copy(adjectiveMode = now))
+                    }
+                )
+                LbChip(
+                    "Adverb",
+                    selected = config.adverbMode != IncludeMode.OFF,
+                    selectedColor = LbColors.DarkScope,
+                    dark = true,
+                    showCheck = false,
+                    onClick = {
+                        val now = if (config.adverbMode == IncludeMode.OFF) IncludeMode.YES
+                                  else IncludeMode.OFF
+                        onConfigChange(config.copy(adverbMode = now))
+                    }
+                )
             }
-        )
-        FilterCheck(
-            label = "Adv",
-            selected = config.adverbMode != IncludeMode.OFF,
-            labelColor = labelColor,
-            onToggle = {
-                val now = if (config.adverbMode == IncludeMode.OFF) IncludeMode.YES
-                          else IncludeMode.OFF
-                onConfigChange(config.copy(adverbMode = now))
+        }
+        FilterGroup(label = "Tense", dark = true) {
+            LbChip(
+                "Present",
+                selected = "present" in config.tenses,
+                selectedColor = LbColors.DarkScope,
+                dark = true,
+                showCheck = false,
+                onClick = {
+                    val now = if ("present" in config.tenses) config.tenses - "present"
+                              else config.tenses + "present"
+                    onConfigChange(config.copy(tenses = now))
+                }
+            )
+            LbChip(
+                "Past",
+                selected = "past" in config.tenses,
+                selectedColor = LbColors.DarkScope,
+                dark = true,
+                showCheck = false,
+                onClick = {
+                    val now = if ("past" in config.tenses) config.tenses - "past"
+                              else config.tenses + "past"
+                    onConfigChange(config.copy(tenses = now))
+                }
+            )
+            if (showQuizDelay) {
+                QuizDelayControl(
+                    seconds = config.quizDelaySeconds,
+                    onChange = { onConfigChange(config.copy(quizDelaySeconds = it)) }
+                )
             }
-        )
+        }
+        CacheBadge(prefetch, dark = true, onlyWhileRunning = true)
     }
-    if (showQuizDelay) {
-        QuizDelayControl(
-            seconds = config.quizDelaySeconds,
-            onChange = { onConfigChange(config.copy(quizDelaySeconds = it)) }
-        )
-    }
-    CacheBadge(prefetch)
 }
 
 @Composable
@@ -823,16 +839,27 @@ private fun TransportIcon(
     enabled: Boolean,
     onClick: () -> Unit
 ) {
+    val bg = when {
+        label == "Stop" -> LbColors.Stop
+        label == "Pause" || label == "Resume" -> LbColors.AudioBright
+        else -> LbColors.OnDark2.copy(alpha = 0.12f)
+    }
+    val fg = when {
+        label == "Stop" || label == "Pause" || label == "Resume" -> Color.White
+        else -> LbColors.OnDark
+    }
     IconButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.size(32.dp)
+        modifier = Modifier
+            .size(if (label == "Pause" || label == "Resume") 54.dp else 42.dp)
+            .background(bg.copy(alpha = if (enabled) 1f else 0.35f), RoundedCornerShape(12.dp))
     ) {
         Icon(
             imageVector = icon,
             contentDescription = label,
-            tint = if (enabled) LbColors.Primary else LbColors.TextMuted.copy(alpha = 0.45f),
-            modifier = Modifier.size(20.dp)
+            tint = if (enabled) fg else LbColors.OnDark2.copy(alpha = 0.45f),
+            modifier = Modifier.size(if (label == "Pause" || label == "Resume") 24.dp else 20.dp)
         )
     }
 }
@@ -843,13 +870,26 @@ private fun TransportIcon(
  * AdjectivesScreen, AdverbsScreen); consolidating it here gives one truth.
  */
 @Composable
-private fun CacheBadge(prefetch: PrefetchProgress) {
+private fun CacheBadge(
+    prefetch: PrefetchProgress,
+    dark: Boolean = false,
+    onlyWhileRunning: Boolean = false
+) {
     val done = prefetch.done
     val total = prefetch.total
     if (total == 0 && !prefetch.finished) return
     val complete = prefetch.finished || (total > 0 && done >= total)
-    val bg = if (complete) LbColors.SuccessSoft else LbColors.WarningSoft
-    val fg = if (complete) LbColors.Success else LbColors.Warning
+    if (onlyWhileRunning && complete) return
+    val bg = when {
+        dark -> LbColors.Star.copy(alpha = 0.18f)
+        complete -> LbColors.SuccessSoft
+        else -> LbColors.WarningSoft
+    }
+    val fg = when {
+        dark -> LbColors.Star
+        complete -> LbColors.Success
+        else -> LbColors.Warning
+    }
     Surface(color = bg, shape = RoundedCornerShape(10.dp)) {
         Row(
             Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
@@ -864,9 +904,9 @@ private fun CacheBadge(prefetch: PrefetchProgress) {
                 )
             }
             Text(
-                if (complete) "audio synced · $done"
-                else "audio $done / $total",
-                fontSize = 9.sp,
+                if (complete) "Audio synced · $done"
+                else "Caching audio · $done / $total",
+                fontSize = if (dark) 10.sp else 9.sp,
                 color = fg,
                 fontWeight = FontWeight.SemiBold
             )
@@ -1033,40 +1073,41 @@ private fun RandomPlayPill(
         horizontalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         Surface(
-            color = if (playing) LbColors.Accent else LbColors.OnPrimary.copy(alpha = 0.14f),
-            shape = RoundedCornerShape(6.dp),
+            color = if (playing) LbColors.Stop else LbColors.Audio,
+            shape = RoundedCornerShape(12.dp),
             modifier = Modifier.clickable(onClick = onToggle)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp)
             ) {
                 Icon(
                     imageVector = if (playing) Icons.Filled.Stop else Icons.Filled.PlayArrow,
                     contentDescription = if (playing) "Stop phrases" else "Play Phrases",
-                    tint = LbColors.OnPrimary,
-                    modifier = Modifier.size(13.dp)
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp)
                 )
-                Spacer(Modifier.width(4.dp))
+                Spacer(Modifier.width(6.dp))
                 Text(
                     if (playing) "Stop" else "Play Phrases",
-                    color = LbColors.OnPrimary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }
         if (!playing) {
             Surface(
-                color = LbColors.OnPrimary.copy(alpha = 0.10f),
-                shape = RoundedCornerShape(6.dp),
+                color = Color.White,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, LbColors.Line),
                 modifier = Modifier.clickable(onClick = onConfigure)
             ) {
                 Icon(
-                    imageVector = Icons.Filled.Settings,
+                    imageVector = Icons.Filled.Tune,
                     contentDescription = "Configure Play Phrases",
-                    tint = LbColors.OnPrimary,
-                    modifier = Modifier.padding(5.dp).size(13.dp)
+                    tint = LbColors.TextPrimary,
+                    modifier = Modifier.padding(9.dp).size(16.dp)
                 )
             }
         }
@@ -1075,30 +1116,37 @@ private fun RandomPlayPill(
 
 @Composable
 private fun TabPill(label: String, selected: Boolean, onClick: () -> Unit) {
-    // Number + word on ONE row ("1. Pron") so the tab strip is a single line tall —
-    // it used to stack "1." above "Pron", doubling the strip height. The strip
-    // horizontal-scrolls when it overflows, so one row is safe on the Tab A9+.
-    // Only the word is underlined (the number stays plain) via an annotated string.
     val sep = label.indexOf(". ")
-    val number = if (sep >= 0) label.substring(0, sep + 2) else ""   // "1. "
-    val word = if (sep >= 0) label.substring(sep + 2) else label     // "Pron"
-    val text = buildAnnotatedString {
-        append(number)
-        withStyle(SpanStyle(textDecoration = TextDecoration.Underline)) { append(word) }
-    }
+    val number = if (sep >= 0) label.substring(0, sep + 1) else ""
+    val word = if (sep >= 0) label.substring(sep + 2) else label
     Surface(
-        color = if (selected) LbColors.OnPrimary.copy(alpha = 0.16f) else Color.Transparent,
-        shape = RoundedCornerShape(6.dp),
+        color = if (selected) Color.White else Color.Transparent,
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, if (selected) Color.White else LbColors.Line.copy(alpha = 0.65f)),
         modifier = Modifier.clickable(onClick = onClick)
     ) {
-        Text(
-            text,
-            color = if (selected) LbColors.OnPrimary else LbColors.OnPrimary.copy(alpha = 0.82f),
-            fontSize = 12.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 1,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-        )
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (number.isNotBlank()) {
+                Text(
+                    number,
+                    color = LbColors.Primary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(
+                word,
+                color = LbColors.TextPrimary,
+                fontSize = 12.sp,
+                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                maxLines = 1
+            )
+        }
     }
 }
 
@@ -1127,19 +1175,7 @@ private fun SentenceRegenBanner(app: LangbangApplication) {
     val state by app.sentenceRegen.state.collectAsState()
     when (val s = state) {
         is com.sponic.langbang.domain.SentenceRegenService.State.Idle -> Unit
-        is com.sponic.langbang.domain.SentenceRegenService.State.Done -> {
-            if (s.downloaded == 0 && s.failures == 0) return
-            val msg = if (s.failures == 0) "Sentences updated — ${s.downloaded} bundles"
-                      else "Sentences updated — ${s.downloaded} of ${s.total} (${s.failures} failed)"
-            Surface(color = LbColors.SuccessSoft, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    msg,
-                    fontSize = 11.sp,
-                    color = LbColors.Success,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                )
-            }
-        }
+        is com.sponic.langbang.domain.SentenceRegenService.State.Done -> Unit
         is com.sponic.langbang.domain.SentenceRegenService.State.Failed -> {
             Surface(color = LbColors.DangerSoft, modifier = Modifier.fillMaxWidth()) {
                 Row(

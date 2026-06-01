@@ -452,6 +452,22 @@ voicing" pass (new 6 verbs + 6 adjectives + 30 nouns). Three traps:
   `scripts/populate-r2-audio.py` now reads bundles from `$LANGBANG_SENTENCES_DIR`
   (the synced dir) when set, falling back to throttled HTTP otherwise.
 
+**1b. SILENT now-voicing skip — `registered 0 now-voicing sentences` (2026-05-31).**
+`populate-r2-audio.py` exits 0 and prints `Grand totals: …'cached': N, 'failed': 0`
+even when it warmed ZERO example-sentence audio — the only honest signal is the
+early line `registered <N> now-voicing sentences`. If that's **0**, the now-voicing
+sentence mp3s (the bulk of "Play Phrases") were NOT touched; the big cached count is
+just word-forms. Two causes, both hit this session:
+  - **Race:** running it while/just after `trigger-pregen-sentences.sh` is still doing
+    its tail "rebuild manifest from R2 listing" step → it reads a stale/partial
+    `sentences/v{N}/manifest.json` (saw only 8 entries) → near-zero sentences.
+  - **HTTP throttling:** the r2.dev fallback path gets 403/429 on the bundle GETs and
+    silently `continue`s past each → 0 registered.
+**Always:** (1) let the sentence script FULLY finish first, then (2) `aws s3 sync`
+the `sentences/v{N}/` tree locally and run with `LANGBANG_SENTENCES_DIR=<dir>`, then
+(3) confirm `registered <N>` is in the thousands, not 0. Verified-good run: 172
+bundles → 6878 sentences registered.
+
 **2. `trigger-pregen-sentences.sh` — two failure modes, BOTH FIXED 2026-05-31.**
 - *Chunk timeout (now mitigated):* the 120s per-chunk `curl --max-time` was too
   short for the old default `--chunk 8` — invocations ran 97-115s and cold starts

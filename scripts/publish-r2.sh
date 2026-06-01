@@ -26,6 +26,22 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+LOCK_DIR="${TMPDIR:-/tmp}/langbang-publish-r2.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  LOCK_PID="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
+    echo "another publish-r2.sh is already running (pid $LOCK_PID)" >&2
+    exit 1
+  fi
+  rm -rf "$LOCK_DIR"
+  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    echo "another publish-r2.sh started while acquiring the lock" >&2
+    exit 1
+  fi
+fi
+echo "$$" > "$LOCK_DIR/pid"
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
 SKIP_BUILD=0
 NO_PAGE_EDIT=0
 NO_PAGE_PUSH=0
@@ -148,6 +164,18 @@ verify() {
 verify "$MANIFEST_KEY"
 verify "$PINNED_KEY"
 verify "$LATEST_KEY"
+
+# The update checker trusts langbang-latest.json, so verify the public manifest
+# body too, not just the HTTP status. This catches edge-cache or concurrent-publish
+# drift before the page is patched or devices are verified against the wrong build.
+MANIFEST_PUBLIC="$(curl -fsS -H 'Cache-Control: no-cache' "${PUBLIC_BASE}/${MANIFEST_KEY}?verify=$(date +%s)")"
+MANIFEST_CODE="$(jq -r '.versionCode // empty' <<< "$MANIFEST_PUBLIC")"
+MANIFEST_NAME="$(jq -r '.versionName // empty' <<< "$MANIFEST_PUBLIC")"
+if [ "$MANIFEST_CODE" != "$BUILD_NUMBER" ] || [ "$MANIFEST_NAME" != "$FULL_VERSION" ]; then
+  echo "  ✗ public manifest mismatch: expected ${FULL_VERSION} (${BUILD_NUMBER}), got ${MANIFEST_NAME} (${MANIFEST_CODE})" >&2
+  exit 1
+fi
+echo "  ✓ manifest version ${MANIFEST_NAME} (${MANIFEST_CODE})"
 
 # 5. Patch the landing page to point at the new pinned build, then commit + push
 #    JUST that file. Stages only the page (never `git add .`) so unrelated WIP in

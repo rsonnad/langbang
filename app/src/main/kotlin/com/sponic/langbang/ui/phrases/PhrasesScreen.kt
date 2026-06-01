@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -30,8 +30,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -57,14 +55,18 @@ import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
+import com.sponic.langbang.domain.ensureCachedAudio
+import com.sponic.langbang.domain.playAudioAndAwait
 import com.sponic.langbang.integrations.AzureTtsClient
+import com.sponic.langbang.ui.common.CompactLessonListCard
+import com.sponic.langbang.ui.common.CompactLessonListDefaults
+import com.sponic.langbang.ui.common.DelayedEnglishTranslation
+import com.sponic.langbang.ui.common.SelectionNavButtons
+import com.sponic.langbang.ui.common.SubtleCheckbox
 import com.sponic.langbang.ui.common.WordAlignedPolish
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import java.io.File
-import kotlin.coroutines.resume
 
 /**
  * Phrases tab — multi-sentence real-world utterances (introductions, small-talk, etc.).
@@ -97,7 +99,12 @@ fun PhrasesScreen(
             nowVoicing()
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 selected?.let { group ->
-                    PhraseDetail(app = app, group = group)
+                    PhraseDetail(
+                        app = app,
+                        group = group,
+                        groups = data.groups,
+                        onSelectGroup = { selected = it }
+                    )
                 } ?: Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
                         "No phrases yet.",
@@ -118,22 +125,18 @@ private fun PhraseGroupList(
 ) {
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        contentPadding = CompactLessonListDefaults.ContentPadding,
+        verticalArrangement = Arrangement.spacedBy(CompactLessonListDefaults.ItemGap)
     ) {
-        items(groups, key = { "g-${it.id}" }) { g ->
+        itemsIndexed(groups, key = { _, g -> "g-${g.id}" }) { index, g ->
             val isSel = g == selected
-            Card(
+            CompactLessonListCard(
+                selected = isSel,
                 onClick = { onSelect(g) },
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isSel) MaterialTheme.colorScheme.primary
-                    else Color.White
-                ),
-                modifier = Modifier.fillMaxWidth()
+                alternate = index % 2 == 1,
+                contentPadding = CompactLessonListDefaults.MultiLineItemPadding
             ) {
-                Column(
-                    Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                ) {
+                Column {
                     Text(
                         g.title,
                         color = if (isSel) Color.White else LbColors.Primary,
@@ -162,7 +165,12 @@ private fun PhraseGroupList(
 }
 
 @Composable
-private fun PhraseDetail(app: LangbangApplication, group: PhraseGroup) {
+private fun PhraseDetail(
+    app: LangbangApplication,
+    group: PhraseGroup,
+    groups: List<PhraseGroup>,
+    onSelectGroup: (PhraseGroup) -> Unit
+) {
     val scope = rememberCoroutineScope()
     var playingIndex by remember(group) { mutableStateOf(-1) }
     var playJob by remember(group) { mutableStateOf<Job?>(null) }
@@ -198,7 +206,10 @@ private fun PhraseDetail(app: LangbangApplication, group: PhraseGroup) {
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         // Header: title + Play all + Quiz
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Column(Modifier.weight(1f)) {
                 Text(
                     group.title,
@@ -225,13 +236,21 @@ private fun PhraseDetail(app: LangbangApplication, group: PhraseGroup) {
                                 group.sentences.forEachIndexed { i, s ->
                                     playingIndex = i
                                     val position = "${i + 1}/${group.sentences.size}"
+                                    val slowFirst = app.practicePrefs.slowFirst()
+                                    val slowPlVoice = app.audioPrefs.slowPlVoice()
+                                    if (slowFirst) {
+                                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL,
+                                            slowPlVoice)
+                                    }
+                                    app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL,
+                                        AzureTtsClient.PL_PL_F)
                                     publishNV(s, "en", position)
                                     playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN,
                                         AzureTtsClient.EN_US_F)
-                                    if (app.practicePrefs.slowFirst()) {
+                                    if (slowFirst) {
                                         publishNV(s, "pl-slow", position)
                                         playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL,
-                                            app.audioPrefs.slowPlVoice())
+                                            slowPlVoice)
                                     }
                                     publishNV(s, "pl", position)
                                     playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL,
@@ -314,16 +333,21 @@ private fun PhraseDetail(app: LangbangApplication, group: PhraseGroup) {
                         fontWeight = FontWeight.SemiBold)
                 }
             }
+            Spacer(Modifier.width(10.dp))
+            SelectionNavButtons(
+                items = groups,
+                selected = group,
+                onSelect = onSelectGroup,
+                previousContentDescription = "Previous phrase group",
+                nextContentDescription = "Next phrase group"
+            )
         }
 
         // "Starred only" quiz scope toggle.
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(
+            SubtleCheckbox(
                 checked = starredOnly,
                 onCheckedChange = { starredOnly = it },
-                colors = CheckboxDefaults.colors(
-                    checkedColor = MaterialTheme.colorScheme.primary
-                ),
                 modifier = Modifier.size(24.dp)
             )
             Spacer(Modifier.width(6.dp))
@@ -376,15 +400,15 @@ private fun SentenceRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text(
-                    sentence.en,
+                DelayedEnglishTranslation(
+                    text = sentence.en,
                     fontSize = 12.sp,
                     color = LbColors.TextMuted
                 )
                 WordAlignedPolish(
                     sentence = sentence,
                     plFontSize = 18.sp,
-                    plFontWeight = FontWeight.SemiBold,
+                    plFontWeight = FontWeight.Bold,
                     glossFontSize = 11.sp
                 )
             }
@@ -431,18 +455,5 @@ private suspend fun playAndAwait(
     locale: String,
     voice: String
 ) {
-    if (text.isEmpty()) return
-    val file = app.audioCache.fileFor(locale, voice, text)
-    if (!app.audioCache.has(file)) {
-        app.tts.synthesize(text, voice, locale, file)
-    }
-    if (!app.audioCache.has(file)) return
-    awaitPlayback(app, file)
-}
-
-private suspend fun awaitPlayback(app: LangbangApplication, file: File) {
-    suspendCancellableCoroutine<Unit> { cont ->
-        app.audioPlayer.play(file) { if (cont.isActive) cont.resume(Unit) }
-        cont.invokeOnCancellation { app.audioPlayer.stop() }
-    }
+    app.playAudioAndAwait(text, locale, voice)
 }

@@ -13,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -20,8 +21,9 @@ import androidx.compose.ui.unit.sp
 import com.sponic.langbang.domain.NowVoicing
 
 /**
- * Single source of truth for the Now Voicing card body — the status header, the English
- * grammatical line, and the big centered Polish row with per-token gloss columns.
+ * Single source of truth for the Now Voicing card body — the status header, the
+ * delayed literal-English line, grammar reference, and the big centered Polish row with per-token
+ * gloss columns underneath.
  *
  * Two surfaces render this:
  *   1. The sticky header panel at the top of the app (LangbangApp.NowVoicingContent).
@@ -52,13 +54,14 @@ fun NowVoicingBody(
     statusText: String,
     onPlWordClick: (String) -> Unit = {},
     idlePlaceholder: String = "Tap “Play Phrases” to start drilling phrases.",
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    dark: Boolean = false
 ) {
     if (pinned == null) {
         Text(
             idlePlaceholder,
             fontSize = 14.sp,
-            color = LbColors.TextMuted,
+            color = if (dark) LbColors.OnDark2 else LbColors.TextMuted,
             modifier = modifier
         )
         return
@@ -89,6 +92,15 @@ fun NowVoicingBody(
             ?.filter { it.isNotEmpty() }
             ?: List(plTokens.size) { "" }
     }
+    val showEnglish = rememberDelayedTranslationVisible(
+        key = "${pinned.pl}\n${pinned.en}\n${pinned.literal.orEmpty()}"
+    )
+    val englishText = pinned.literal?.trim()?.takeIf { it.isNotEmpty() } ?: pinned.en
+    val grammarReference = nowVoicingGrammarReference(pinned)
+    val primaryText = if (dark) LbColors.OnDark else LbColors.TextPrimary
+    val secondaryText = if (dark) LbColors.OnDark2 else LbColors.TextSecondary
+    val mutedText = if (dark) LbColors.OnDark2.copy(alpha = 0.78f) else LbColors.TextMuted
+    val accentText = if (dark) LbColors.AudioBright else LbColors.Label
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -100,16 +112,24 @@ fun NowVoicingBody(
                 statusText,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = LbColors.Label,
+                color = if (dark) LbColors.OnDark2 else LbColors.Label,
                 modifier = Modifier.fillMaxWidth()
             )
         }
-        Text(
-            pinned.en,
-            fontSize = 18.sp,
+        DelayedEnglishTranslation(
+            text = englishText,
+            fontSize = if (dark) 14.sp else 18.sp,
             fontWeight = if (enActive) FontWeight.Bold else FontWeight.SemiBold,
-            color = if (enActive) LbColors.TextPrimary else LbColors.TextSecondary
+            color = if (enActive) primaryText else secondaryText
         )
+        grammarReference?.let { reference ->
+            Text(
+                reference,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Normal,
+                color = mutedText
+            )
+        }
         // Big centered Polish row with per-token gloss columns. Row centers itself
         // in the available width (Arrangement.Center) and each token's column
         // centers its own contents. Gloss row reserved even when missing so columns
@@ -117,6 +137,7 @@ fun NowVoicingBody(
         // (sentence) renderings.
         val totalChars = plTokens.sumOf { it.length } + (plTokens.size - 1).coerceAtLeast(0) * 2
         val polishFontSize = when {
+            dark -> 30.sp
             totalChars > 55 -> 28.sp
             totalChars > 46 -> 32.sp
             totalChars > 38 -> 36.sp
@@ -124,6 +145,7 @@ fun NowVoicingBody(
             else -> 52.sp
         }
         val glossFontSize = when {
+            dark -> 11.5.sp
             totalChars > 46 -> 11.sp
             totalChars > 38 -> 12.sp
             else -> 14.sp
@@ -145,31 +167,47 @@ fun NowVoicingBody(
                 ) {
                     val displayed = if (plHidden) "•".repeat(plTok.length.coerceAtLeast(2))
                                     else plTok
-                    val plColor = when {
-                            plHidden -> LbColors.TextMuted.copy(alpha = 0.5f)
-                            token?.gender != null -> GrammarVisuals.Gender.color(token.gender)
-                            plActive || slowActive -> LbColors.TextPrimary
-                            pausing -> LbColors.TextSecondary
-                            else -> LbColors.TextPrimary
+                    val fixedColor = when {
+                            plHidden -> mutedText.copy(alpha = 0.5f)
+                            plActive || slowActive -> primaryText
+                            pausing -> secondaryText
+                            else -> primaryText
                         }
-                    OutlinedPolishText(
-                        text = displayed,
-                        fillColor = plColor,
-                        outlineColor = if (plHidden) null else token?.caseKey?.let { GrammarVisuals.Case.color(it) },
-                        fontSize = polishFontSize,
-                        fontWeight = FontWeight.Bold,
-                        outlineWidth = GrammarVisuals.NounForm.NowVoicingOutlineWidth,
-                        backingOutlineExtraWidth = GrammarVisuals.NounForm.NowVoicingBackingExtraWidth,
-                        glyphGap = GrammarVisuals.NounForm.NowVoicingGlyphGap,
-                        maxLines = 1,
-                        softWrap = false
-                    )
+                    val variableToken = if (plHidden) null else token
+                    val variableColor = variableToken?.let { GrammarVisuals.Variable.color(it) }
+                    if (variableToken != null && variableColor != null) {
+                        VariablePolishText(
+                            text = displayed,
+                            fixedColor = fixedColor,
+                            variableColor = variableColor,
+                            fontSize = polishFontSize,
+                            fontWeight = FontWeight.Bold,
+                            variableStart = variableToken.variableStart,
+                            variableEnd = variableToken.variableEnd,
+                            fallbackWholeWord = variableToken.variableStart == null,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    } else {
+                        Text(
+                            displayed,
+                            fontSize = polishFontSize,
+                            fontWeight = FontWeight.Bold,
+                            color = fixedColor,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
                     Text(
-                        if (plHidden || gloss.isEmpty()) " " else gloss,
+                        if (gloss.isEmpty()) " " else gloss,
                         fontSize = glossFontSize,
                         maxLines = 1,
                         softWrap = false,
-                        color = LbColors.Label,
+                        color = if (showEnglish && !plHidden && gloss.isNotEmpty()) {
+                            accentText
+                        } else {
+                            Color.Transparent
+                        },
                         fontStyle = FontStyle.Italic,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -178,3 +216,39 @@ fun NowVoicingBody(
         }
     }
 }
+
+private fun nowVoicingGrammarReference(pinned: NowVoicing): String? {
+    val token = pinned.words?.firstOrNull {
+        it.gender != null || it.caseLabel != null || it.caseKey != null || it.numberLabel != null
+    } ?: return null
+    val parts = listOfNotNull(
+        token.gender?.let(::nowVoicingGenderLabel),
+        token.caseLabel?.let(::nowVoicingGrammarLabel)
+            ?: token.caseKey?.let(::nowVoicingCaseLabel),
+        token.numberLabel?.let(::nowVoicingGrammarLabel)
+    )
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" - ", prefix = "(", postfix = ")")
+}
+
+private fun nowVoicingGenderLabel(gender: String): String = when (gender.trim().lowercase()) {
+    "m", "masculine", "masc." -> "masculine"
+    "f", "feminine", "fem." -> "feminine"
+    "n", "neuter", "neut." -> "neuter"
+    "mp", "virile" -> "men or mixed plural"
+    "other", "non-virile" -> "other plural"
+    else -> nowVoicingGrammarLabel(gender)
+}
+
+private fun nowVoicingCaseLabel(caseKey: String): String = when (caseKey.trim().lowercase()) {
+    "nom" -> "nominative"
+    "acc" -> "accusative"
+    "gen" -> "genitive"
+    "dat" -> "dative"
+    "inst" -> "instrumental"
+    "loc" -> "locative"
+    "voc" -> "vocative"
+    else -> nowVoicingGrammarLabel(caseKey)
+}
+
+private fun nowVoicingGrammarLabel(label: String): String =
+    label.trim().lowercase().takeIf { it.isNotEmpty() } ?: label

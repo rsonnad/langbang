@@ -56,7 +56,10 @@ data class TokenPair(
     val gender: String? = null,
     val caseKey: String? = null,
     val caseLabel: String? = null,
-    val numberLabel: String? = null
+    val numberLabel: String? = null,
+    val variableStart: Int? = null,
+    val variableEnd: Int? = null,
+    val variableKind: String? = null
 )
 
 @Serializable
