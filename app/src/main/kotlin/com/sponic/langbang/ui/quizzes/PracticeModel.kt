@@ -1,8 +1,10 @@
 package com.sponic.langbang.ui.quizzes
 
 import com.sponic.langbang.data.VerbSentenceStore
+import com.sponic.langbang.data.model.TokenPair
 
 enum class PracticeWordType(val label: String) {
+    HELPERS("Helpers"),
     VERBS("Verbs"),
     NOUNS("Nouns"),
     ADJECTIVES("Adj"),
@@ -11,6 +13,7 @@ enum class PracticeWordType(val label: String) {
 }
 
 enum class PracticeKind(val label: String) {
+    HELPER_INFINITIVE("Helper + inf"),
     VERB_FORM("Verb form"),
     VERB_SENTENCE("Verb sentence"),
     NOUN_FORM("Noun form"),
@@ -29,12 +32,14 @@ enum class AutoPracticeStage(val label: String) {
 
 data class PracticeScope(
     val auto: Boolean = true,
-    val wordTypes: Set<PracticeWordType> = PracticeWordType.entries.toSet(),
-    val personKeys: Set<String> = setOf("1sg", "2sg", "3sg", "1pl", "2pl", "3pl"),
-    val tenses: Set<String> = setOf(
-        VerbSentenceStore.TENSE_PRESENT,
-        VerbSentenceStore.TENSE_PAST
+    val wordTypes: Set<PracticeWordType> = setOf(
+        PracticeWordType.VERBS,
+        PracticeWordType.NOUNS,
+        PracticeWordType.ADJECTIVES,
+        PracticeWordType.ADVERBS
     ),
+    val personKeys: Set<String> = setOf("1sg", "2sg", "3sg"),
+    val tenses: Set<String> = setOf(VerbSentenceStore.TENSE_PRESENT),
 ) {
     val title: String
         get() = if (auto) "Practice · Auto" else "Practice · Manual"
@@ -47,6 +52,8 @@ data class PracticeItem(
     val answerPl: String,
     val answerEn: String,
     val context: String,
+    val literal: String? = null,
+    val words: List<TokenPair>? = null,
     val targetLemma: String? = null,
     val targetForm: String? = null,
     val personKey: String? = null,

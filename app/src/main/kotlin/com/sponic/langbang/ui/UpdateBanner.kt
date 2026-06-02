@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.domain.UpdateChecker
 import kotlinx.coroutines.launch
+import java.io.File
 
 /**
  * Launch-time "update available" strip. Self-contained: checks R2 once on first
@@ -43,7 +44,11 @@ import kotlinx.coroutines.launch
  * apps" yet, the first install attempt routes them to that toggle.
  */
 @Composable
-fun UpdateBanner(app: LangbangApplication) {
+fun UpdateBanner(
+    app: LangbangApplication,
+    onInstallPermissionNeeded: () -> Unit,
+    onInstallReady: (File) -> Unit
+) {
     val scope = rememberCoroutineScope()
 
     var available by remember { mutableStateOf<UpdateChecker.Available?>(null) }
@@ -65,8 +70,8 @@ fun UpdateBanner(app: LangbangApplication) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = if (downloading) "Downloading ${update.versionName}… $progress%"
-                else "Update ${update.versionName} available",
+                text = if (downloading) "Downloading v${update.versionCode}… $progress%"
+                else "Update v${update.versionCode} available",
                 color = LbColors.OnPrimary,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -90,9 +95,10 @@ fun UpdateBanner(app: LangbangApplication) {
                 Button(
                     onClick = {
                         // If the user hasn't allowed installs from langbang yet, send
-                        // them to the toggle first; they can tap Install again after.
+                        // them to the branded handoff screen first; Android Settings
+                        // takes over only after they tap through from there.
                         if (!app.updateChecker.canInstall()) {
-                            app.updateChecker.openInstallPermissionSettings()
+                            onInstallPermissionNeeded()
                             return@Button
                         }
                         downloading = true
@@ -103,7 +109,7 @@ fun UpdateBanner(app: LangbangApplication) {
                             if (apk == null) {
                                 error = "Download failed"
                             } else {
-                                app.updateChecker.install(apk)
+                                onInstallReady(apk)
                             }
                         }
                     },

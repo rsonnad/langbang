@@ -1,7 +1,7 @@
 {
   "id": "lesson-03",
   "title": "Lesson 3 — Core adjectives",
-  "summary": "20 high-frequency Polish adjectives. Each one is shown in all five nominative forms (m / f / n / virile-pl / other-pl) and all five accusative forms — accusative is the case you need to say things like 'I see a big table'. Masculine accusative defaults to the animate ending (-ego); for inanimate nouns the masculine accusative is identical to the nominative (duży stół, not dużego stół).",
+  "summary": "High-frequency Polish adjectives. Each one is shown in all five nominative forms (m / f / n / virile-pl / other-pl) and all five accusative forms — accusative is the case you need to say things like 'I see a big table'. Masculine accusative defaults to the animate ending (-ego); for inanimate nouns the masculine accusative is identical to the nominative (duży stół, not dużego stół).",
   "adjectives": [
     {"lemma": "dobry",      "en": "good",            "nom": {"m": "dobry",      "f": "dobra",      "n": "dobre",      "mp": "dobrzy",   "other": "dobre"},      "acc": {"m": "dobrego",      "f": "dobrą",      "n": "dobre",      "mp": "dobrych",    "other": "dobre"}},
     {"lemma": "zły",        "en": "bad",             "nom": {"m": "zły",        "f": "zła",        "n": "złe",        "mp": "źli",      "other": "złe"},        "acc": {"m": "złego",        "f": "złą",        "n": "złe",        "mp": "złych",      "other": "złe"}},
@@ -58,6 +58,13 @@
     {"lemma": "głośny",     "en": "loud",            "nom": {"m": "głośny",     "f": "głośna",     "n": "głośne",     "mp": "głośni",   "other": "głośne"},     "acc": {"m": "głośnego",     "f": "głośną",     "n": "głośne",     "mp": "głośnych",   "other": "głośne"}},
     {"lemma": "cichy",      "en": "quiet",           "nom": {"m": "cichy",      "f": "cicha",      "n": "ciche",      "mp": "cisi",     "other": "ciche"},      "acc": {"m": "cichego",      "f": "cichą",      "n": "ciche",      "mp": "cisich",     "other": "ciche"}},
     {"lemma": "ciężki",     "en": "heavy",           "nom": {"m": "ciężki",     "f": "ciężka",     "n": "ciężkie",    "mp": "ciężcy",   "other": "ciężkie"},    "acc": {"m": "ciężkiego",    "f": "ciężką",     "n": "ciężkie",    "mp": "ciężkich",   "other": "ciężkie"}},
-    {"lemma": "lekki",      "en": "light",           "nom": {"m": "lekki",      "f": "lekka",      "n": "lekkie",     "mp": "lekcy",    "other": "lekkie"},     "acc": {"m": "lekkiego",     "f": "lekką",      "n": "lekkie",     "mp": "lekkich",    "other": "lekkie"}}
+    {"lemma": "lekki",      "en": "light",           "nom": {"m": "lekki",      "f": "lekka",      "n": "lekkie",     "mp": "lekcy",    "other": "lekkie"},     "acc": {"m": "lekkiego",     "f": "lekką",      "n": "lekkie",     "mp": "lekkich",    "other": "lekkie"}},
+    {"lemma": "żonaty",     "en": "married",         "nom": {"m": "żonaty",     "f": "żonata",     "n": "żonate",     "mp": "żonaci",   "other": "żonate"},     "acc": {"m": "żonatego",     "f": "żonatą",     "n": "żonate",     "mp": "żonatych",   "other": "żonate"}},
+    {"lemma": "samotny",    "en": "single / alone",  "nom": {"m": "samotny",    "f": "samotna",    "n": "samotne",    "mp": "samotni",  "other": "samotne"},    "acc": {"m": "samotnego",    "f": "samotną",    "n": "samotne",    "mp": "samotnych",  "other": "samotne"}},
+    {"lemma": "rozwiedziony","en": "divorced",       "nom": {"m": "rozwiedziony","f": "rozwiedziona","n": "rozwiedzione","mp": "rozwiedzeni","other": "rozwiedzione"},"acc": {"m": "rozwiedzionego","f": "rozwiedzioną","n": "rozwiedzione","mp": "rozwiedzionych","other": "rozwiedzione"}},
+    {"lemma": "niesamowity","en": "amazing",         "nom": {"m": "niesamowity","f": "niesamowita","n": "niesamowite","mp": "niesamowici","other": "niesamowite"},"acc": {"m": "niesamowitego","f": "niesamowitą","n": "niesamowite","mp": "niesamowitych","other": "niesamowite"}},
+    {"lemma": "uroczy",     "en": "lovely",          "nom": {"m": "uroczy",     "f": "urocza",     "n": "urocze",     "mp": "uroczy",   "other": "urocze"},     "acc": {"m": "uroczego",     "f": "uroczą",     "n": "urocze",     "mp": "uroczych",   "other": "urocze"}},
+    {"lemma": "inspirujący","en": "inspiring",       "nom": {"m": "inspirujący","f": "inspirująca","n": "inspirujące","mp": "inspirujący","other": "inspirujące"},"acc": {"m": "inspirującego","f": "inspirującą","n": "inspirujące","mp": "inspirujących","other": "inspirujące"}},
+    {"lemma": "błogi",      "en": "blissful",        "nom": {"m": "błogi",      "f": "błoga",      "n": "błogie",     "mp": "błodzy",   "other": "błogie"},     "acc": {"m": "błogiego",     "f": "błogą",      "n": "błogie",     "mp": "błogich",    "other": "błogie"}}
   ]
 }

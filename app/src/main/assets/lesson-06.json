@@ -1,7 +1,7 @@
 {
   "id": "lesson-06",
   "title": "Lesson 6 — Core nouns",
-  "summary": "30 high-frequency Polish nouns, each shown across its three workhorse cases — nominative (subject), accusative (direct object), and genitive ('of' / after 'nie ma' / after most prepositions) — in both singular and plural. Each noun is tagged with its gender (m / f / n). Masculine accusative depends on animacy: animate nouns (people, animals) take a genitive-like accusative (widzę psa, widzę syna), while inanimate masculine accusative equals the nominative (widzę dom, widzę stół). The stored forms already bake this in.",
+  "summary": "High-frequency Polish nouns, each shown across its three workhorse cases — nominative (subject), accusative (direct object), and genitive ('of' / after 'nie ma' / after most prepositions) — in both singular and plural. Each noun is tagged with its gender (m / f / n). Masculine accusative depends on animacy: animate nouns (people, animals) take a genitive-like accusative (widzę psa, widzę syna), while inanimate masculine accusative equals the nominative (widzę dom, widzę stół). The stored forms already bake this in.",
   "nouns": [
     {"lemma": "dom",        "en": "house / home",     "gender": "m", "nom": {"sg": "dom",        "pl": "domy"},        "acc": {"sg": "dom",        "pl": "domy"},        "gen": {"sg": "domu",       "pl": "domów"}},
     {"lemma": "kot",        "en": "cat",              "gender": "m", "nom": {"sg": "kot",        "pl": "koty"},        "acc": {"sg": "kota",       "pl": "koty"},        "gen": {"sg": "kota",       "pl": "kotów"}},
@@ -13,7 +13,7 @@
     {"lemma": "brat",       "en": "brother",          "gender": "m", "nom": {"sg": "brat",       "pl": "bracia"},      "acc": {"sg": "brata",      "pl": "braci"},       "gen": {"sg": "brata",      "pl": "braci"}},
     {"lemma": "siostra",    "en": "sister",           "gender": "f", "nom": {"sg": "siostra",    "pl": "siostry"},     "acc": {"sg": "siostrę",    "pl": "siostry"},     "gen": {"sg": "siostry",    "pl": "sióstr"}},
     {"lemma": "syn",        "en": "son",              "gender": "m", "nom": {"sg": "syn",        "pl": "synowie"},     "acc": {"sg": "syna",       "pl": "synów"},       "gen": {"sg": "syna",       "pl": "synów"}},
-    {"lemma": "człowiek",   "en": "person / human",   "gender": "m", "nom": {"sg": "człowiek",   "pl": "ludzie"},      "acc": {"sg": "człowieka",  "pl": "ludzi"},       "gen": {"sg": "człowieka",  "pl": "ludzi"}},
+    {"lemma": "człowiek",   "en": "person",           "gender": "m", "nom": {"sg": "człowiek",   "pl": "ludzie"},      "acc": {"sg": "człowieka",  "pl": "ludzi"},       "gen": {"sg": "człowieka",  "pl": "ludzi"}},
     {"lemma": "woda",       "en": "water",            "gender": "f", "nom": {"sg": "woda",       "pl": "wody"},        "acc": {"sg": "wodę",       "pl": "wody"},        "gen": {"sg": "wody",       "pl": "wód"}},
     {"lemma": "kawa",       "en": "coffee",           "gender": "f", "nom": {"sg": "kawa",       "pl": "kawy"},        "acc": {"sg": "kawę",       "pl": "kawy"},        "gen": {"sg": "kawy",       "pl": "kaw"}},
     {"lemma": "herbata",    "en": "tea",              "gender": "f", "nom": {"sg": "herbata",    "pl": "herbaty"},     "acc": {"sg": "herbatę",    "pl": "herbaty"},     "gen": {"sg": "herbaty",    "pl": "herbat"}},
@@ -32,6 +32,10 @@
     {"lemma": "szkoła",     "en": "school",           "gender": "f", "nom": {"sg": "szkoła",     "pl": "szkoły"},      "acc": {"sg": "szkołę",     "pl": "szkoły"},      "gen": {"sg": "szkoły",     "pl": "szkół"}},
     {"lemma": "praca",      "en": "work / job",       "gender": "f", "nom": {"sg": "praca",      "pl": "prace"},       "acc": {"sg": "pracę",      "pl": "prace"},       "gen": {"sg": "pracy",      "pl": "prac"}},
     {"lemma": "noc",        "en": "night",            "gender": "f", "nom": {"sg": "noc",        "pl": "noce"},        "acc": {"sg": "noc",        "pl": "noce"},        "gen": {"sg": "nocy",       "pl": "nocy"}},
-    {"lemma": "miłość",     "en": "love",             "gender": "f", "nom": {"sg": "miłość",     "pl": "miłości"},     "acc": {"sg": "miłość",     "pl": "miłości"},     "gen": {"sg": "miłości",    "pl": "miłości"}}
+    {"lemma": "miłość",     "en": "love",             "gender": "f", "nom": {"sg": "miłość",     "pl": "miłości"},     "acc": {"sg": "miłość",     "pl": "miłości"},     "gen": {"sg": "miłości",    "pl": "miłości"}},
+    {"lemma": "komputer",   "en": "computer",         "gender": "m", "nom": {"sg": "komputer",   "pl": "komputery"},   "acc": {"sg": "komputer",   "pl": "komputery"},   "gen": {"sg": "komputera",  "pl": "komputerów"}},
+    {"lemma": "karta kredytowa", "en": "credit card", "gender": "f", "nom": {"sg": "karta kredytowa", "pl": "karty kredytowe"}, "acc": {"sg": "kartę kredytową", "pl": "karty kredytowe"}, "gen": {"sg": "karty kredytowej", "pl": "kart kredytowych"}},
+    {"lemma": "chłopak",    "en": "boyfriend",        "gender": "m", "nom": {"sg": "chłopak",    "pl": "chłopaki"},    "acc": {"sg": "chłopaka",   "pl": "chłopaków"},    "gen": {"sg": "chłopaka",   "pl": "chłopaków"}},
+    {"lemma": "dziewczyna", "en": "girlfriend",       "gender": "f", "nom": {"sg": "dziewczyna", "pl": "dziewczyny"},  "acc": {"sg": "dziewczynę", "pl": "dziewczyny"},  "gen": {"sg": "dziewczyny", "pl": "dziewczyn"}}
   ]
 }

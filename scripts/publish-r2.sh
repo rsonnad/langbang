@@ -3,7 +3,8 @@
 #
 # What it does:
 #   1. ./gradlew :app:assembleDebug          (bumps buildNumber, produces APK)
-#   2. uploads as langbang-v{N}-arm64.apk     (pinned version, for rollback)
+#   2. uploads as langbang-v{buildNumber}-arm64.apk
+#      (pinned build tag, e.g. v245; do not use v0.1.8.245 here)
 #   3. uploads as langbang-latest.apk         (stable pointer for the page)
 #   4. patches rahulio/pages/langbang/index.html with the new build number
 #   5. commits + pushes JUST that page change in the alpacapps repo
@@ -55,9 +56,10 @@ for arg in "$@"; do
 done
 
 # 1. Build.
+PRE_BUILD_NUMBER=$(grep -oE 'buildNumber=[0-9]+' version.properties | cut -d= -f2)
 if [ "$SKIP_BUILD" -eq 0 ]; then
   echo "→ building debug APK"
-  ./gradlew :app:assembleDebug -q
+  ./gradlew --no-configuration-cache :app:assembleDebug -q
 fi
 
 APK="app/build/outputs/apk/debug/app-arm64-v8a-debug.apk"
@@ -65,7 +67,7 @@ APK="app/build/outputs/apk/debug/app-arm64-v8a-debug.apk"
 # Gradle config-caching on and a mutable buildNumber counter, the number baked into
 # the APK can lag what's written to version.properties (especially when two build
 # sessions race the file). Reading from the APK via aapt2 guarantees the pinned R2
-# filename, the page label, and the in-app "version" header can never disagree.
+# filename, the page label, and Android manifest metadata can never disagree.
 # (2026-05-30 incident: version.properties said 87 while a freshly-built APK reported
 # 85 — the published filename lied. Reading from the APK eliminates the whole class.)
 [ -f "$APK" ] || { echo "APK not found: $APK" >&2; exit 1; }
@@ -91,6 +93,12 @@ else
   echo "→ aapt2 not found; version read from version.properties: $FULL_VERSION" >&2
 fi
 [ -n "$BUILD_NUMBER" ] || { echo "could not determine build number" >&2; exit 1; }
+if [ "$SKIP_BUILD" -eq 0 ] && [ -n "$PRE_BUILD_NUMBER" ] &&
+   [ "$BUILD_NUMBER" -le "$PRE_BUILD_NUMBER" ]; then
+  echo "stale APK after build: expected versionCode > ${PRE_BUILD_NUMBER}, got ${BUILD_NUMBER}" >&2
+  echo "refusing to upload; remove stale build outputs or inspect Gradle version inputs" >&2
+  exit 1
+fi
 echo "→ build $FULL_VERSION ($(du -h "$APK" | cut -f1))"
 
 # 2. Pull R2 credentials from Bitwarden.
@@ -177,6 +185,83 @@ if [ "$MANIFEST_CODE" != "$BUILD_NUMBER" ] || [ "$MANIFEST_NAME" != "$FULL_VERSI
 fi
 echo "  ✓ manifest version ${MANIFEST_NAME} (${MANIFEST_CODE})"
 
+# 4b. Keep R2 storage bounded. The public install contract needs latest.apk and
+# a few rollback pins, not every debug APK forever. Retain the newest 3 pinned
+# builds by build number plus langbang-latest.apk; remove older APKs, including
+# legacy model-specific build APKs under langbang/builds/.
+APK_RETENTION_COUNT=3
+format_bytes() {
+  awk -v bytes="$1" 'BEGIN {
+    split("B KiB MiB GiB TiB", units, " ")
+    value = bytes + 0
+    unit = 1
+    while (value >= 1024 && unit < 5) {
+      value = value / 1024
+      unit++
+    }
+    if (unit == 1) printf "%d %s", value, units[unit]
+    else printf "%.2f %s", value, units[unit]
+  }'
+}
+
+cleanup_old_apks() {
+  local objects_json keep_keys delete_list delete_count delete_bytes batch_json
+  objects_json="$(mktemp -t langbang-r2-objects.XXXXXX.json)"
+  keep_keys="$(mktemp -t langbang-r2-keep.XXXXXX.txt)"
+  delete_list="$(mktemp -t langbang-r2-delete.XXXXXX.json)"
+  batch_json="$(mktemp -t langbang-r2-delete-batch.XXXXXX.json)"
+  trap 'rm -f "$objects_json" "$keep_keys" "$delete_list" "$batch_json"' RETURN
+
+  aws s3api list-objects-v2 \
+    --bucket "$BUCKET" \
+    --prefix "langbang/" \
+    --endpoint-url "$ENDPOINT" \
+    --query 'Contents[].{Key:Key,Size:Size}' \
+    --output json > "$objects_json"
+
+  jq -r --argjson n "$APK_RETENTION_COUNT" '
+    [
+      .[]
+      | select(.Key | test("^langbang/langbang-v[0-9]+-arm64\\.apk$"))
+      | {Key, build: (.Key | capture("v(?<n>[0-9]+)-arm64").n | tonumber)}
+    ]
+    | sort_by(.build)
+    | reverse
+    | .[0:$n]
+    | .[].Key
+  ' "$objects_json" > "$keep_keys"
+  printf '%s\n' "$LATEST_KEY" >> "$keep_keys"
+
+  jq --rawfile keep "$keep_keys" '
+    ($keep | split("\n") | map(select(length > 0))) as $keepKeys
+    | [
+        .[]
+        | select((.Key | endswith(".apk")) and ((.Key as $k | $keepKeys | index($k)) | not))
+      ]
+  ' "$objects_json" > "$delete_list"
+
+  delete_count="$(jq 'length' "$delete_list")"
+  delete_bytes="$(jq '[.[].Size] | add // 0' "$delete_list")"
+  if [ "$delete_count" -eq 0 ]; then
+    echo "→ APK retention: no old APKs to remove"
+    return
+  fi
+
+  echo "→ APK retention: deleting ${delete_count} old APK object(s) ($(format_bytes "$delete_bytes"))"
+  jq -c '
+    [range(0; length; 1000) as $i | {Objects: (.[$i:$i+1000] | map({Key})), Quiet: true}]
+    | .[]
+  ' "$delete_list" | while IFS= read -r batch; do
+    printf '%s\n' "$batch" > "$batch_json"
+    aws s3api delete-objects \
+      --bucket "$BUCKET" \
+      --delete "file://${batch_json}" \
+      --endpoint-url "$ENDPOINT" >/dev/null
+  done
+  echo "  ✓ kept latest + newest ${APK_RETENTION_COUNT} pinned APKs"
+}
+cleanup_old_apks
+
 # 5. Patch the landing page to point at the new pinned build, then commit + push
 #    JUST that file. Stages only the page (never `git add .`) so unrelated WIP in
 #    the alpacapps tree stays untouched. Rebase-then-push handles concurrent
@@ -186,10 +271,10 @@ if [ "$NO_PAGE_EDIT" -eq 0 ]; then
   PAGE_REL="rahulio/pages/langbang/index.html"
   PAGE="$ALPACAPPS/$PAGE_REL"
   if [ -f "$PAGE" ]; then
-    echo "→ patching page → v${FULL_VERSION}"
+    echo "→ patching page → v${BUILD_NUMBER}"
     # Two surgical replacements — label + href.
     sed -i.bak -E \
-      -e "s|Current build — v[0-9.]+|Current build — v${FULL_VERSION}|" \
+      -e "s|Current build — v[0-9.]+|Current build — v${BUILD_NUMBER}|" \
       -e "s|langbang-v[0-9]+-arm64\.apk|langbang-v${BUILD_NUMBER}-arm64.apk|g" \
       "$PAGE"
     rm -f "${PAGE}.bak"
@@ -229,6 +314,6 @@ if [ "$NO_PAGE_EDIT" -eq 0 ]; then
 fi
 
 echo
-echo "✓ published langbang ${FULL_VERSION}"
+echo "✓ published langbang v${BUILD_NUMBER} (${FULL_VERSION})"
 echo "  latest: ${PUBLIC_BASE}/${LATEST_KEY}"
 echo "  pinned: ${PUBLIC_BASE}/${PINNED_KEY}"

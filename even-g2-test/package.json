@@ -1,0 +1,23 @@
+{
+  "name": "langbang-even-g2-test",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "pack": "npm run build && evenhub pack app.json dist -o dist/langbang-g2-test.ehpk",
+    "sim": "evenhub-simulator http://localhost:5173 --automation-port 9898",
+    "test:sim": "node scripts/smoke-simulator.mjs"
+  },
+  "dependencies": {
+    "@evenrealities/even_hub_sdk": "0.0.10"
+  },
+  "devDependencies": {
+    "@evenrealities/evenhub-cli": "0.1.13",
+    "@evenrealities/evenhub-simulator": "0.7.3",
+    "pngjs": "7.0.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.3"
+  }
+}

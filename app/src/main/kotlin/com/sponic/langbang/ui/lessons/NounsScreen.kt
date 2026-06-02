@@ -9,10 +9,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,15 +30,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -56,21 +50,22 @@ import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.domain.PrefetchProgress
 import com.sponic.langbang.data.model.NounEntry
-import com.sponic.langbang.data.model.NounLesson
 import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.ensureCachedAudio
-import com.sponic.langbang.domain.playAudioAndAwait
 import com.sponic.langbang.ui.common.CompactLessonListCard
+import com.sponic.langbang.ui.common.StudyQueuePlayer
 import com.sponic.langbang.ui.common.CompactLessonListDefaults
 import com.sponic.langbang.ui.common.DelayedEnglishTranslation
 import com.sponic.langbang.integrations.AzureTtsClient
 import com.sponic.langbang.ui.common.GrammarVisuals
+import com.sponic.langbang.ui.common.FilterGroup
+import com.sponic.langbang.ui.common.LbButton
+import com.sponic.langbang.ui.common.LbChip
 import com.sponic.langbang.ui.common.SelectionNavButtons
-import com.sponic.langbang.ui.common.SubtleCheckbox
 import com.sponic.langbang.ui.common.VariablePolishText
 import com.sponic.langbang.ui.common.variableEndForPolishForm
 import com.sponic.langbang.ui.common.variableStartForPolishForm
@@ -102,17 +97,9 @@ private fun genderName(g: String): String = when (g.lowercase()) {
 private data class CaseBlock(val key: String, val title: String, val hint: String)
 
 private val CASE_BLOCKS = listOf(
-    CaseBlock("nom", "Nominative", "the subject — \"the dog is here\" / \"to jest pies\""),
-    CaseBlock(
-        "acc", "Accusative",
-        "direct object — \"I see the dog\". Masculine animate takes -a (widzę psa); " +
-            "inanimate masculine = nominative (widzę dom)."
-    ),
-    CaseBlock(
-        "gen", "Genitive",
-        "\"of\" / after nie ma + most prepositions (do, od, z, dla, bez) — " +
-            "\"I don't have a dog\" / \"nie mam psa\""
-    )
+    CaseBlock("nom", "Nominative", "subject"),
+    CaseBlock("acc", "Accusative", "direct object"),
+    CaseBlock("gen", "Genitive", "of / negation")
 )
 
 private fun NounEntry.caseMap(key: String): Map<String, String> = when (key) {
@@ -138,21 +125,16 @@ internal class NounsScreenState(
         private set
     var error: String? by mutableStateOf(null)
         private set
-    var selectedCaseKeys: Set<String> by mutableStateOf(setOf("acc"))
+    var selectedCaseKeys: Set<String> by mutableStateOf(CASE_BLOCKS.map { it.key }.toSet())
         private set
-    var selectedNumberKeys: Set<String> by mutableStateOf(setOf("sg"))
+    var selectedNumberKeys: Set<String> by mutableStateOf(NUMBER_KEYS.toSet())
         private set
     val canPlayForms: Boolean
         get() = selectedCaseKeys.isNotEmpty() && selectedNumberKeys.isNotEmpty()
 
-    private var playJob: Job? = null
-    var playingIndex: Int by mutableStateOf(-1)
-        private set
-    val playing: Boolean get() = playJob?.isActive == true
-
-    private var queue: List<SentenceExample> = emptyList()
-    private var queueQuiz: Boolean = false
-    private var currentItemIndex: Int = 0
+    private val player = StudyQueuePlayer(app, scope)
+    val playingIndex: Int get() = player.playingIndex
+    val playing: Boolean get() = player.hasQueue
 
     fun select(noun: NounEntry?) {
         if (selected?.lemma == noun?.lemma) return
@@ -179,44 +161,13 @@ internal class NounsScreenState(
     }
 
     fun stop() {
-        playJob?.cancel()
-        playJob = null
-        playingIndex = -1
-        queue = emptyList()
-        currentItemIndex = 0
-        app.audioPlayer.stop()
-        NowVoicingBus.clear()
-        PlaybackController.unregister()
-    }
-
-    fun rewind() {
-        if (queue.isEmpty()) return
-        playJob?.cancel()
-        playJob = null
-        app.audioPlayer.stop()
-        currentItemIndex = (currentItemIndex - 1).coerceAtLeast(0)
-        relaunchFromCurrent()
-    }
-
-    fun restartQueue() {
-        if (queue.isEmpty()) return
-        playJob?.cancel()
-        playJob = null
-        app.audioPlayer.stop()
-        currentItemIndex = 0
-        relaunchFromCurrent()
+        player.stop()
     }
 
     fun playAll(quiz: Boolean) {
-        if (playJob?.isActive == true) {
-            stop()
-            return
-        }
+        if (player.hasQueue) { stop(); return }
         if (sentences.isEmpty()) return
-        queue = sentences.shuffled()
-        queueQuiz = quiz
-        currentItemIndex = 0
-        relaunchFromCurrent()
+        startQueue(sentences.shuffled(), quiz)
     }
 
     /**
@@ -226,21 +177,15 @@ internal class NounsScreenState(
      * EN cue → hide PL → 2s → reveal → 2s → speak PL.
      */
     fun recallQuiz() {
-        if (playJob?.isActive == true) { stop(); return }
+        if (player.hasQueue) { stop(); return }
         val items = nounFormItems() ?: return
-        queue = items.shuffled()
-        queueQuiz = true
-        currentItemIndex = 0
-        relaunchFromCurrent()
+        startQueue(items.shuffled(), quiz = true)
     }
 
     fun playForms() {
-        if (playJob?.isActive == true) { stop(); return }
+        if (player.hasQueue) { stop(); return }
         val items = nounFormItems() ?: return
-        queue = items
-        queueQuiz = false
-        currentItemIndex = 0
-        relaunchFromCurrent()
+        startQueue(items, quiz = false)
     }
 
     fun setCaseEnabled(caseKey: String, enabled: Boolean) {
@@ -301,69 +246,64 @@ internal class NounsScreenState(
         )
     }
 
-    private fun relaunchFromCurrent() {
-        PlaybackController.register(
-            PlaybackTransport(
-                stop = { stop() },
-                rewind = { rewind() },
-                restart = { restartQueue() }
-            )
-        )
-        playJob = scope.launch {
-            try {
-                while (currentItemIndex < queue.size) {
-                    val i = currentItemIndex
-                    val s = queue[i]
-                    playingIndex = i
-                    val pos = "${i + 1}/${queue.size}"
-                    fun pub(lang: String, plHidden: Boolean = false) {
-                        NowVoicingBus.publish(
-                            NowVoicing(
-                                en = s.en, pl = s.pl, literal = s.literal,
-                                lang = lang, position = pos, words = s.words,
-                                plHidden = plHidden, quizMode = queueQuiz
-                            )
-                        )
-                    }
-                    if (queueQuiz) {
-                        pub("en", plHidden = true)
-                        playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                        pub("pause", plHidden = true)
-                        delay(2000L)
-                        pub("pause", plHidden = false)
-                        delay(2000L)
-                        pub("pl", plHidden = false)
-                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                    } else if (app.practicePrefs.slowFirst()) {
-                        val slowPlVoice = app.audioPrefs.slowPlVoice()
-                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
-                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                        pub("en")
-                        playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                        pub("pl-slow")
-                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
-                        pub("en")
-                        playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                        pub("pl")
-                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                    } else {
-                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                        pub("en")
-                        playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                        pub("pl")
-                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                    }
-                    if (currentItemIndex == i) {
-                        currentItemIndex = i + 1
-                        if (!queueQuiz && currentItemIndex < queue.size) delay(1000)
-                    }
-                }
-            } finally {
-                playingIndex = -1
-                playJob = null
-                NowVoicingBus.clear()
-                PlaybackController.unregister()
+    private fun startQueue(items: List<SentenceExample>, quiz: Boolean) {
+        val slowFirst = app.practicePrefs.slowFirst()
+        val slowPlVoice = app.audioPrefs.slowPlVoice()
+        player.start(
+            total = items.size,
+            publishParked = { i ->
+                val s = items[i]
+                NowVoicingBus.publish(
+                    NowVoicing(
+                        en = s.en, pl = s.pl, literal = s.literal, lang = "pause",
+                        position = "${i + 1}/${items.size}", words = s.words,
+                        plHidden = quiz, quizMode = quiz
+                    )
+                )
+            },
+            prefetchItem = { i ->
+                val s = items[i]
+                app.ensureCachedAudio(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                if (slowFirst && !quiz) app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+            },
+        ) { i ->
+            val s = items[i]
+            val pos = "${i + 1}/${items.size}"
+            fun pub(lang: String, plHidden: Boolean = false) {
+                NowVoicingBus.publish(
+                    NowVoicing(
+                        en = s.en, pl = s.pl, literal = s.literal,
+                        lang = lang, position = pos, words = s.words,
+                        plHidden = plHidden, quizMode = quiz
+                    )
+                )
             }
+            if (quiz) {
+                pub("en", plHidden = true)
+                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                pub("pause", plHidden = true)
+                reveal(2000L)
+                pub("pause", plHidden = false)
+                reveal(2000L)
+                pub("pl", plHidden = false)
+                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+            } else if (slowFirst) {
+                pub("en")
+                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                pub("pl-slow")
+                say(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                pub("en")
+                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                pub("pl")
+                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+            } else {
+                pub("en")
+                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                pub("pl")
+                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+            }
+            if (!quiz && i < items.size - 1) reveal(500L)
         }
     }
 }
@@ -397,7 +337,7 @@ fun NounsScreen(
             selected = state.selected,
             onSelect = { state.select(it) },
             modifier = Modifier
-                .width(224.dp)
+                .width(269.dp)
                 .fillMaxHeight()
                 .background(LbColors.Canvas)
         )
@@ -426,8 +366,8 @@ private fun NounControlsBar(
 ) {
     Surface(color = LbColors.SurfaceRaised, modifier = Modifier.fillMaxWidth()) {
         Column {
-            // ExamplesControls supplies its own FlowRow, so just pad the wrapper here.
-            Box(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+            // ExamplesControls supplies its own compact layout, so just pad the wrapper.
+            Box(Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) {
                 if (state.selected != null) {
                     ExamplesControls(state = state)
                 }
@@ -439,157 +379,109 @@ private fun NounControlsBar(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ExamplesControls(state: NounsScreenState) {
-    Row(
+    var filtersExpanded by remember { mutableStateOf(false) }
+    val count = state.selectedCaseKeys.size * state.selectedNumberKeys.size
+
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        NounFormsPicker(state = state, modifier = Modifier.weight(1f).height(82.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Button(
-                onClick = { state.playForms() },
-                enabled = state.playing || state.canPlayForms,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                ),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-            ) {
-                Icon(
-                    if (state.playing) Icons.Default.Stop else Icons.Default.PlayArrow,
-                    contentDescription = if (state.playing) "Stop" else "Play all",
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(if (state.playing) "Stop" else "Play all", fontSize = 12.sp, color = Color.White)
-            }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            LbButton.Ghost(
+                label = if (filtersExpanded) "Hide filters" else "Filters",
+                onClick = { filtersExpanded = !filtersExpanded }
+            )
             if (!state.playing) {
-                Button(
-                    onClick = { state.recallQuiz() },
-                    colors = ButtonDefaults.buttonColors(containerColor = LbColors.Accent),
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-                ) {
-                    Text("?? Recall", fontSize = 12.sp, color = Color.White)
-                }
-            }
-            if (state.sentences.isNotEmpty() && !state.playing) {
-                Button(
-                    onClick = { state.playAll(quiz = true) },
-                    colors = ButtonDefaults.buttonColors(containerColor = LbColors.Label),
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-                ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = "Sentence quiz",
-                        tint = Color.White, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("?? Sent.", fontSize = 12.sp, color = Color.White)
+                LbButton.Ghost(
+                    label = "Recall quiz",
+                    onClick = { state.recallQuiz() }
+                )
+                if (state.sentences.isNotEmpty()) {
+                    LbButton.Ghost(
+                        label = "Sent. quiz",
+                        icon = Icons.Default.PlayArrow,
+                        onClick = { state.playAll(quiz = true) }
+                    )
                 }
             }
             val isRegenerate = state.sentences.isNotEmpty()
-            Button(
-                onClick = { state.generate() },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isRegenerate) LbColors.SurfaceTint
-                    else MaterialTheme.colorScheme.primary
-                ),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                enabled = !state.busy && !state.playing
-            ) {
-                Icon(if (isRegenerate) Icons.Default.Refresh else Icons.Default.Add,
-                    contentDescription = if (isRegenerate) "Regenerate" else "Generate",
-                    tint = if (isRegenerate) LbColors.Label else Color.White,
-                    modifier = Modifier.size(14.dp))
-                Spacer(Modifier.width(4.dp))
-                Text(if (state.busy) "Generating" else if (isRegenerate) "Regen" else "Generate",
-                    fontSize = 12.sp,
-                    color = if (isRegenerate) LbColors.Label else Color.White)
-            }
-        }
-    }
-}
-
-@Composable
-private fun NounFormsPicker(state: NounsScreenState, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        color = LbColors.Canvas,
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, LbColors.TextMuted.copy(alpha = 0.35f))
-    ) {
-        Column(
-            modifier = Modifier.padding(5.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            SelectorBand("Case", GrammarVisuals.Selector.CaseBand) {
-                CASE_BLOCKS.forEach { block ->
-                    NounToggle(
-                        label = block.title.take(3),
-                        checked = block.key in state.selectedCaseKeys,
-                        enabled = !state.playing,
-                        onCheckedChange = { state.setCaseEnabled(block.key, it) }
-                    )
-                    Spacer(Modifier.width(8.dp))
-                }
-            }
-            SelectorBand("Number", GrammarVisuals.Selector.NumberBand) {
-                NounToggle("Singular", "sg" in state.selectedNumberKeys, !state.playing) {
-                    state.setNumberEnabled("sg", it)
-                }
-                Spacer(Modifier.width(14.dp))
-                NounToggle("Plural", "pl" in state.selectedNumberKeys, !state.playing) {
-                    state.setNumberEnabled("pl", it)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SelectorBand(
-    title: String,
-    color: Color,
-    content: @Composable RowScope.() -> Unit
-) {
-    Surface(
-        color = color,
-        shape = RoundedCornerShape(6.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                title,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = LbColors.Label,
-                modifier = Modifier.width(62.dp)
+            LbButton.Ghost(
+                label = if (state.busy) "Generating" else if (isRegenerate) "Refresh examples" else "Generate examples",
+                icon = if (isRegenerate) Icons.Default.Refresh else Icons.Default.Add,
+                enabled = !state.busy && !state.playing,
+                onClick = { state.generate() }
             )
-            content()
+            Spacer(Modifier.weight(1f))
+            if (state.playing) {
+                LbButton.Stop("Stop", onClick = { state.stop() }, icon = Icons.Default.Stop)
+            } else {
+                LbButton.Audio(
+                    label = "Play",
+                    count = count,
+                    enabled = state.canPlayForms,
+                    onClick = { state.playForms() }
+                )
+            }
         }
-    }
-}
 
-@Composable
-private fun NounToggle(
-    label: String,
-    checked: Boolean,
-    enabled: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        SubtleCheckbox(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            enabled = enabled,
-            modifier = Modifier.size(20.dp)
-        )
-        Spacer(Modifier.width(4.dp))
-        Text(label, fontSize = 11.sp, color = LbColors.TextSecondary)
+        if (filtersExpanded) {
+            Surface(
+                color = LbColors.SurfaceTint,
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, LbColors.Line),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                FlowRow(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    FilterGroup(label = "Case") {
+                        CASE_BLOCKS.forEach { block ->
+                            LbChip(
+                                label = block.title.take(3),
+                                selected = block.key in state.selectedCaseKeys,
+                                enabled = !state.playing,
+                                onClick = {
+                                    state.setCaseEnabled(
+                                        block.key,
+                                        block.key !in state.selectedCaseKeys
+                                    )
+                                }
+                            )
+                        }
+                    }
+                    FilterGroup(label = "Number") {
+                        LbChip(
+                            label = "Sg",
+                            selected = "sg" in state.selectedNumberKeys,
+                            enabled = !state.playing,
+                            onClick = {
+                                state.setNumberEnabled(
+                                    "sg",
+                                    "sg" !in state.selectedNumberKeys
+                                )
+                            }
+                        )
+                        LbChip(
+                            label = "Pl",
+                            selected = "pl" in state.selectedNumberKeys,
+                            enabled = !state.playing,
+                            onClick = {
+                                state.setNumberEnabled(
+                                    "pl",
+                                    "pl" !in state.selectedNumberKeys
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -616,7 +508,7 @@ private fun NounList(
             ) {
                 Row(
                     Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Top
                 ) {
                     Text(
                         n.lemma,
@@ -630,7 +522,8 @@ private fun NounList(
                         n.gender.lowercase(),
                         color = if (isSel) Color.White.copy(alpha = 0.7f) else LbColors.Warning,
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(top = 3.dp)
                     )
                     Spacer(Modifier.width(8.dp))
                     DelayedEnglishTranslation(
@@ -638,14 +531,15 @@ private fun NounList(
                         color = if (isSel) Color.White.copy(alpha = 0.85f)
                         else LbColors.TextSecondary,
                         fontSize = 12.sp,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(top = 2.dp)
                     )
                 }
             }
         }
     }
 }
-
 @Composable
 private fun NounParadigm(
     app: LangbangApplication,
@@ -657,8 +551,8 @@ private fun NounParadigm(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+            .padding(horizontal = 16.dp, vertical = 5.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -682,13 +576,13 @@ private fun NounParadigm(
             )
         }
 
-        CASE_BLOCKS.forEach { block ->
+        CASE_BLOCKS.filter { it.key in state.selectedCaseKeys }.forEach { block ->
             val map = noun.caseMap(block.key)
             CompactCaseRows(
                 app = app,
                 block = block,
                 map = map,
-                nounEn = noun.en,
+                selectedNumberKeys = state.selectedNumberKeys,
                 baseForm = noun.lemma,
                 gender = noun.gender
             )
@@ -704,7 +598,7 @@ private fun CompactCaseRows(
     app: LangbangApplication,
     block: CaseBlock,
     map: Map<String, String>,
-    nounEn: String,
+    selectedNumberKeys: Set<String>,
     baseForm: String,
     gender: String
 ) {
@@ -713,16 +607,22 @@ private fun CompactCaseRows(
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier
+                .padding(horizontal = 6.dp, vertical = 2.dp)
+                .height(IntrinsicSize.Min),
+            verticalAlignment = Alignment.Top
         ) {
             Surface(
                 color = LbColors.SurfaceTint,
                 shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.width(132.dp)
+                modifier = Modifier
+                    .width(112.dp)
+                    .fillMaxHeight()
             ) {
                 Column(
-                    modifier = Modifier.padding(8.dp),
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(horizontal = 8.dp, vertical = 5.dp),
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text(block.title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
@@ -731,9 +631,12 @@ private fun CompactCaseRows(
                         maxLines = 2)
                 }
             }
-            Spacer(Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                NUMBER_KEYS.forEach { num ->
+            Spacer(Modifier.width(7.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                NUMBER_KEYS.filter { it in selectedNumberKeys }.forEach { num ->
                     val form = map[num].orEmpty()
                     val number = numberLabel(num)
                     FormRow(
@@ -741,7 +644,7 @@ private fun CompactCaseRows(
                         form = form,
                         baseForm = baseForm,
                         gender = gender
-                    ) { playForm(app, form, nounEn, number, block.title, gender, block.key, baseForm) }
+                    ) { playForm(app, form) }
                 }
             }
         }
@@ -759,30 +662,34 @@ private fun FormRow(
     Card(
         onClick = onPlay,
         colors = CardDefaults.cardColors(containerColor = LbColors.SurfaceTint),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(34.dp)
+            .defaultMinSize(minHeight = 0.dp)
     ) {
         Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+            Modifier.padding(horizontal = 7.dp, vertical = 1.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = "Play",
+                tint = LbColors.Primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
             Text(
                 label,
                 fontSize = 12.sp,
                 color = LbColors.TextMuted,
-                modifier = Modifier.width(110.dp)
+                modifier = Modifier.width(72.dp)
             )
             VariablePolishText(
                 text = form,
                 fixedColor = LbColors.TextPrimary,
                 variableColor = GrammarVisuals.Gender.color(gender),
-                fontSize = 20.sp,
+                fontSize = 19.sp,
                 fontWeight = FontWeight.Bold,
                 baseText = baseForm,
                 fallbackWholeWord = true,
                 modifier = Modifier.weight(1f)
             )
-            Icon(Icons.Default.PlayArrow, contentDescription = "Play",
-                tint = LbColors.Primary, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -790,13 +697,6 @@ private fun FormRow(
 @Composable
 private fun SentencesSection(app: LangbangApplication, state: NounsScreenState) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            "Examples",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = LbColors.Label
-        )
-
         if (state.sentences.isEmpty()) {
             Text(
                 "No examples yet — tap Generate to make short sentences using this " +
@@ -834,9 +734,12 @@ private fun SentenceRow(
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = "Play",
+                tint = LbColors.Primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 DelayedEnglishTranslation(
                     text = sentence.en,
@@ -850,68 +753,21 @@ private fun SentenceRow(
                     glossFontSize = 10.sp
                 )
             }
-            Icon(Icons.Default.PlayArrow, contentDescription = "Play",
-                tint = LbColors.Primary, modifier = Modifier.size(20.dp))
         }
     }
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
-private suspend fun playAndAwait(
-    app: LangbangApplication,
-    text: String,
-    locale: String,
-    voice: String
-) {
-    app.playAudioAndAwait(text, locale, voice)
-}
-
 private fun playSentence(app: LangbangApplication, sentence: SentenceExample) {
-    NowVoicingBus.publish(
-        NowVoicing(
-            en = sentence.en,
-            pl = sentence.pl,
-            literal = sentence.literal,
-            lang = "pl",
-            words = sentence.words
-        )
-    )
     playAudio(app, sentence.pl)
 }
 
 private fun playForm(
     app: LangbangApplication,
-    form: String,
-    nounEn: String,
-    number: String,
-    caseLabel: String,
-    gender: String,
-    caseKey: String,
-    baseForm: String
+    form: String
 ) {
     if (form.isEmpty()) return
-    NowVoicingBus.publish(
-        NowVoicing(
-            en = nounEn,
-            pl = form,
-            literal = null,
-            lang = "pl",
-            words = listOf(
-                com.sponic.langbang.data.model.TokenPair(
-                    pl = form,
-                    en = nounEn,
-                    gender = gender,
-                    caseKey = caseKey,
-                    caseLabel = caseLabel,
-                    numberLabel = number,
-                    variableStart = variableStartForPolishForm(baseForm, form),
-                    variableEnd = variableEndForPolishForm(baseForm, form),
-                    variableKind = "case"
-                )
-            )
-        )
-    )
     playAudio(app, form)
 }
 

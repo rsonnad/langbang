@@ -52,6 +52,10 @@ import androidx.compose.ui.window.DialogProperties
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.data.model.ExampleWord
 import com.sponic.langbang.data.model.PhonemeEntry
+import com.sponic.langbang.data.model.TokenPair
+import com.sponic.langbang.domain.NowVoicing
+import com.sponic.langbang.domain.NowVoicingBus
+import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.integrations.AzureTtsClient
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -61,7 +65,7 @@ import kotlin.coroutines.resume
 /**
  * Two-pane phoneme tour: letter on the left, answer panel + 3 example words on the right.
  * Audio for all 3 examples auto-plays on each card; when the sequence finishes the deck
- * auto-advances. Back/Next arrows let the learner navigate manually; "Play all" replays
+ * auto-advances. Back/Next arrows let the learner navigate manually; "Play" replays
  * the current card's audio. No "Got it"/"Again" — this is a guided pass, not a quiz.
  */
 @Composable
@@ -72,7 +76,7 @@ fun PhonemeQuiz(
 ) {
     val deck = remember { phonemes.shuffled() }
     var index by remember { mutableStateOf(0) }
-    // Bumped by "Play all" to retrigger the LaunchedEffect on the same index.
+    // Bumped by "Play" to retrigger the LaunchedEffect on the same index.
     var playToken by remember(index) { mutableStateOf(0) }
     // Playback intent. Tapping Stop flips this false (cancels the chain + stops audio);
     // tapping Play flips it back true (replays the current card). Resets to true on each
@@ -82,29 +86,57 @@ fun PhonemeQuiz(
 
     // Stop any in-flight audio when this dialog leaves the composition.
     DisposableEffect(Unit) {
-        onDispose { app.audioPlayer.stop() }
+        onDispose {
+            app.audioPlayer.stop()
+            NowVoicingBus.clear()
+            PlaybackController.unregister()
+        }
     }
 
     // Auto-play the 3 examples in sequence, then advance. Cancelling the coroutine
     // (back/next/Stop/Play/close) stops audio; the next launch starts a fresh chain.
     LaunchedEffect(index, playToken, playing) {
         app.audioPlayer.stop()
-        if (!playing) return@LaunchedEffect
-        val phoneme = current ?: return@LaunchedEffect
-        // Tiny lead-in so the card has a beat to register before audio starts.
-        delay(150)
-        val examples = phoneme.examples.take(3)
-        examples.forEachIndexed { i, ex ->
-            playFileAndAwait(app, exampleFile(app, ex))
-            if (i < examples.lastIndex) delay(220)
+        if (!playing) {
+            NowVoicingBus.clear()
+            PlaybackController.unregister()
+            return@LaunchedEffect
         }
-        // Auto-advance only after a clean playthrough. End-of-deck stays put and flips
-        // the button back to "Play all" since nothing is sounding anymore.
-        if (index < deck.size - 1) {
-            delay(450)
-            index += 1
-        } else {
+        val phoneme = current ?: return@LaunchedEffect
+        PlaybackController.register {
             playing = false
+            app.audioPlayer.stop()
+            NowVoicingBus.clear()
+            PlaybackController.unregister()
+        }
+        // Tiny lead-in so the card has a beat to register before audio starts.
+        try {
+            delay(150)
+            val examples = phoneme.examples.take(3)
+            examples.forEachIndexed { i, ex ->
+                NowVoicingBus.publish(
+                    NowVoicing(
+                        en = ex.en,
+                        pl = ex.pl,
+                        literal = null,
+                        lang = "pl",
+                        words = listOf(TokenPair(ex.pl, ex.en))
+                    )
+                )
+                playFileAndAwait(app, exampleFile(app, ex))
+                if (i < examples.lastIndex) delay(220)
+            }
+            // Auto-advance only after a clean playthrough. End-of-deck stays put and flips
+            // the button back to "Play" since nothing is sounding anymore.
+            if (index < deck.size - 1) {
+                delay(450)
+                index += 1
+            } else {
+                playing = false
+            }
+        } finally {
+            NowVoicingBus.clear()
+            PlaybackController.unregister()
         }
     }
 
@@ -126,6 +158,8 @@ fun PhonemeQuiz(
                     onClose = onDismiss,
                     onRestart = {
                         app.audioPlayer.stop()
+                        NowVoicingBus.clear()
+                        PlaybackController.unregister()
                         index = 0
                         playToken = 0
                         playing = true
@@ -150,6 +184,8 @@ fun PhonemeQuiz(
                             enabled = index > 0,
                             onClick = {
                                 app.audioPlayer.stop()
+                                NowVoicingBus.clear()
+                                PlaybackController.unregister()
                                 index = (index - 1).coerceAtLeast(0)
                             }
                         )
@@ -173,6 +209,8 @@ fun PhonemeQuiz(
                             enabled = index < deck.size - 1,
                             onClick = {
                                 app.audioPlayer.stop()
+                                NowVoicingBus.clear()
+                                PlaybackController.unregister()
                                 index = (index + 1).coerceAtMost(deck.size - 1)
                             }
                         )
@@ -284,17 +322,17 @@ private fun PhonemePane(
                         containerColor = if (playing) LbColors.Danger
                         else MaterialTheme.colorScheme.primary
                     ),
-                    shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier.fillMaxWidth().height(40.dp)
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth().height(30.dp)
                 ) {
                     Icon(
                         if (playing) Icons.Default.Stop else Icons.Default.PlayArrow,
                         contentDescription = null,
-                        tint = Color.White, modifier = Modifier.size(20.dp)
+                        tint = Color.White, modifier = Modifier.size(14.dp)
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text(if (playing) "Stop" else "Play all", color = Color.White,
-                        fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Text(if (playing) "Stop" else "Play", color = Color.White,
+                        fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
                 }
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(phoneme.name, fontSize = 12.sp, color = LbColors.TextMuted)

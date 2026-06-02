@@ -100,7 +100,7 @@ private fun PhrasesPane(
             selected = selected,
             onSelect = { selected = it; wordSheet = null },
             modifier = Modifier
-                .width(288.dp)
+                .width(346.dp)
                 .fillMaxHeight()
                 .background(LbColors.Canvas)
         )

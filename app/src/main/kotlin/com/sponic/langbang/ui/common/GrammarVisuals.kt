@@ -39,10 +39,10 @@ object GrammarVisuals {
     }
 
     object NowVoicingPanel {
-        val Background = Color(0xFF102230)
-        val Border = Color(0xFF21394A)
+        val Background = Color(0xFFFFFFFF)
+        val Border = Color(0xFFE1E7EB)
         val BorderWidth = 1.dp
-        val FilterLabel = Color(0xFF9FB3BF)
+        val FilterLabel = Color(0xFF7D8994)
     }
 
     object Selector {

@@ -72,6 +72,7 @@ import com.sponic.langbang.data.model.ConjugationClass
 import com.sponic.langbang.data.model.Lesson
 import com.sponic.langbang.data.model.PERSON_KEYS
 import com.sponic.langbang.data.model.SentenceExample
+import com.sponic.langbang.data.model.TokenPair
 import com.sponic.langbang.data.model.VerbEntry
 import com.sponic.langbang.data.model.audioPronoun
 import com.sponic.langbang.data.model.conjugationClass
@@ -84,11 +85,12 @@ import com.sponic.langbang.domain.ensureCachedAudio
 import com.sponic.langbang.domain.englishConjugate
 import com.sponic.langbang.domain.playAudioAndAwait
 import com.sponic.langbang.integrations.AzureTtsClient
-import android.media.MediaMetadataRetriever
 import com.sponic.langbang.ui.common.CompactLessonListCard
+import com.sponic.langbang.ui.common.StudyQueuePlayer
 import com.sponic.langbang.ui.common.CompactLessonListDefaults
 import com.sponic.langbang.ui.common.DelayedEnglishTranslation
 import com.sponic.langbang.ui.common.GrammarVisuals
+import com.sponic.langbang.ui.common.LbButton
 import com.sponic.langbang.ui.common.SubtleCheckbox
 import com.sponic.langbang.ui.common.VariablePolishText
 import com.sponic.langbang.ui.common.variableEndForPolishForm
@@ -103,9 +105,16 @@ private enum class VerbMode(val label: String) {
     ByPronoun("By pronoun")
 }
 
+private data class ConjugationCue(
+    val lemma: String,
+    val combined: String,
+    val englishGloss: String,
+    val tokens: List<TokenPair>
+)
+
 /**
  * Holds the sentence-generation + playback state for the Verbs tab. Lives at the tab root
- * so the control strip (Generate / Play all / Regenerate / All verbs) can render in the
+ * so the control strip (Generate / Play / Regenerate / All verbs) can render in the
  * top bar — always visible — while the sentence list lives further down in the scroll.
  */
 internal class VerbsTabState(
@@ -123,7 +132,7 @@ internal class VerbsTabState(
         private set
     var slowFirst: Boolean by mutableStateOf(true)
     /**
-     * Lemmas the learner has ticked in the left verb list. When non-empty, Play all and
+     * Lemmas the learner has ticked in the left verb list. When non-empty, Play and
      * the quizzes run across exactly these verbs (in shuffled order); when empty they
      * fall back to the single selected verb. Persisted so the selection is sticky.
      */
@@ -140,27 +149,13 @@ internal class VerbsTabState(
     )
         private set
 
-    private var playJob: Job? = null
-    var playingIndex: Int by mutableStateOf(-1)
-        private set
+    private val player = StudyQueuePlayer(app, scope)
+    val playingIndex: Int get() = player.playingIndex
+    /** Set only during the conjugation drill so the per-verb sentence list highlights the
+     *  right row; sentence playback leaves it null. */
     var playingLemma: String? by mutableStateOf(null)
         private set
-    var playingPl: String? by mutableStateOf(null)
-        private set
-    var playingEn: String? by mutableStateOf(null)
-        private set
-    var playingLiteral: String? by mutableStateOf(null)
-        private set
-    var playingLang: String? by mutableStateOf(null)
-        private set
-    val playing: Boolean get() = playJob?.isActive == true
-
-    // Holds the current quiz/play-all queue so rewind/restart can re-enter at any index
-    // without rebuilding the list. Set by playAll(), cleared by stop().
-    private var queue: List<SentenceExample> = emptyList()
-    private var queueLemma: String? = null
-    private var queueQuiz: Boolean = false
-    private var currentItemIndex: Int = 0
+    val playing: Boolean get() = player.hasQueue
 
     fun selectVerb(verb: VerbEntry?) {
         if (selected?.lemma == verb?.lemma) return
@@ -321,101 +316,29 @@ internal class VerbsTabState(
     }
 
     fun stop() {
-        playJob?.cancel()
-        playJob = null
-        playingIndex = -1
+        player.stop()
         playingLemma = null
-        playingPl = null
-        playingEn = null
-        playingLiteral = null
-        playingLang = null
-        queue = emptyList()
-        queueLemma = null
-        currentItemIndex = 0
-        app.audioPlayer.stop()
-        NowVoicingBus.clear()
-        PlaybackController.unregister()
     }
 
-    /** Re-play the previous sentence in the active quiz/play-all queue. */
-    fun rewind() {
-        if (queue.isEmpty()) return
-        playJob?.cancel()
-        playJob = null
-        app.audioPlayer.stop()
-        currentItemIndex = (currentItemIndex - 1).coerceAtLeast(0)
-        relaunchFromCurrent()
+    fun playPolishOnce(text: String) {
+        playPolish(app, scope, text)
     }
 
-    fun restartQueue() {
-        if (queue.isEmpty()) return
-        playJob?.cancel()
-        playJob = null
-        app.audioPlayer.stop()
-        currentItemIndex = 0
-        relaunchFromCurrent()
+    fun playSentenceOnce(sentence: SentenceExample) {
+        playPolishOnce(sentence.pl)
     }
 
-    /**
-     * Plays one item from the queue at [i]. The outer loop in [relaunchFromCurrent]
-     * drives advance/rewind via [currentItemIndex] so we can re-enter the same item
-     * after a rewind tap. Returns after the item completes (or the job is cancelled).
-     */
-    private suspend fun playOneItem(s: SentenceExample, i: Int, total: Int, quiz: Boolean) {
-        playingIndex = i
-        playingPl = s.pl
-        playingEn = s.en
-        playingLiteral = s.literal
-        val position = "${i + 1}/$total"
-        if (quiz) {
-            // Floor the pre-reveal pause at 2s so the learner always gets a real
-            // recall window before the Polish text appears, even if the user dialled
-            // the configurable delay below that.
-            val configMs = (app.randomConfig.load().quizDelaySeconds * 1000).toLong()
-            val delayMs = configMs.coerceAtLeast(2000L)
-            // EN audio with PL text hidden so the learner can't peek.
-            publishQuiz("en", s, position, plHidden = true)
-            playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-            // Recall window — PL still hidden.
-            publishQuiz("pause", s, position, plHidden = true)
-            delay(delayMs)
-            // Reveal PL text, hold so eye + brain can compare.
-            publishQuiz("pause", s, position, plHidden = false)
-            delay(delayMs)
-            // Now speak the PL.
-            publishQuiz("pl", s, position, plHidden = false)
-            playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-        } else if (slowFirst) {
-            // First pass: slow Polish for clarity, then normal-rate.
-            val slowPlVoice = app.audioPrefs.slowPlVoice()
-            app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
-            app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-            setLang("en", s, position)
-            playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-            setLang("pl-slow", s, position)
-            playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
-            setLang("en", s, position)
-            playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-            setLang("pl", s, position)
-            playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-        } else {
-            // Fast-only: single EN then single PL at normal rate.
-            app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-            setLang("en", s, position)
-            playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-            setLang("pl", s, position)
-            playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-        }
+    fun playConjugationOnce(personKey: String, form: String) {
+        if (form.isEmpty()) return
+        playPolishOnce("${audioPronoun(personKey)} $form".trim())
     }
 
     private fun setLang(l: String, s: SentenceExample, position: String) {
-        playingLang = l
         NowVoicingBus.publish(NowVoicing(s.en, s.pl, s.literal, l, position, s.words))
     }
 
-    /** Quiz-flavored variant — stamps quizMode + plHidden so the NV panel can mask + show the delay slider. */
+    /** Quiz-flavored variant — stamps quizMode + plHidden so the NV panel can mask. */
     private fun publishQuiz(l: String, s: SentenceExample, position: String, plHidden: Boolean) {
-        playingLang = l
         NowVoicingBus.publish(
             NowVoicing(
                 en = s.en, pl = s.pl, literal = s.literal,
@@ -499,72 +422,74 @@ internal class VerbsTabState(
     }
 
     fun playAll(allVerbs: List<VerbEntry>, quiz: Boolean = false) {
-        if (playJob?.isActive == true) {
+        if (player.hasQueue) {
             stop()
             return
         }
         val targets = resolveTargets(allVerbs)
         val v = targets.firstOrNull() ?: return
-        queueQuiz = quiz
-        queueLemma = v.lemma
         scope.launch {
             // Build the queue up-front so rewind/restart can re-enter any item.
             val built: List<SentenceExample> = if (checkedLemmas.isNotEmpty()) {
                 targets.flatMap { vv ->
-                    val list = ensureSentencesFor(vv).let { all ->
+                    ensureSentencesFor(vv).let { all ->
                         if (quiz) filterByTense(vv, all) else all
                     }
-                    list
                 }
             } else {
                 if (quiz) filterByTense(v, sentences) else sentences
             }
-            queue = if (quiz) built.shuffled().sortedBy { tokenCountOf(it.pl) } else built
-            if (queue.isEmpty()) return@launch
-            currentItemIndex = 0
-            relaunchFromCurrent()
+            val items = if (quiz) built.shuffled().sortedBy { tokenCountOf(it.pl) } else built
+            if (items.isEmpty()) return@launch
+            startSentenceQueue(items, quiz)
         }
     }
 
-    /**
-     * (Re)starts playback from [currentItemIndex]. Used initially by playAll and again
-     * by rewind/restart after they reposition the index. Registers a [PlaybackTransport]
-     * so the NV panel's 2x2 transport renders for this source.
-     */
-    private fun relaunchFromCurrent() {
-        PlaybackController.register(
-            PlaybackTransport(
-                stop = { stop() },
-                rewind = { rewind() },
-                restart = { restartQueue() },
-                pauseResume = null,
-                isPaused = { false }
-            )
-        )
-        playJob = scope.launch {
-            try {
-                while (currentItemIndex < queue.size) {
-                    val i = currentItemIndex
-                    val s = queue[i]
-                    playOneItem(s, i, queue.size, queueQuiz)
-                    if (currentItemIndex == i) {
-                        currentItemIndex = i + 1
-                        // +1s breathing room between items (only in non-quiz mode —
-                        // quiz already has its own reveal pauses).
-                        if (!queueQuiz && currentItemIndex < queue.size) delay(1000)
-                    }
-                }
-            } finally {
-                playingIndex = -1
-                playingLemma = null
-                playingPl = null
-                playingEn = null
-                playingLiteral = null
-                playingLang = null
-                playJob = null
-                NowVoicingBus.clear()
-                PlaybackController.unregister()
+    private fun startSentenceQueue(items: List<SentenceExample>, quiz: Boolean) {
+        // Sentence playback doesn't set playingLemma (only the conjugation drill does), so
+        // the per-verb sentence-list highlight stays scoped to the conjugation flow.
+        playingLemma = null
+        val slowPlVoice = app.audioPrefs.slowPlVoice()
+        player.start(
+            total = items.size,
+            publishParked = { i -> publishQuiz("pause", items[i], "${i + 1}/${items.size}", plHidden = quiz) },
+            prefetchItem = { i ->
+                val s = items[i]
+                app.ensureCachedAudio(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                if (slowFirst && !quiz) app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+            },
+        ) { i ->
+            val s = items[i]
+            val position = "${i + 1}/${items.size}"
+            if (quiz) {
+                // Floor the pre-reveal pause at 2s even if the configured delay is lower.
+                val configMs = (app.randomConfig.load().quizDelaySeconds * 1000).toLong()
+                val delayMs = configMs.coerceAtLeast(2000L)
+                publishQuiz("en", s, position, plHidden = true)
+                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                publishQuiz("pause", s, position, plHidden = true)
+                reveal(delayMs)
+                publishQuiz("pause", s, position, plHidden = false)
+                reveal(delayMs)
+                publishQuiz("pl", s, position, plHidden = false)
+                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+            } else if (slowFirst) {
+                setLang("en", s, position)
+                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                setLang("pl-slow", s, position)
+                say(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                setLang("en", s, position)
+                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                setLang("pl", s, position)
+                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+            } else {
+                setLang("en", s, position)
+                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                setLang("pl", s, position)
+                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
             }
+            if (!quiz && i < items.size - 1) reveal(500L)
         }
     }
 
@@ -582,131 +507,114 @@ internal class VerbsTabState(
      *     hearing the form alone.
      */
     fun playAllConjugations(allVerbs: List<VerbEntry>, mode: String = "play") {
-        if (playJob?.isActive == true) {
+        if (player.hasQueue) {
             stop()
             return
         }
         val targets = resolveTargets(allVerbs)
         if (targets.isEmpty()) return
-        PlaybackController.register(
-            PlaybackTransport(stop = { stop() })
-        )
-        playJob = scope.launch {
-            try {
-                targets.forEach { vv ->
-                    playingLemma = vv.lemma
-                    suspend fun playFormsForTense(
-                        formMap: Map<String, String>,
-                        included: Set<String>,
-                        tenseLabel: String
-                    ) {
-                        PERSON_KEYS.forEach { k ->
-                            if (k !in included) return@forEach
-                            val form = formMap[k].orEmpty()
-                            if (form.isBlank()) return@forEach
-                            val pron = audioPronoun(k)
-                            val combined = "$pron $form".trim()
-                            val englishSubject = englishSubjectFor(k)
-                            // Render the actual conjugated form ("I am" / "she goes" / "we were")
-                            // instead of "$subject — to be". Same shared helper as Random Play —
-                            // see domain/EnglishConjugator.kt. No "(past)" suffix: "was" / "were"
-                            // already convey past tense, so the parenthetical was redundant noise
-                            // once the gloss stopped being the infinitive.
-                            val isPast = tenseLabel.equals("past", ignoreCase = true)
-                            val englishVerbForm = englishConjugate(vv.en, k, isPast)
-                            val englishGloss = "$englishSubject $englishVerbForm"
-                            playingPl = combined
-                            playingEn = englishGloss
-                            playingLiteral = null
-                            // Publish to NV so the sticky panel shows ONLY pronoun + verb
-                            // (no surrounding sentence). Two tokens, two glosses.
-                            val tokens = listOf(
-                                com.sponic.langbang.data.model.TokenPair(pron, englishSubject),
-                                com.sponic.langbang.data.model.TokenPair(
-                                    pl = form,
-                                    en = englishVerbForm,
-                                    variableStart = variableStartForPolishForm(vv.lemma, form),
-                                    variableEnd = variableEndForPolishForm(vv.lemma, form),
-                                    variableKind = "conjugation"
-                                )
-                            )
-                            fun publishLang(l: String, plHidden: Boolean = false,
-                                            enHiddenLabel: String? = null) {
-                                playingLang = l
-                                NowVoicingBus.publish(
-                                    NowVoicing(
-                                        en = enHiddenLabel ?: englishGloss,
-                                        pl = combined, literal = null,
-                                        lang = l, position = null, words = tokens,
-                                        plHidden = plHidden,
-                                        quizMode = mode != "play"
-                                    )
-                                )
-                            }
-                            when (mode) {
-                                "conjQuiz" -> {
-                                    // EN cue spoken with PL hidden — user must recall the form.
-                                    publishLang("en", plHidden = true)
-                                    playAndAwait(app, englishGloss, AzureTtsClient.LOCALE_EN,
-                                        AzureTtsClient.EN_US_F)
-                                    publishLang("pause", plHidden = true)
-                                    delay(2000L)
-                                    // Reveal PL, hold so the eye + ear can compare.
-                                    publishLang("pause", plHidden = false)
-                                    delay(2000L)
-                                    publishLang("pl", plHidden = false)
-                                    playAndAwait(app, combined, AzureTtsClient.LOCALE_PL,
-                                        AzureTtsClient.PL_PL_F)
-                                }
-                                "recall" -> {
-                                    // EN spoken FIRST with the EN text shown (only the PL is
-                                    // hidden) so the learner reads + hears the meaning, recalls
-                                    // the Polish form from memory, then the PL is revealed and
-                                    // spoken. EN cue stays visible throughout the recall window.
-                                    publishLang("en", plHidden = true)
-                                    playAndAwait(app, englishGloss, AzureTtsClient.LOCALE_EN,
-                                        AzureTtsClient.EN_US_F)
-                                    publishLang("pause", plHidden = true)
-                                    delay(2000L)
-                                    // Reveal the PL too.
-                                    publishLang("pause", plHidden = false)
-                                    delay(2000L)
-                                    publishLang("pl", plHidden = false)
-                                    playAndAwait(app, combined, AzureTtsClient.LOCALE_PL,
-                                        AzureTtsClient.PL_PL_F)
-                                }
-                                else -> {
-                                    if (slowFirst) {
-                                        publishLang("pl-slow")
-                                        playAndAwait(app, combined, AzureTtsClient.LOCALE_PL,
-                                            app.audioPrefs.slowPlVoice())
-                                    }
-                                    publishLang("pl")
-                                    playAndAwait(app, combined, AzureTtsClient.LOCALE_PL,
-                                        AzureTtsClient.PL_PL_F)
-                                }
-                            }
-                            // 1s gap between items so each conjugation has a moment to land.
-                            delay(1000)
-                        }
-                    }
-                    playFormsForTense(vv.forms, includedPresentKeys, "")
-                    vv.past_forms?.let { past ->
-                        playFormsForTense(past, includedPastKeys, "past")
-                    }
-                }
-            } finally {
-                playingIndex = -1
-                playingLemma = null
-                playingPl = null
-                playingEn = null
-                playingLiteral = null
-                playingLang = null
-                playJob = null
-                NowVoicingBus.clear()
-                PlaybackController.unregister()
+        val cues = buildConjugationQueue(targets)
+        if (cues.isEmpty()) return
+        startConjugationQueue(cues, mode)
+    }
+
+    private fun buildConjugationQueue(targets: List<VerbEntry>): List<ConjugationCue> {
+        val cues = mutableListOf<ConjugationCue>()
+        fun addForms(
+            vv: VerbEntry,
+            formMap: Map<String, String>,
+            included: Set<String>,
+            isPast: Boolean
+        ) {
+            PERSON_KEYS.forEach { key ->
+                if (key !in included) return@forEach
+                val form = formMap[key].orEmpty()
+                if (form.isBlank()) return@forEach
+                val pron = audioPronoun(key)
+                val combined = "$pron $form".trim()
+                val englishSubject = englishSubjectFor(key)
+                val englishVerbForm = englishConjugate(vv.en, key, isPast)
+                val englishGloss = "$englishSubject $englishVerbForm"
+                val tokens = listOf(
+                    TokenPair(pron, englishSubject),
+                    TokenPair(
+                        pl = form,
+                        en = englishVerbForm,
+                        variableStart = variableStartForPolishForm(vv.lemma, form),
+                        variableEnd = variableEndForPolishForm(vv.lemma, form),
+                        variableKind = "conjugation"
+                    )
+                )
+                cues += ConjugationCue(
+                    lemma = vv.lemma,
+                    combined = combined,
+                    englishGloss = englishGloss,
+                    tokens = tokens
+                )
             }
         }
+        targets.forEach { vv ->
+            addForms(vv, vv.forms, includedPresentKeys, isPast = false)
+            vv.past_forms?.let { addForms(vv, it, includedPastKeys, isPast = true) }
+        }
+        return cues
+    }
+
+    private fun startConjugationQueue(cues: List<ConjugationCue>, mode: String) {
+        val quiz = mode != "play"
+        val slowPlVoice = app.audioPrefs.slowPlVoice()
+        player.start(
+            total = cues.size,
+            publishParked = { i -> publishConjugation(cues[i], i, cues.size, mode, "pause", plHidden = quiz) },
+            prefetchItem = { i ->
+                val cue = cues[i]
+                if (quiz) app.ensureCachedAudio(cue.englishGloss, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                app.ensureCachedAudio(cue.combined, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                if (slowFirst && !quiz) app.ensureCachedAudio(cue.combined, AzureTtsClient.LOCALE_PL, slowPlVoice)
+            },
+        ) { i ->
+            val cue = cues[i]
+            playingLemma = cue.lemma
+            val total = cues.size
+            when (mode) {
+                "conjQuiz", "recall" -> {
+                    publishConjugation(cue, i, total, mode, "en", plHidden = true)
+                    say(cue.englishGloss, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                    publishConjugation(cue, i, total, mode, "pause", plHidden = true)
+                    reveal(2000L)
+                    publishConjugation(cue, i, total, mode, "pause", plHidden = false)
+                    reveal(2000L)
+                    publishConjugation(cue, i, total, mode, "pl", plHidden = false)
+                    say(cue.combined, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                }
+                else -> {
+                    if (slowFirst) {
+                        publishConjugation(cue, i, total, mode, "pl-slow", plHidden = false)
+                        say(cue.combined, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                    }
+                    publishConjugation(cue, i, total, mode, "pl", plHidden = false)
+                    say(cue.combined, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                }
+            }
+            if (i < total - 1) reveal(500L)
+        }
+    }
+
+    private fun publishConjugation(
+        cue: ConjugationCue, i: Int, total: Int, mode: String, lang: String, plHidden: Boolean
+    ) {
+        NowVoicingBus.publish(
+            NowVoicing(
+                en = cue.englishGloss,
+                pl = cue.combined,
+                literal = null,
+                lang = lang,
+                position = "${i + 1}/$total",
+                words = cue.tokens,
+                plHidden = plHidden,
+                quizMode = mode != "play"
+            )
+        )
     }
 }
 
@@ -730,16 +638,6 @@ internal fun kickPrefetchWorker(app: LangbangApplication) {
     )
 }
 
-private fun mp3DurationMs(file: java.io.File): Long {
-    if (!file.exists()) return 0L
-    return try {
-        val r = MediaMetadataRetriever()
-        r.setDataSource(file.absolutePath)
-        val v = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-        r.release()
-        v
-    } catch (_: Throwable) { 0L }
-}
 
 @Composable
 private fun rememberVerbsTabState(app: LangbangApplication): VerbsTabState {
@@ -794,7 +692,7 @@ internal fun VerbsTab(
                 onToggleVerb = { lemma, c -> state.toggleVerbChecked(lemma, c) },
                 onToggleVerbs = { lemmas, c -> state.setVerbsChecked(lemmas, c) },
                 modifier = Modifier
-                    .width(256.dp)
+                    .width(307.dp)
                     .fillMaxHeight()
                     .background(LbColors.Canvas)
             )
@@ -844,26 +742,42 @@ private fun TopBar(
             // Chips + controls share one FlowRow so they wrap into one or two lines
             // inside the right pane. The Verbs/Phrases toggle leads (it used to be a
             // full-width band above the list), then the verb mode chips, then controls.
-            FlowRow(
-                Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.Top
             ) {
-                L2TabChips(tab, onTabChange)
-                VerbMode.values().forEach { m ->
-                    FilterChip(
-                        selected = mode == m,
-                        onClick = { onModeSelect(m) },
-                        label = { Text(m.label, fontSize = 11.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primary,
-                            selectedLabelColor = Color.White
-                        ),
-                        modifier = Modifier.height(30.dp)
-                    )
+                FlowRow(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    L2TabChips(tab, onTabChange)
+                    VerbMode.values().forEach { m ->
+                        FilterChip(
+                            selected = mode == m,
+                            onClick = { onModeSelect(m) },
+                            label = { Text(m.label, fontSize = 11.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = Color.White
+                            ),
+                            modifier = Modifier.height(30.dp)
+                        )
+                    }
+                    if (showControls) {
+                        ExamplesControls(state = state, allVerbs = allVerbs)
+                    }
                 }
                 if (showControls) {
-                    ExamplesControls(state = state, allVerbs = allVerbs)
+                    Spacer(Modifier.width(8.dp))
+                    VerbPlayButton(
+                        playing = state.playing,
+                        count = state.checkedLemmas.size.coerceAtLeast(1),
+                        onPlay = { state.playAllConjugations(allVerbs) },
+                        onStop = { state.stop() }
+                    )
                 }
             }
             state.generateProgress?.let {
@@ -885,7 +799,7 @@ private fun TopBar(
 @Composable
 private fun ExamplesControls(state: VerbsTabState, allVerbs: List<VerbEntry>) {
     // The "All verbs" checkbox moved into the left verb list (above the first class);
-    // ticked verbs now drive Play all / the quizzes. "Slow first" stays here.
+    // ticked verbs now drive Play / the quizzes. "Slow first" stays here.
     Row(verticalAlignment = Alignment.CenterVertically) {
         SubtleCheckbox(
             checked = state.slowFirst,
@@ -897,73 +811,15 @@ private fun ExamplesControls(state: VerbsTabState, allVerbs: List<VerbEntry>) {
         Text("Slow first", fontSize = 11.sp, color = LbColors.TextSecondary)
     }
 
-    // "Play all" is the conjugation reciter — always actionable (no sentence cache
-    // required). Quiz button still plays the Gemini example sentences in test mode
-    // and so depends on the sentence cache being non-empty.
-    Button(
-        onClick = { state.playAllConjugations(allVerbs) },
-        colors = ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.primary
-        ),
-        shape = RoundedCornerShape(16.dp),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-    ) {
-        Icon(
-            if (state.playing) Icons.Default.Stop else Icons.Default.PlayArrow,
-            contentDescription = if (state.playing) "Stop" else "Play all",
-            tint = Color.White,
-            modifier = Modifier.size(16.dp)
-        )
-        Spacer(Modifier.width(4.dp))
-        Text(
-            if (state.playing) "Stop" else "Play all",
-            fontSize = 12.sp,
-            color = Color.White
-        )
-    }
+    // The conjugation reciter's Play/Stop control sits in a fixed right slot so
+    // it never drifts into the filter chips.
     if (!state.playing) {
-        // Conjugation drill quiz — EN cue, hide PL, reveal. No sentence cache needed.
-        Button(
-            onClick = { state.playAllConjugations(allVerbs, mode = "conjQuiz") },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = LbColors.Primary
-            ),
-            shape = RoundedCornerShape(16.dp),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-        ) {
-            Text("?? Conj", fontSize = 12.sp, color = Color.White)
-        }
-        // Recollection drill — speak PL, hide everything, reveal. Tests "which form is this?"
-        Button(
-            onClick = { state.playAllConjugations(allVerbs, mode = "recall") },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = LbColors.Accent
-            ),
-            shape = RoundedCornerShape(16.dp),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-        ) {
-            Text("?? Recall", fontSize = 12.sp, color = Color.White)
-        }
+        LbButton.Ghost("Conj quiz", onClick = { state.playAllConjugations(allVerbs, mode = "conjQuiz") })
+        LbButton.Ghost("Recall quiz", onClick = { state.playAllConjugations(allVerbs, mode = "recall") })
     }
     val hasSentences = state.checkedLemmas.isNotEmpty() || state.sentences.isNotEmpty()
     if (hasSentences && !state.playing) {
-        Button(
-            onClick = { state.playAll(allVerbs, quiz = true) },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = LbColors.Label
-            ),
-            shape = RoundedCornerShape(16.dp),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-        ) {
-            Icon(
-                Icons.Default.PlayArrow,
-                contentDescription = "Sentence quiz",
-                tint = Color.White,
-                modifier = Modifier.size(16.dp)
-            )
-            Spacer(Modifier.width(4.dp))
-            Text("?? Sent.", fontSize = 12.sp, color = Color.White)
-        }
+        LbButton.Ghost("Sent. quiz", onClick = { state.playAll(allVerbs, quiz = true) }, icon = Icons.Default.PlayArrow)
     }
 
     // Generate / Regen button removed — it now lives on the Settings page (a single
@@ -974,6 +830,45 @@ private fun ExamplesControls(state: VerbsTabState, allVerbs: List<VerbEntry>) {
         CircularProgressIndicator(
             modifier = Modifier.size(18.dp), strokeWidth = 2.dp
         )
+    }
+}
+
+@Composable
+private fun VerbPlayButton(
+    playing: Boolean,
+    count: Int,
+    onPlay: () -> Unit,
+    onStop: () -> Unit
+) {
+    val bg = if (playing) LbColors.Stop else LbColors.Audio
+    Surface(
+        color = bg,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier
+            .height(30.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = if (playing) onStop else onPlay)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = if (playing) Icons.Default.Stop else Icons.Default.PlayArrow,
+                contentDescription = if (playing) "Stop" else "Play $count",
+                tint = Color.White,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = if (playing) "Stop" else "Play $count",
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1
+            )
+        }
     }
 }
 
@@ -996,7 +891,7 @@ private fun VerbList(
         verticalArrangement = Arrangement.spacedBy(CompactLessonListDefaults.ItemGap)
     ) {
         // Master "All verbs" toggle — sits above the first class label and ticks /
-        // unticks every verb. Ticked verbs are what Play all + the quizzes run over.
+        // unticks every verb. Ticked verbs are what Play + the quizzes run over.
         item(key = "all-verbs-master") {
             val allChecked = allLemmas.isNotEmpty() && checkedLemmas.containsAll(allLemmas)
             Row(
@@ -1116,7 +1011,7 @@ private fun VerbParadigm(
                 tint = LbColors.Primary,
                 modifier = Modifier
                     .size(28.dp)
-                    .clickable { playPolish(app, verb.lemma) }
+                    .clickable { state.playPolishOnce(verb.lemma) }
             )
             Spacer(Modifier.width(12.dp))
             DelayedEnglishTranslation(text = verb.en, fontSize = 14.sp, color = LbColors.TextSecondary)
@@ -1169,7 +1064,7 @@ private fun VerbParadigm(
                         onToggleIncluded = { now ->
                             state.toggleIncluded(k, now, PronounFilterStore.TENSE_PRESENT)
                         },
-                        onPlay = { playConjugation(app, k, form) }
+                        onPlay = { state.playConjugationOnce(k, form) }
                     )
                 }
             }
@@ -1208,7 +1103,7 @@ private fun VerbParadigm(
                             onToggleIncluded = { now ->
                                 state.toggleIncluded(k, now, PronounFilterStore.TENSE_PAST)
                             },
-                            onPlay = { playConjugation(app, k, form) }
+                            onPlay = { state.playConjugationOnce(k, form) }
                         )
                     }
                 }
@@ -1235,13 +1130,6 @@ private fun SentencesList(
     state: VerbsTabState
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            "Examples",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = LbColors.Label
-        )
-
         if (state.sentences.isEmpty()) {
             Text(
                 "No examples yet — tap Generate examples above to make 10 short sentences using the checked pronouns.",
@@ -1254,7 +1142,7 @@ private fun SentencesList(
                     sentence = s,
                     highlighted = i == state.playingIndex &&
                         state.playingLemma == verb.lemma,
-                    onPlay = { playSentence(app, s) }
+                    onPlay = { state.playSentenceOnce(s) }
                 )
             }
         }
@@ -1279,9 +1167,12 @@ private fun SentenceRow(
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = "Play",
+                tint = LbColors.Primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 DelayedEnglishTranslation(
                     text = sentence.en,
@@ -1295,8 +1186,6 @@ private fun SentenceRow(
                     glossFontSize = 10.sp
                 )
             }
-            Icon(Icons.Default.PlayArrow, contentDescription = "Play",
-                tint = LbColors.Primary, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -1358,7 +1247,7 @@ private fun ConjRow(
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+            Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             SubtleCheckbox(
@@ -1367,6 +1256,9 @@ private fun ConjRow(
                 modifier = Modifier.size(28.dp)
             )
             Spacer(Modifier.width(6.dp))
+            Icon(Icons.Default.PlayArrow, contentDescription = "Play",
+                tint = LbColors.Primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
             // PL form and its delayed English gloss share one line to save vertical room.
             Text(
                 pronoun,
@@ -1387,8 +1279,6 @@ private fun ConjRow(
             Spacer(Modifier.width(8.dp))
             DelayedEnglishTranslation(text = englishGloss, fontSize = 11.sp, color = LbColors.TextMuted,
                 modifier = Modifier.weight(1f))
-            Icon(Icons.Default.PlayArrow, contentDescription = "Play",
-                tint = LbColors.Primary, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -1398,6 +1288,7 @@ private fun ConjRow(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ByPronounMode(app: LangbangApplication, lesson: Lesson) {
+    val scope = rememberCoroutineScope()
     var personKey by remember { mutableStateOf("1sg") }
     var tense by remember { mutableStateOf(PronounFilterStore.TENSE_PRESENT) }
 
@@ -1459,7 +1350,7 @@ private fun ByPronounMode(app: LangbangApplication, lesson: Lesson) {
                     }
                     CompactLessonListCard(
                         selected = false,
-                        onClick = { playConjugation(app, personKey, form) },
+                        onClick = { playConjugation(app, scope, personKey, form) },
                         modifier = Modifier.fillMaxWidth(),
                         alternate = index % 2 == 1,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 3.dp)
@@ -1468,6 +1359,13 @@ private fun ByPronounMode(app: LangbangApplication, lesson: Lesson) {
                             Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (form.isNotEmpty()) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = "Play",
+                                    tint = LbColors.Primary, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                            } else {
+                                Spacer(Modifier.width(26.dp))
+                            }
                             Row(
                                 Modifier.width(250.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -1521,10 +1419,6 @@ private fun ByPronounMode(app: LangbangApplication, lesson: Lesson) {
                                     )
                                 }
                             }
-                            if (form.isNotEmpty()) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = "Play",
-                                    tint = LbColors.Primary, modifier = Modifier.size(18.dp))
-                            }
                         }
                     }
                 }
@@ -1576,33 +1470,26 @@ private fun TenseToggleSegment(
     )
 }
 
-/** Plays any Polish text from the cache (no-op if file missing). */
-private fun playPolish(app: LangbangApplication, text: String) {
+/** Plays any Polish text, synthesizing into the cache when needed. */
+private fun playPolish(app: LangbangApplication, scope: CoroutineScope, text: String) {
     if (text.isEmpty()) return
-    val f = app.audioCache.fileFor(
-        AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, text
-    )
-    app.audioPlayer.play(f)
-}
-
-private fun playSentence(app: LangbangApplication, sentence: SentenceExample) {
-    NowVoicingBus.publish(
-        NowVoicing(
-            en = sentence.en,
-            pl = sentence.pl,
-            literal = sentence.literal,
-            lang = "pl",
-            words = sentence.words
-        )
-    )
-    playPolish(app, sentence.pl)
+    PlaybackController.stop()
+    app.audioPlayer.stop()
+    scope.launch {
+        app.playAudioAndAwait(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+    }
 }
 
 /** Plays "pronoun form" together (e.g. "ja jestem") so the spoken text matches the row. */
-private fun playConjugation(app: LangbangApplication, personKey: String, form: String) {
+private fun playConjugation(
+    app: LangbangApplication,
+    scope: CoroutineScope,
+    personKey: String,
+    form: String
+) {
     if (form.isEmpty()) return
     val combined = "${audioPronoun(personKey)} $form".trim()
-    playPolish(app, combined)
+    playPolish(app, scope, combined)
 }
 
 /** Short English subject pronoun for NV panel gloss. */

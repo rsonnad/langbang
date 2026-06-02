@@ -73,6 +73,9 @@ Verified from device via ADB on 2026-05-18.
 ## Dev workflow context
 - Wireless ADB enabled, paired persistently from dev Mac
 - ADB host: `100.103.110.7:<rotating port>` — use `~/bin/adb-tab` wrapper to auto-discover
+- Manual screenshot source: `/sdcard/DCIM/Screenshots`; pull latest files with
+  `scripts/pull-tablet-screenshots.sh` into
+  `~/Documents/Screenshotz/TabA9-YYYYMMDD-HHMMSS`
 - Persistent connect port at time of capture: `34975`
 - Stay-awake-on-charge recommended during dev
 - "Verify apps over USB" OFF (developer's own builds, faster install loop)

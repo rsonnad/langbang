@@ -5,23 +5,26 @@ import com.sponic.langbang.data.model.SentenceExample
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
-import kotlinx.serialization.json.Json
 import java.io.File
 
 /**
- * On-device cache of Gemini-generated example sentences for each noun. Mirrors
- * [AdjectiveSentenceStore] — keyed by lowercase lemma, stored at filesDir/noun-sentences.json.
+ * On-device cache of Gemini-generated example sentences keyed by lowercase lemma.
+ * Replaces the three byte-identical AdjectiveSentenceStore / AdverbSentenceStore /
+ * NounSentenceStore classes. [VerbSentenceStore] stays separate — it adds a tense
+ * dimension (composite key) plus legacy bare-lemma back-compat.
+ *
+ * The @Volatile memo is load-bearing: pre-memo, every [get] re-read + re-parsed the whole
+ * file, and the prefetch / regen paths hammered it hundreds of times at app start — the
+ * 2026-05-28 ANR. Parse is idempotent so the double-checked lock is safe.
  */
-class NounSentenceStore(context: Context) {
+class SentenceStore(context: Context, fileName: String) {
 
-    private val file = File(context.filesDir, "noun-sentences.json")
-    private val json = Json { prettyPrint = true; ignoreUnknownKeys = true }
+    private val file = File(context.filesDir, fileName)
     private val serializer = MapSerializer(
         String.serializer(),
         ListSerializer(SentenceExample.serializer())
     )
 
-    // See VerbSentenceStore for the memo rationale — same ANR class.
     @Volatile private var memo: MutableMap<String, List<SentenceExample>>? = null
 
     private fun loadAll(): MutableMap<String, List<SentenceExample>> {
@@ -30,7 +33,7 @@ class NounSentenceStore(context: Context) {
             memo ?: run {
                 val loaded = if (!file.exists()) mutableMapOf()
                 else runCatching {
-                    json.decodeFromString(serializer, file.readText()).toMutableMap()
+                    LbJson.pretty.decodeFromString(serializer, file.readText()).toMutableMap()
                 }.getOrDefault(mutableMapOf())
                 memo = loaded
                 loaded
@@ -45,7 +48,7 @@ class NounSentenceStore(context: Context) {
         synchronized(this) {
             val all = loadAll()
             all[lemma.lowercase()] = sentences
-            file.writeText(json.encodeToString(serializer, all))
+            file.writeText(LbJson.pretty.encodeToString(serializer, all))
         }
     }
 

@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -122,22 +123,20 @@ private fun PracticePlaybackCard(app: LangbangApplication) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionHeader("Practice playback")
             Text(
-                "Shared playback options for Play All and phrase drills.",
+                "Shared playback options for Play and phrase drills.",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
             )
-            FilterChip(
-                selected = slowFirst,
-                onClick = {
-                    slowFirst = !slowFirst
-                    app.practicePrefs.setSlowFirst(slowFirst)
-                },
-                label = { Text("Slow Polish first", fontSize = 12.sp) },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedLabelColor = Color.White
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = slowFirst,
+                    onCheckedChange = { checked ->
+                        slowFirst = checked
+                        app.practicePrefs.setSlowFirst(checked)
+                    }
                 )
-            )
+                Text("Slow Polish first", fontSize = 12.sp)
+            }
         }
     }
 }
@@ -241,8 +240,8 @@ private fun AudioDownloadCard(
             SectionHeader("Audio cache")
             Spacer(Modifier.height(4.dp))
             Text(
-                "Pulls every phrase's pre-generated mp3 from R2 so playback is instant " +
-                    "offline. First run downloads ~60-80 MB; later runs only fetch what's " +
+                "Downloads prepared phrase audio so playback is instant offline. " +
+                    "First run downloads about 60-80 MB; later runs only fetch what's " +
                     "new. Safe to tap any time — already-cached files are skipped.",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -276,8 +275,8 @@ private fun AudioDownloadCard(
                                     // wording is now explicit about that — "wanted
                                     // X from R2" not "X total" — so the user doesn't
                                     // think the R2-manifest count is the whole cache.
-                                    lastSummary = "R2 sync: fetched ${s.fetched} new of " +
-                                        "${s.totalWanted} R2-pregen files" +
+                                    lastSummary = "Audio sync: fetched ${s.fetched} new of " +
+                                        "${s.totalWanted} prepared files" +
                                         if (s.failed > 0) " · ${s.failed} failed" else ""
                                     Toast.makeText(
                                         context,
@@ -294,7 +293,7 @@ private fun AudioDownloadCard(
                     },
                     enabled = online && !busy
                 ) {
-                    Text(if (busy) "Syncing audio…" else "Sync audio from R2")
+                    Text(if (busy) "Syncing audio…" else "Sync audio")
                 }
                 if (busy) {
                     Spacer(Modifier.width(12.dp))
@@ -336,7 +335,7 @@ private fun AudioDownloadCard(
 @Composable
 private fun VersionHeader() {
     Text(
-        "langbang v${BuildConfig.VERSION_NAME} · build ${BuildConfig.BUILD_NUMBER} · ${BuildConfig.BUILD_TIMESTAMP}",
+        "langbang v${BuildConfig.BUILD_NUMBER} · ${BuildConfig.BUILD_TIMESTAMP}",
         fontSize = 12.sp,
         fontFamily = FontFamily.Monospace,
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -668,7 +667,7 @@ private fun formatThousands(n: Long): String =
  * person key for BOTH present and past tense in PronounFilterStore — gives the user a
  * fast way to narrow drills to just "ja" or "ja + ty + on" without hunting through
  * each verb's checkboxes. Per-verb checkboxes still override locally; this is the
- * global default that every Play All / Quiz / Random play respects.
+ * global default that every Play / Quiz / Random play respects.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -690,7 +689,7 @@ private fun PracticePronounsCard(app: LangbangApplication) {
             Text(
                 "Limit which subject pronouns appear in drills. Toggle off the ones " +
                     "you don't want to practice (e.g. focus on ja / ty / on only). " +
-                    "Applies to Play All, Quiz, and Play Phrases across all lessons.",
+                    "Applies to Play, Quiz, and Play Phrases across all lessons.",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
             )
@@ -771,8 +770,8 @@ private fun RegenerateSentencesCard(
             Spacer(Modifier.height(4.dp))
             Text(
                 "Example sentences for verbs, adjectives, adverbs, and nouns are " +
-                    "pre-generated server-side and stored in R2; the app pulls missing " +
-                    "bundles automatically on launch. Tap below to force a re-check " +
+                    "prepared in advance; the app pulls missing updates automatically " +
+                    "on launch. Tap below to force a re-check " +
                     "(only useful right after a prompt update).",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -783,7 +782,7 @@ private fun RegenerateSentencesCard(
                     enabled = online && !downloading,
                     onClick = { app.sentenceRegen.startIfNeeded(force = true) }
                 ) {
-                    Text(if (downloading) "Re-syncing…" else "Re-sync sentences from R2")
+                    Text(if (downloading) "Syncing…" else "Sync sentences")
                 }
                 if (downloading) {
                     Spacer(Modifier.width(12.dp))
@@ -800,18 +799,18 @@ private fun RegenerateSentencesCard(
                     Text("Ready.", fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 is com.sponic.langbang.domain.SentenceRegenService.State.Downloading -> {
-                    val label = if (s.total == 0) "Fetching manifest…"
+                    val label = if (s.total == 0) "Checking for sentence updates…"
                                 else "Downloading ${s.done}/${s.total} · ${s.currentKey}"
                     Text(label, fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 }
                 is com.sponic.langbang.domain.SentenceRegenService.State.Done -> {
                     val msg = if (s.downloaded == 0 && s.failures == 0)
-                        "All sentences up to date — ${s.total} bundles indexed."
+                        "Sentence library up to date."
                     else if (s.failures == 0)
-                        "Updated — ${s.downloaded} of ${s.total} bundles downloaded."
+                        "Updated — ${s.downloaded} sentence packs downloaded."
                     else
-                        "Updated — ${s.downloaded} of ${s.total} (${s.failures} failed, tap to retry)."
+                        "Updated — ${s.downloaded} sentence packs (${s.failures} failed, tap to retry)."
                     Text(msg, fontSize = 11.sp,
                         color = if (s.failures == 0) LbColors.Success else LbColors.Danger)
                 }

@@ -1,15 +1,11 @@
 package com.sponic.langbang.domain
 
 import com.sponic.langbang.BuildConfig
+import com.sponic.langbang.data.LbJson
 import com.sponic.langbang.data.LessonRepository
-import com.sponic.langbang.data.VerbSentenceStore
-import com.sponic.langbang.data.model.audioPronoun
-import com.sponic.langbang.integrations.AzureTtsClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -30,90 +26,13 @@ class R2AudioDownloader(
     private val network: NetworkMonitor
 ) {
 
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private val json = LbJson.lenient
     private val endpoint =
         "${BuildConfig.SUPABASE_URL}/functions/v1/langbang-pregen-audio"
 
-    /** All (text, voice, locale) triples the app currently needs cached. */
-    fun buildManifestPhrases(): List<Phrase> {
-        val lesson = repo.lesson2()
-        val adjLesson = repo.lesson3()
-        val advLesson = repo.lesson4()
-        val nounLesson = repo.lesson6()
-        val pron = repo.pronunciation()
-        return buildList {
-            fun addPl(text: String) {
-                if (text.isEmpty()) return
-                add(Phrase(text, AzureTtsClient.PL_PL_F, AzureTtsClient.LOCALE_PL))
-                // Both slow styles so the Settings → Slow audio style toggle is instant
-                // — flipping it picks the already-cached mp3, no re-download needed.
-                add(Phrase(text, AzureTtsClient.PL_PL_F_SLOW_V2, AzureTtsClient.LOCALE_PL))
-                add(Phrase(text, AzureTtsClient.PL_PL_F_SLOW_ART, AzureTtsClient.LOCALE_PL))
-            }
-            lesson.phrases.forEach { p ->
-                add(Phrase(p.en, AzureTtsClient.EN_US_F, AzureTtsClient.LOCALE_EN))
-                addPl(p.pl)
-            }
-            lesson.verbs.forEach { v ->
-                v.forms.forEach { (k, f) -> addPl("${audioPronoun(k)} $f".trim()) }
-                v.past_forms?.forEach { (k, f) -> addPl("${audioPronoun(k)} $f".trim()) }
-            }
-            lesson.pronouns.forEach { p ->
-                p.case_forms.values.forEach { addPl(it) }
-            }
-            adjLesson.adjectives.forEach { a ->
-                a.nom.values.forEach { addPl(it) }
-                a.acc.values.forEach { addPl(it) }
-            }
-            advLesson.adverbs.forEach { adv -> addPl(adv.lemma) }
-            nounLesson.nouns.forEach { n ->
-                n.nom.values.forEach { addPl(it) }
-                n.acc.values.forEach { addPl(it) }
-                n.gen.values.forEach { addPl(it) }
-            }
-            pron.phonemes.forEach { ph -> ph.examples.forEach { addPl(it.pl) } }
-            lesson.verbs.forEach { v ->
-                repo.sentencesFor(v.lemma, VerbSentenceStore.TENSE_PRESENT).forEach { s ->
-                    add(Phrase(s.en, AzureTtsClient.EN_US_F, AzureTtsClient.LOCALE_EN))
-                    addPl(s.pl)
-                }
-                repo.sentencesFor(v.lemma, VerbSentenceStore.TENSE_PAST).forEach { s ->
-                    add(Phrase(s.en, AzureTtsClient.EN_US_F, AzureTtsClient.LOCALE_EN))
-                    addPl(s.pl)
-                }
-            }
-            adjLesson.adjectives.forEach { a ->
-                repo.adjectiveSentencesFor(a.lemma).forEach { s ->
-                    add(Phrase(s.en, AzureTtsClient.EN_US_F, AzureTtsClient.LOCALE_EN))
-                    addPl(s.pl)
-                }
-            }
-            advLesson.adverbs.forEach { adv ->
-                repo.adverbSentencesFor(adv.lemma).forEach { s ->
-                    add(Phrase(s.en, AzureTtsClient.EN_US_F, AzureTtsClient.LOCALE_EN))
-                    addPl(s.pl)
-                }
-            }
-            nounLesson.nouns.forEach { n ->
-                repo.nounSentencesFor(n.lemma).forEach { s ->
-                    add(Phrase(s.en, AzureTtsClient.EN_US_F, AzureTtsClient.LOCALE_EN))
-                    addPl(s.pl)
-                }
-            }
-            // Phrase-bank (lesson 5) sentences feed the "Play Phrases" queue exactly like
-            // the verb/adj/adv sentences above (see RandomPlayerState.collectPhraseBankSentences),
-            // so they MUST be in the manifest too — otherwise every phrase-bank sentence
-            // misses the bulk cache and falls through to slow per-phrase on-demand synth,
-            // which is why most of them sat silent for a long time before voicing. Includes
-            // any user-added groups; the Edge Function synthesizes arbitrary text on demand.
-            repo.lesson5().groups.forEach { group ->
-                group.sentences.forEach { s ->
-                    add(Phrase(s.en, AzureTtsClient.EN_US_F, AzureTtsClient.LOCALE_EN))
-                    addPl(s.pl)
-                }
-            }
-        }.distinctBy { it.text + "|" + it.locale + "|" + it.voice }
-    }
+    /** All (text, voice, locale) triples the app currently needs cached — see [audioManifest]. */
+    fun buildManifestPhrases(): List<Phrase> =
+        audioManifest(repo).map { Phrase(it.text, it.voice, it.locale) }
 
     /**
      * Pulls every not-yet-cached phrase's mp3 from R2, asking the Edge Function for URLs
@@ -251,7 +170,7 @@ class R2AudioDownloader(
         // trips on first fill / newly-added content.
         private const val BATCH_SIZE = 40
 
-        private val sharedJson = Json { ignoreUnknownKeys = true; isLenient = true }
+        private val sharedJson = LbJson.lenient
         private val sharedEndpoint =
             "${BuildConfig.SUPABASE_URL}/functions/v1/langbang-pregen-audio"
 

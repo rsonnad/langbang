@@ -16,7 +16,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
@@ -41,9 +43,12 @@ import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.data.VerbSentenceStore
 import com.sponic.langbang.data.model.SentenceExample
+import com.sponic.langbang.data.model.TokenPair
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
+import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.integrations.AzureTtsClient
+import com.sponic.langbang.ui.common.rememberDelayedTranslationVisible
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
@@ -80,6 +85,8 @@ fun MultipleChoiceQuiz(
     var correctCount by remember(quizKey, runId) { mutableStateOf(0) }
     var pickedIndex by remember(quizKey, runId) { mutableStateOf<Int?>(null) }
     var pickedCorrect by remember(quizKey, runId) { mutableStateOf<Boolean?>(null) }
+    var heardAnswer by remember(quizKey, runId, index) { mutableStateOf(false) }
+    var hearAnswerRequest by remember(quizKey, runId, index) { mutableStateOf(0) }
 
     val q = ordered.getOrNull(index)
     if (q == null) {
@@ -99,56 +106,91 @@ fun MultipleChoiceQuiz(
     // when state updates trigger recomposition.
     val options = remember(quizKey, runId, index) { (q.distractors + q.correct).shuffled() }
     val correctOption = q.correct
+    val contextVisible = rememberDelayedTranslationVisible("${q.prompt}\n${q.context}\n$index")
+
+    fun stopCurrentPlayback() {
+        PlaybackController.stop()
+        app.audioPlayer.stop()
+        NowVoicingBus.clear()
+    }
 
     // Auto-advance after the reveal pause when the user picks an option.
     LaunchedEffect(pickedIndex) {
         if (pickedIndex != null) {
-            voiceQuizReveal(app, q, pickedCorrect == true)
-            kotlinx.coroutines.delay(if (pickedCorrect == true) 700L else 1500L)
-            if (pickedCorrect == true) correctCount += 1
-            index += 1
-            pickedIndex = null
-            pickedCorrect = null
+            PlaybackController.register {
+                app.audioPlayer.stop()
+                NowVoicingBus.clear()
+                pickedIndex = null
+                pickedCorrect = null
+            }
+            try {
+                voiceQuizReveal(app, q, pickedCorrect == true)
+                kotlinx.coroutines.delay(if (pickedCorrect == true) 700L else 1500L)
+                if (pickedIndex != null) {
+                    if (pickedCorrect == true) correctCount += 1
+                    index += 1
+                    pickedIndex = null
+                    pickedCorrect = null
+                }
+            } finally {
+                PlaybackController.unregister()
+            }
+        }
+    }
+
+    LaunchedEffect(hearAnswerRequest) {
+        if (hearAnswerRequest == 0) return@LaunchedEffect
+        PlaybackController.register {
+            app.audioPlayer.stop()
+            NowVoicingBus.clear()
+        }
+        try {
+            publishQuizAnswer(q)
+            speakQuizAnswer(app, q.correct, q.correctLocale)
+        } finally {
+            PlaybackController.unregister()
         }
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         // ── Header: title, score, exit ─────────────────────────────────────
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
                 color = LbColors.Primary, modifier = Modifier.weight(1f))
             Text("${index + 1} / ${ordered.size}",
-                fontSize = 13.sp, color = LbColors.Label)
+                fontSize = 12.sp, color = LbColors.Label)
             Spacer(Modifier.width(12.dp))
             OutlinedButton(
                 onClick = onExit,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp)
             ) {
-                Text("Exit", fontSize = 12.sp)
+                Text("Exit", fontSize = 11.sp)
             }
             Spacer(Modifier.width(8.dp))
             OutlinedButton(
                 onClick = {
                     if (pickedIndex == null) {
-                        pickedIndex = NO_PICK_INDEX
-                        pickedCorrect = false
+                        stopCurrentPlayback()
+                        heardAnswer = true
+                        hearAnswerRequest += 1
                     }
                 },
                 enabled = pickedIndex == null,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp)
             ) {
-                Text("Hear answer", fontSize = 12.sp)
+                Text(if (heardAnswer) "Replay answer" else "Hear answer", fontSize = 11.sp)
             }
         }
 
         LinearProgressIndicator(
             progress = { (index + 1).toFloat() / ordered.size },
-            modifier = Modifier.fillMaxWidth().height(4.dp),
+            modifier = Modifier.fillMaxWidth().height(3.dp),
             color = MaterialTheme.colorScheme.primary,
             trackColor = LbColors.SurfaceTint
         )
@@ -157,12 +199,16 @@ fun MultipleChoiceQuiz(
         Column(horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.fillMaxWidth()) {
             if (q.context.isNotBlank()) {
-                Text(q.context, fontSize = 12.sp,
-                    color = LbColors.Label, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(4.dp))
+                if (contextVisible) {
+                    Text(q.context, fontSize = 12.sp,
+                        color = LbColors.Label, fontWeight = FontWeight.SemiBold)
+                } else {
+                    Spacer(Modifier.height(16.dp))
+                }
+                Spacer(Modifier.height(2.dp))
             }
             Text(
-                q.prompt, fontSize = 32.sp, fontWeight = FontWeight.Bold,
+                q.prompt, fontSize = 24.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold,
                 color = LbColors.TextPrimary, textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -170,9 +216,9 @@ fun MultipleChoiceQuiz(
 
         // ── 2x2 options grid ──────────────────────────────────────────────
         val pairs = options.chunked(2)
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             pairs.forEachIndexed { pairIndex, row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()) {
                     row.forEachIndexed { rowIndex, opt ->
                         val i = pairIndex * 2 + rowIndex
@@ -182,28 +228,31 @@ fun MultipleChoiceQuiz(
                             tapped && isCorrect -> LbColors.SuccessSoft
                             tapped && !isCorrect -> LbColors.DangerSoft
                             pickedIndex != null && isCorrect -> LbColors.SuccessSoft // reveal the right one even when wrong picked
+                            heardAnswer && isCorrect -> LbColors.SuccessSoft
                             else -> LbColors.Sheet
                         }
                         val border = when {
                             tapped && isCorrect -> LbColors.Success
                             tapped && !isCorrect -> LbColors.Danger
+                            heardAnswer && isCorrect -> LbColors.Success
                             else -> LbColors.SurfaceTint
                         }
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .height(72.dp)
-                                .clip(RoundedCornerShape(12.dp))
+                                .height(48.dp)
+                                .clip(RoundedCornerShape(10.dp))
                                 .background(bg)
-                                .border(2.dp, border, RoundedCornerShape(12.dp))
+                                .border(1.dp, border, RoundedCornerShape(10.dp))
                                 .clickable(enabled = pickedIndex == null) {
+                                    stopCurrentPlayback()
                                     pickedIndex = i
                                     pickedCorrect = isCorrect
                                 },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                opt, fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
+                                opt, fontSize = 18.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold,
                                 color = LbColors.TextPrimary, textAlign = TextAlign.Center
                             )
                         }
@@ -215,8 +264,6 @@ fun MultipleChoiceQuiz(
         }
     }
 }
-
-private const val NO_PICK_INDEX = -1
 
 private suspend fun voiceQuizReveal(
     app: LangbangApplication,
@@ -245,14 +292,16 @@ private suspend fun voiceQuizReveal(
 
 private fun publishQuizAnswer(question: QuizQuestion) {
     val isEnglishAnswer = question.correctLocale == AzureTtsClient.LOCALE_EN
+    val pl = if (isEnglishAnswer) question.polishPracticeWord else question.correct
+    val en = if (isEnglishAnswer) question.correct else question.prompt
     NowVoicingBus.publish(
         NowVoicing(
-            en = if (isEnglishAnswer) question.correct else question.prompt,
-            pl = if (isEnglishAnswer) question.polishPracticeWord else question.correct,
+            en = en,
+            pl = pl,
             literal = null,
             lang = if (isEnglishAnswer) "en" else "pl",
             position = "quiz answer",
-            words = null,
+            words = listOf(TokenPair(pl, en)),
             quizMode = true
         )
     )

@@ -7,10 +7,10 @@ import com.sponic.langbang.data.model.NounEntry
 import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.data.model.TokenPair
 import com.sponic.langbang.data.model.VerbEntry
+import com.sponic.langbang.data.LbJson
 import com.sponic.langbang.domain.UsageTracker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
@@ -85,7 +85,7 @@ class GeminiClient(
     private val key = BuildConfig.GEMINI_API_KEY
     private val endpoint =
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private val json = LbJson.lenient
 
     suspend fun translateVerb(englishInfinitive: String): Result<VerbEntry> =
         withContext(Dispatchers.IO) {

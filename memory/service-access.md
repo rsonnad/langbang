@@ -370,6 +370,34 @@ Then `Read` the returned path to view the image inline. Override the output dir 
 - nmap scan returns **no open high ports while the tab still answers ping** → **Wireless debugging is OFF**. Reachable-on-network ≠ adb-reachable. No amount of scanning fixes this; the user must toggle Settings → Developer options → Wireless debugging ON. This was the actual blocker on 2026-05-31.
 - **Durable fix applied 2026-05-31:** while the Tab was connected at `100.103.110.7:37367`, ran `adb -s 100.103.110.7:37367 tcpip 5555`, then verified `adb connect 100.103.110.7:5555` returns a real `device`. This pins adb to fixed port 5555, eliminating both port rotation and the nmap scan until adbd is restarted or the tablet reboots. `~/bin/adb-tab` now tries `5555` first before falling back to Wireless debugging discovery.
 
+**Update 2026-06-02 — sub-second screenshot helpers.** `~/bin/adb-tab-screenshot`
+now prefers an already-connected fixed serial (`100.103.110.7:5555`) and only
+invokes `adb-tab` when no tablet serial is connected. It writes to
+`~/Documents/Screenshotz`, verifies the file is real PNG data, and took ~0.9s
+against the live tablet in testing. `~/bin/adb-pixel-screenshot` does the same
+for the Pixel, preferring USB serial `57091FDCQ0081F` before falling back to
+`adb-pixel`; it took ~1.1s over USB. For rapid visual iteration, use these
+commands directly and treat `adb-tab` / `adb-pixel` as recovery paths, not the
+normal screenshot path.
+
+**Update 2026-06-02 — pull manually-taken tablet screenshots.** Samsung writes
+manual screenshots to `/sdcard/DCIM/Screenshots` on the Tab A9+ (fallback:
+`/sdcard/Pictures/Screenshots`). Use the repo helper to copy the newest manual
+shots into a timestamped local folder:
+
+```bash
+cd /Users/rahulio/Documents/CodingProjects/langbang
+scripts/pull-tablet-screenshots.sh
+# default: newest 4 files -> ~/Documents/Screenshotz/TabA9-YYYYMMDD-HHMMSS
+scripts/pull-tablet-screenshots.sh 8
+# newest 8 files -> ~/Documents/Screenshotz/TabA9-YYYYMMDD-HHMMSS
+```
+
+Override the destination with arg 2 or `TAB_SCREENSHOT_DEST_ROOT`. Override the
+tablet serial with `ADB_SERIAL`; otherwise the helper prefers fixed
+`100.103.110.7:5555`, then the connected Samsung SM-X210 mDNS serial, then
+`adb-tab` recovery.
+
 ## ALPUCA SSH (Tailscale, for langbang backup target) — 2026-05-18
 
 On the Sponic tailnet ALPUCA is `100.74.59.97`, hostname `alpuca`, login user `alpuca` (not `paca` as some older `~/.ssh/config` snippets show — `whoami` confirms `alpuca`). `~/.ssh/config` already has a `Host alpuca` block, so plain `ssh alpuca 'whoami'` works from any tailnet-connected Mac.
@@ -633,3 +661,33 @@ machine-wide dev convenience. Four gotchas, all hit on first setup:
    adding one mid-session never exposes its tools in that session. After the
    port is bound, restart Claude (or `/mcp` reconnect) → `claude mcp list`
    flips to ✓ and the `crosspaste` tools become callable.
+
+## 2026-06-01 — R2 fork-build publishing gotchas (discovered this session)
+
+**R2 server-side copy needs `--copy-props none`.** Cloudflare R2 does not implement
+`GetObjectTagging`, so a plain `aws s3 cp s3://… s3://…` fails with
+`An error occurred (NotImplemented) ... GetObjectTagging not implemented`. Always add
+`--copy-props none` when copying within the bucket (e.g. re-pinning a build):
+```bash
+aws s3 cp s3://alpacapps/langbang/langbang-v242-arm64.apk \
+  s3://alpacapps/langbang/builds/langbang-cdx-v242-arm64.apk \
+  --endpoint-url "https://${ACCOUNT_ID}.r2.cloudflarestorage.com" \
+  --content-type application/vnd.android.package-archive --copy-props none --no-progress
+```
+
+**`~/bin/bw-unlock` can return an EMPTY session mid-session** (even right after a
+successful unlock earlier in the same shell run) — a transient lock. Symptom: the next
+R2 command dies with `Invalid endpoint: https://.r2.cloudflarestorage.com` (empty
+Account ID). Guard before using:
+```bash
+export BW_SESSION=$(~/bin/bw-unlock)
+ACC="$(bw get item 'Cloudflare R2 — Object Storage' --session "$BW_SESSION" \
+  | jq -r '.fields[]|select(.name=="Account ID")|.value')"
+[ -n "$ACC" ] || { echo "BW unlock failed — retry"; export BW_SESSION=$(~/bin/bw-unlock); }
+```
+
+**Fork build channels (page-only model codes):** CLD=Claude, CDX=Codex, under
+`langbang/builds/langbang-<code>-v{N}-arm64.apk` (+ `-<code>-latest.apk`). The
+build-history page (`genalpaca-admin/rahulio/pages/langbang/builds.html`) is regenerated
+by `langbang/scripts/gen-builds-page.sh`. Never overwrite `langbang-latest.apk` / the
+update manifest for fork builds — that's the canonical channel the in-app updater polls.

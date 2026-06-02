@@ -10,13 +10,28 @@ published to the `alpacapps` R2 bucket under `langbang/`:
 - Pinned: `https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev/langbang/langbang-v{N}-arm64.apk`
 - Latest: `https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev/langbang/langbang-latest.apk`
 
-**Always publish immediately after any successful build.** Run
-**`./scripts/publish-r2.sh`** as soon as `./gradlew :app:assembleDebug` is
-green — the script builds, uploads both keys, verifies the public URLs return
-200, and patches the version label on the landing page. Do not wait for the
-user to ask; do not leave APKs sitting locally; do not create GitHub Releases
-for this project. The pinned + latest R2 URLs are the canonical install path
-for the tablet, so every code change ships through `publish-r2.sh`.
+For pinned APKs and app-visible version labels, `{N}` is **only** the integer
+`buildNumber` / APK `versionCode`. Use `v245`, not `v0.1.8.245`. The full
+`<versionName>.<buildNumber>` string is Android manifest metadata only.
+
+**Release builds publish immediately after a successful build.** Run
+**`./scripts/publish-r2.sh`** for release work as soon as
+`./gradlew :app:assembleDebug` is green — the script builds, uploads both keys,
+verifies the public URLs return 200, and patches the version label on the
+landing page. Do not create GitHub Releases for this project.
+
+**Interactive tablet iteration uses the build timer only for user request
+churn.** During live UI/debug sessions, do not rebuild while the user is still
+sending rapid feature or UX follow-ups. Start or restart a 60-second idle timer
+after the last user-requested source change; the only required user-facing
+status line is exactly `build timer running....`. Do not announce timer
+invalidations. If the user has not made a feature/UX/source-change request in
+the last 60 seconds and the remaining work is the agent's own verification or
+fix iteration, build immediately without another timer. When a build starts, say
+exactly `building apk...` and keep the update terse. Then run one clean
+`./gradlew :app:assembleDebug`; if it succeeds and the tablet is connected,
+install that APK to the tablet immediately. This tablet-install loop is not an
+R2 release unless the user explicitly asks to publish or release.
 
 ## Shared infrastructure (alpacapps)
 
@@ -86,8 +101,12 @@ file just records that langbang is a tenant.
 - **Version source:** `version.properties` at repo root. `app/build.gradle.kts`
   bumps `buildNumber` on every assemble/bundle/install; `versionName` is
   manually bumped on releases.
-- **Current displayed version:** `<versionName>.<buildNumber>` (e.g.
-  `0.1.6.20`). Surfaces in Settings → version header.
+- **Current displayed version:** `v<buildNumber>` only (e.g. `v245`). The main
+  header, Settings header, update banner, R2 pinned filename, and page label all
+  use this short build tag.
+- **Pinned release tag:** `v<buildNumber>` only (e.g. `v245`). Do not create
+  tags like `v0.1.8.245`; the semantic prefix is Android manifest metadata, not
+  an app-visible or publish tag.
 - **APK output:** `app/build/outputs/apk/debug/app-arm64-v8a-debug.apk` (~60 MB,
   Speech SDK native libs dominate).
 - **Install over Tailscale:** `~/bin/adb-tab` connects to the Tab A9+; then

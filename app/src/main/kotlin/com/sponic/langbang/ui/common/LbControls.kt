@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -29,6 +28,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -140,33 +143,33 @@ private fun ButtonSurface(
         shape = LbShapes.Button,
         border = BorderStroke(1.dp, borderColor.copy(alpha = disabledAlpha)),
         modifier = modifier
-            .defaultMinSize(minHeight = 44.dp)
+            .defaultMinSize(minHeight = 30.dp)
             .clip(LbShapes.Button)
             .clickable(enabled = enabled, onClick = onClick)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
             icon?.let {
-                Icon(it, contentDescription = null, tint = contentColor, modifier = Modifier.size(17.dp))
-                Spacer(Modifier.width(6.dp))
+                Icon(it, contentDescription = null, tint = contentColor, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(5.dp))
             }
             Text(
                 label,
                 color = contentColor,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.ExtraBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             count?.let {
-                Spacer(Modifier.width(7.dp))
+                Spacer(Modifier.width(5.dp))
                 Text(
                     it.toString(),
                     color = contentColor.copy(alpha = 0.78f),
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.ExtraBold
                 )
             }
@@ -227,22 +230,48 @@ fun SelectionBar(
     note: String? = null,
     content: @Composable () -> Unit
 ) {
+    var expanded by remember { mutableStateOf(false) }
     Surface(
         color = LbColors.SurfaceTint,
         shape = LbShapes.Card,
         border = BorderStroke(1.dp, LbColors.Line),
         modifier = modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+        Column(
+            Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Surface(
+                color = if (expanded) LbColors.PrimarySoft else Color.White,
+                shape = LbShapes.Button,
+                border = BorderStroke(1.dp, if (expanded) LbColors.Primary else LbColors.Line),
+                modifier = Modifier
+                    .height(28.dp)
+                    .clip(LbShapes.Button)
+                    .clickable { expanded = !expanded }
             ) {
-                content()
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (expanded) "Hide filters" else "Filters",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = if (expanded) LbColors.Primary else LbColors.TextPrimary
+                    )
+                }
             }
-            note?.takeIf { it.isNotBlank() }?.let {
-                Text(it, fontSize = 12.sp, color = LbColors.TextMuted, fontStyle = FontStyle.Italic)
+            if (expanded) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    content()
+                }
+                note?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, fontSize = 12.sp, color = LbColors.TextMuted, fontStyle = FontStyle.Italic)
+                }
             }
         }
     }
@@ -269,35 +298,6 @@ fun FilterGroup(
             letterSpacing = 0.8.sp
         )
         Row(horizontalArrangement = Arrangement.spacedBy(5.dp), content = content)
-    }
-}
-
-@Composable
-fun PlayCircle(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    active: Boolean = false,
-    sizeDp: Int = 46
-) {
-    val bg = if (active) LbColors.Audio else Color.White
-    val fg = if (active) Color.White else LbColors.Audio
-    Surface(
-        color = bg,
-        shape = CircleShape,
-        border = BorderStroke(1.5.dp, LbColors.Audio),
-        modifier = modifier
-            .size(sizeDp.dp)
-            .clip(CircleShape)
-            .clickable(onClick = onClick)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            Icon(
-                if (active) Icons.Filled.GraphicEq else Icons.Filled.PlayArrow,
-                contentDescription = if (active) "Now playing" else "Play",
-                tint = fg,
-                modifier = Modifier.size((sizeDp * 0.46f).dp)
-            )
-        }
     }
 }
 

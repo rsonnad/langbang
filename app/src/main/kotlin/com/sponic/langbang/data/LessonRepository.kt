@@ -16,27 +16,27 @@ import com.sponic.langbang.data.model.VerbEntry
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
-import kotlinx.serialization.json.Json
 
 class LessonRepository(context: Context) {
 
     private val context = context.applicationContext
-    private val json = Json { ignoreUnknownKeys = true }
-    private val userVerbs = UserVerbStore(this.context)
+    private val json = LbJson.lenient
+    private val userVerbs = JsonListStore(this.context, "user-verbs.json", VerbEntry.serializer()) { it.lemma }
     private val verbSentences = VerbSentenceStore(this.context)
-    private val userAdjectives = UserAdjectiveStore(this.context)
-    private val adjectiveSentences = AdjectiveSentenceStore(this.context)
-    private val userAdverbs = UserAdverbStore(this.context)
-    private val adverbSentences = AdverbSentenceStore(this.context)
-    private val userNouns = UserNounStore(this.context)
-    private val nounSentences = NounSentenceStore(this.context)
+    private val userAdjectives =
+        JsonListStore(this.context, "user-adjectives.json", AdjectiveEntry.serializer()) { it.lemma }
+    private val adjectiveSentences = SentenceStore(this.context, "adjective-sentences.json")
+    private val userAdverbs = JsonListStore(this.context, "user-adverbs.json", AdverbEntry.serializer()) { it.lemma }
+    private val adverbSentences = SentenceStore(this.context, "adverb-sentences.json")
+    private val userNouns = JsonListStore(this.context, "user-nouns.json", NounEntry.serializer()) { it.lemma }
+    private val nounSentences = SentenceStore(this.context, "noun-sentences.json")
 
     private val pastSentenceSerializer = MapSerializer(
         String.serializer(),
         ListSerializer(SentenceExample.serializer())
     )
 
-    private val userPhrases = UserPhraseStore(this.context)
+    private val userPhrases = JsonListStore(this.context, "user-phrases.json", PhraseGroup.serializer()) { it.id }
 
     private var cachedLesson2Base: Lesson? = null
     private var cachedLesson3Base: AdjectiveLesson? = null

@@ -63,17 +63,17 @@ import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.ensureCachedAudio
-import com.sponic.langbang.domain.playAudioAndAwait
 import com.sponic.langbang.integrations.AzureTtsClient
 import com.sponic.langbang.ui.common.CompactLessonListCard
+import com.sponic.langbang.ui.common.StudyQueuePlayer
 import com.sponic.langbang.ui.common.CompactLessonListDefaults
 import com.sponic.langbang.ui.common.DelayedEnglishTranslation
 import com.sponic.langbang.ui.common.GrammarVisuals
+import com.sponic.langbang.ui.common.LbButton
 import com.sponic.langbang.ui.common.SelectionNavButtons
 import com.sponic.langbang.ui.common.VariablePolishText
 import com.sponic.langbang.ui.common.variableEndForPolishForm
 import com.sponic.langbang.ui.common.variableStartForPolishForm
-import android.media.MediaMetadataRetriever
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -106,14 +106,9 @@ internal class AdjectivesScreenState(
     var error: String? by mutableStateOf(null)
         private set
 
-    private var playJob: Job? = null
-    var playingIndex: Int by mutableStateOf(-1)
-        private set
-    val playing: Boolean get() = playJob?.isActive == true
-
-    private var queue: List<SentenceExample> = emptyList()
-    private var queueQuiz: Boolean = false
-    private var currentItemIndex: Int = 0
+    private val player = StudyQueuePlayer(app, scope)
+    val playingIndex: Int get() = player.playingIndex
+    val playing: Boolean get() = player.hasQueue
 
     fun select(adj: AdjectiveEntry?) {
         if (selected?.lemma == adj?.lemma) return
@@ -140,45 +135,14 @@ internal class AdjectivesScreenState(
     }
 
     fun stop() {
-        playJob?.cancel()
-        playJob = null
-        playingIndex = -1
-        queue = emptyList()
-        currentItemIndex = 0
-        app.audioPlayer.stop()
-        NowVoicingBus.clear()
-        PlaybackController.unregister()
-    }
-
-    fun rewind() {
-        if (queue.isEmpty()) return
-        playJob?.cancel()
-        playJob = null
-        app.audioPlayer.stop()
-        currentItemIndex = (currentItemIndex - 1).coerceAtLeast(0)
-        relaunchFromCurrent()
-    }
-
-    fun restartQueue() {
-        if (queue.isEmpty()) return
-        playJob?.cancel()
-        playJob = null
-        app.audioPlayer.stop()
-        currentItemIndex = 0
-        relaunchFromCurrent()
+        player.stop()
     }
 
     fun playAll(quiz: Boolean) {
-        if (playJob?.isActive == true) {
-            stop()
-            return
-        }
+        if (player.hasQueue) { stop(); return }
         if (sentences.isEmpty()) return
         // Shuffle every run so quiz/play-all isn't identical order each time.
-        queue = sentences.shuffled()
-        queueQuiz = quiz
-        currentItemIndex = 0
-        relaunchFromCurrent()
+        startQueue(sentences.shuffled(), quiz)
     }
 
     /**
@@ -191,7 +155,7 @@ internal class AdjectivesScreenState(
      * can be re-listened via the standard rewind button.
      */
     fun recallQuiz() {
-        if (playJob?.isActive == true) { stop(); return }
+        if (player.hasQueue) { stop(); return }
         val adj = selected ?: return
         val items = buildList {
             adj.nom.forEach { (g, form) ->
@@ -206,10 +170,7 @@ internal class AdjectivesScreenState(
             }
         }
         if (items.isEmpty()) return
-        queue = items.shuffled()
-        queueQuiz = true
-        currentItemIndex = 0
-        relaunchFromCurrent()
+        startQueue(items.shuffled(), quiz = true)
     }
 
     private fun makeRecallItem(
@@ -234,71 +195,67 @@ internal class AdjectivesScreenState(
         )
     }
 
-    private fun relaunchFromCurrent() {
-        PlaybackController.register(
-            PlaybackTransport(
-                stop = { stop() },
-                rewind = { rewind() },
-                restart = { restartQueue() }
-            )
-        )
-        playJob = scope.launch {
-            try {
-                while (currentItemIndex < queue.size) {
-                    val i = currentItemIndex
-                    val s = queue[i]
-                    playingIndex = i
-                    val pos = "${i + 1}/${queue.size}"
-                    fun pub(lang: String, plHidden: Boolean = false) {
-                        NowVoicingBus.publish(
-                            NowVoicing(
-                                en = s.en, pl = s.pl, literal = s.literal,
-                                lang = lang, position = pos, words = s.words,
-                                plHidden = plHidden, quizMode = queueQuiz
-                            )
-                        )
-                    }
-                    if (queueQuiz) {
-                        // Hide PL during the EN clip + recall window so the learner
-                        // can't peek. Reveal it 2s before speaking so eye + brain align.
-                        pub("en", plHidden = true)
-                        playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                        pub("pause", plHidden = true)
-                        delay(2000L)
-                        pub("pause", plHidden = false)
-                        delay(2000L)
-                        pub("pl", plHidden = false)
-                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                    } else if (app.practicePrefs.slowFirst()) {
-                        val slowPlVoice = app.audioPrefs.slowPlVoice()
-                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
-                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                        pub("en")
-                        playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                        pub("pl-slow")
-                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
-                        pub("en")
-                        playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                        pub("pl")
-                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                    } else {
-                        app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                        pub("en")
-                        playAndAwait(app, s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                        pub("pl")
-                        playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                    }
-                    if (currentItemIndex == i) {
-                        currentItemIndex = i + 1
-                        if (!queueQuiz && currentItemIndex < queue.size) delay(1000)
-                    }
-                }
-            } finally {
-                playingIndex = -1
-                playJob = null
-                NowVoicingBus.clear()
-                PlaybackController.unregister()
+    private fun startQueue(items: List<SentenceExample>, quiz: Boolean) {
+        val slowFirst = app.practicePrefs.slowFirst()
+        val slowPlVoice = app.audioPrefs.slowPlVoice()
+        player.start(
+            total = items.size,
+            publishParked = { i ->
+                val s = items[i]
+                NowVoicingBus.publish(
+                    NowVoicing(
+                        en = s.en, pl = s.pl, literal = s.literal, lang = "pause",
+                        position = "${i + 1}/${items.size}", words = s.words,
+                        plHidden = quiz, quizMode = quiz
+                    )
+                )
+            },
+            prefetchItem = { i ->
+                val s = items[i]
+                app.ensureCachedAudio(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                if (slowFirst && !quiz) app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+            },
+        ) { i ->
+            val s = items[i]
+            val pos = "${i + 1}/${items.size}"
+            fun pub(lang: String, plHidden: Boolean = false) {
+                NowVoicingBus.publish(
+                    NowVoicing(
+                        en = s.en, pl = s.pl, literal = s.literal,
+                        lang = lang, position = pos, words = s.words,
+                        plHidden = plHidden, quizMode = quiz
+                    )
+                )
             }
+            if (quiz) {
+                // Hide PL during the EN clip + recall window so the learner can't peek.
+                // Reveal it before speaking so eye + brain align.
+                pub("en", plHidden = true)
+                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                pub("pause", plHidden = true)
+                reveal(2000L)
+                pub("pause", plHidden = false)
+                reveal(2000L)
+                pub("pl", plHidden = false)
+                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+            } else if (slowFirst) {
+                pub("en")
+                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                pub("pl-slow")
+                say(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                pub("en")
+                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                pub("pl")
+                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+            } else {
+                pub("en")
+                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                pub("pl")
+                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+            }
+            // Short beat between items (down from 1s) — pause-aware. Skipped after last.
+            if (!quiz && i < items.size - 1) reveal(500L)
         }
     }
 }
@@ -366,7 +323,7 @@ fun AdjectivesScreen(
             selected = state.selected,
             onSelect = { state.select(it) },
             modifier = Modifier
-                .width(224.dp)
+                .width(269.dp)
                 .fillMaxHeight()
                 .background(LbColors.Canvas)
         )
@@ -430,26 +387,6 @@ private fun ControlsBar(
     }
 }
 
-@Composable
-private fun GenerateAllButton(onClick: () -> Unit, busy: Boolean) {
-    Button(
-        onClick = onClick,
-        enabled = !busy,
-        colors = ButtonDefaults.buttonColors(containerColor = LbColors.Label),
-        shape = RoundedCornerShape(16.dp),
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-    ) {
-        if (busy) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(12.dp),
-                strokeWidth = 1.5.dp,
-                color = Color.White
-            )
-            Spacer(Modifier.width(4.dp))
-        }
-        Text("Generate all", fontSize = 11.sp, color = Color.White)
-    }
-}
 
 // Emits its controls directly into the caller's FlowRow (no own layout wrapper) so chips
 // and buttons wrap together as one band.
@@ -459,64 +396,22 @@ private fun ExamplesControls(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Spacer(Modifier.width(1.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (state.sentences.isNotEmpty()) {
-                Button(
-                    onClick = { state.playAll(quiz = false) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-                ) {
-                    Icon(
-                        if (state.playing) Icons.Default.Stop else Icons.Default.PlayArrow,
-                        contentDescription = if (state.playing) "Stop" else "Play all",
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        if (state.playing) "Stop" else "Play all",
-                        fontSize = 12.sp,
-                        color = Color.White
-                    )
+                if (state.playing) {
+                    LbButton.Stop("Stop", onClick = { state.stop() }, icon = Icons.Default.Stop)
+                } else {
+                    LbButton.Audio("Play", onClick = { state.playAll(quiz = false) }, count = state.sentences.size)
                 }
             }
             if (!state.playing) {
-                Button(
-                    onClick = { state.recallQuiz() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = LbColors.Accent
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-                ) {
-                    Text("?? Recall", fontSize = 12.sp, color = Color.White)
-                }
+                LbButton.Ghost("Recall quiz", onClick = { state.recallQuiz() })
             }
             if (state.sentences.isNotEmpty() && !state.playing) {
-                Button(
-                    onClick = { state.playAll(quiz = true) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = LbColors.Label
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-                ) {
-                    Icon(
-                        Icons.Default.PlayArrow,
-                        contentDescription = "Sentence quiz",
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text("?? Sent.", fontSize = 12.sp, color = Color.White)
-                }
+                LbButton.Ghost("Sent. quiz", onClick = { state.playAll(quiz = true) }, icon = Icons.Default.PlayArrow)
             }
             if (state.busy) {
                 CircularProgressIndicator(
@@ -524,28 +419,11 @@ private fun ExamplesControls(
                 )
             } else {
                 val isRegenerate = state.sentences.isNotEmpty()
-                Button(
-                    onClick = { state.generate() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isRegenerate) LbColors.SurfaceTint
-                        else MaterialTheme.colorScheme.primary
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-                ) {
-                    Icon(
-                        if (isRegenerate) Icons.Default.Refresh else Icons.Default.Add,
-                        contentDescription = if (isRegenerate) "Regenerate" else "Generate",
-                        tint = if (isRegenerate) LbColors.Label else Color.White,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        if (isRegenerate) "Regen" else "Generate",
-                        fontSize = 12.sp,
-                        color = if (isRegenerate) LbColors.Label else Color.White
-                    )
-                }
+                LbButton.Ghost(
+                    label = if (isRegenerate) "Refresh examples" else "Generate examples",
+                    icon = if (isRegenerate) Icons.Default.Refresh else Icons.Default.Add,
+                    onClick = { state.generate() }
+                )
             }
         }
     }
@@ -576,7 +454,7 @@ private fun AdjectiveList(
             ) {
                 Row(
                     Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Top
                 ) {
                     Text(
                         a.lemma,
@@ -590,6 +468,7 @@ private fun AdjectiveList(
                         color = if (isSel) Color.White.copy(alpha = 0.85f)
                         else LbColors.TextSecondary,
                         fontSize = 12.sp,
+                        lineHeight = 14.sp,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -669,14 +548,17 @@ private fun FormRow(
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+            Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = "Play",
+                tint = LbColors.Primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
             Text(
                 label,
                 fontSize = 12.sp,
                 color = LbColors.TextMuted,
-                modifier = Modifier.width(170.dp)
+                modifier = Modifier.width(150.dp)
             )
             VariablePolishText(
                 text = form,
@@ -688,8 +570,6 @@ private fun FormRow(
                 fallbackWholeWord = true,
                 modifier = Modifier.weight(1f)
             )
-            Icon(Icons.Default.PlayArrow, contentDescription = "Play",
-                tint = LbColors.Primary, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -697,13 +577,6 @@ private fun FormRow(
 @Composable
 private fun SentencesSection(app: LangbangApplication, state: AdjectivesScreenState) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            "Examples",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = LbColors.Label
-        )
-
         if (state.sentences.isEmpty()) {
             Text(
                 "No examples yet — tap Generate above to make 20 short sentences combining " +
@@ -741,9 +614,12 @@ private fun SentenceRow(
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = "Play",
+                tint = LbColors.Primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 DelayedEnglishTranslation(
                     text = sentence.en,
@@ -757,33 +633,11 @@ private fun SentenceRow(
                     glossFontSize = 10.sp
                 )
             }
-            Icon(Icons.Default.PlayArrow, contentDescription = "Play",
-                tint = LbColors.Primary, modifier = Modifier.size(20.dp))
         }
     }
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
-
-private suspend fun playAndAwait(
-    app: LangbangApplication,
-    text: String,
-    locale: String,
-    voice: String
-) {
-    app.playAudioAndAwait(text, locale, voice)
-}
-
-private fun mp3DurationMs(file: java.io.File): Long {
-    if (!file.exists()) return 0L
-    return try {
-        val r = MediaMetadataRetriever()
-        r.setDataSource(file.absolutePath)
-        val v = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-        r.release()
-        v
-    } catch (_: Throwable) { 0L }
-}
 
 private fun playForm(app: LangbangApplication, form: String) {
     if (form.isEmpty()) return
@@ -794,14 +648,5 @@ private fun playForm(app: LangbangApplication, form: String) {
 }
 
 private fun playSentence(app: LangbangApplication, sentence: SentenceExample) {
-    NowVoicingBus.publish(
-        NowVoicing(
-            en = sentence.en,
-            pl = sentence.pl,
-            literal = sentence.literal,
-            lang = "pl",
-            words = sentence.words
-        )
-    )
     playForm(app, sentence.pl)
 }

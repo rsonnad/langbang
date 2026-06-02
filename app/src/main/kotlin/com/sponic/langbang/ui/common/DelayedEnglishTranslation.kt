@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -42,7 +43,9 @@ fun DelayedEnglishTranslation(
     color: Color = LbColors.TextSecondary,
     fontWeight: FontWeight? = null,
     fontStyle: FontStyle? = null,
+    textAlign: TextAlign? = null,
     maxLines: Int = Int.MAX_VALUE,
+    lineHeight: TextUnit = TextUnit.Unspecified,
     reserveSpace: Boolean = true
 ) {
     if (text.isBlank()) return
@@ -56,7 +59,9 @@ fun DelayedEnglishTranslation(
             color = if (visible) color else Color.Transparent,
             fontWeight = fontWeight,
             fontStyle = fontStyle,
-            maxLines = maxLines
+            textAlign = textAlign,
+            maxLines = maxLines,
+            lineHeight = lineHeight
         )
     }
 }

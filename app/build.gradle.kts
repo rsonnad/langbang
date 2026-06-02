@@ -16,9 +16,9 @@ val localProps = Properties().apply {
 }
 
 // Single source of truth for the app version: root version.properties.
-//   versionName  → human-visible semver ("0.1.6"). Bump this when shipping a release.
+//   versionName  → Android manifest semver prefix ("0.1.8"), not the app-visible tag.
 //   buildNumber  → auto-incremented on every assemble/bundle/install so versionCode
-//                  is unique and the displayed versionName always has a fresh suffix.
+//                  is unique. App-visible labels use v{buildNumber} only.
 // providers.fileContents() declares the file as a config-cache input — without it,
 // re-runs of the same gradle command would replay the cached values.
 val versionPropsFile = rootProject.file("version.properties")
@@ -31,7 +31,7 @@ val baseVersionName =
 val currentBuildNumber =
     Regex("buildNumber=(\\d+)").find(versionFileContent)?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
-val producesApk = gradle.startParameter.taskNames.any { name ->
+val producesApk = !gradle.startParameter.isDryRun && gradle.startParameter.taskNames.any { name ->
     val n = name.lowercase()
     "assemble" in n || "bundle" in n || "install" in n
 }
@@ -41,8 +41,8 @@ if (producesApk) {
         "versionName=$baseVersionName\nbuildNumber=$effectiveBuildNumber\n"
     )
 }
-// Displayed version always reflects the actual build that's running — no more
-// "stuck at 0.1.6" while internals change. Reads as e.g. "0.1.6.28".
+// Android manifest versionName keeps the semver prefix for OS/package metadata.
+// In-app and publish labels use BuildConfig.BUILD_NUMBER as v{buildNumber}.
 val composedVersionName = "$baseVersionName.$effectiveBuildNumber"
 
 val buildTimestamp: String = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)

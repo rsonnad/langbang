@@ -1,0 +1,23 @@
+LangBang G2 Polish test
+
+Cześć, jak się masz?
+Hello, how are you?
+
+Mam na imię Rahul.
+My name is Rahul.
+
+Proszę mówić wolniej.
+Please speak more slowly.
+
+Dziękuję bardzo.
+Thank you very much.
+
+Gdzie jest dworzec?
+Where is the train station?
+
+Native Polish diacritics test:
+Cześć, jak się masz?
+Mam na imię Rahul.
+Proszę mówić wolniej.
+Dziękuję bardzo.
+Żółć, gęślą jaźń.

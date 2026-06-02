@@ -22,11 +22,7 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay
-import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
@@ -57,7 +53,7 @@ import com.sponic.langbang.data.IncludeMode
 import com.sponic.langbang.data.RandomConfig
 import com.sponic.langbang.data.VerbSentenceStore
 import com.sponic.langbang.domain.NowVoicingBus
-import com.sponic.langbang.ui.common.GrammarVisuals
+import com.sponic.langbang.ui.common.NowVoicingPanel
 import kotlinx.coroutines.launch
 
 /**
@@ -81,6 +77,7 @@ internal fun RandomConfigSheet(
     var preps by remember { mutableStateOf(initial.prepositions.toUiPrepositions()) }
     var adjMode by remember { mutableStateOf(initial.adjectiveMode) }
     var advMode by remember { mutableStateOf(initial.adverbMode) }
+    var filtersExpanded by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     // Preflight: count what's eligible right now under the current settings, so the
@@ -127,6 +124,22 @@ internal fun RandomConfigSheet(
                         color = LbColors.PrimaryDeep,
                         modifier = Modifier.weight(1f)
                     )
+                    Button(
+                        onClick = { filtersExpanded = !filtersExpanded },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (filtersExpanded) LbColors.Primary else Color.White,
+                            contentColor = if (filtersExpanded) LbColors.OnPrimary else LbColors.TextPrimary
+                        ),
+                        shape = RoundedCornerShape(18.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            if (filtersExpanded) "Hide filters" else "Filters",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
                     IconButton(onClick = onCancel, modifier = Modifier.size(32.dp)) {
                         Icon(
                             Icons.Filled.Close,
@@ -162,220 +175,144 @@ internal fun RandomConfigSheet(
 
                 // ── Now Playing (only when a queue is loaded) ──────────────────
                 if (randomPlayer.hasQueue) {
-                    NowPlayingPanel(player = randomPlayer)
+                    val nowVoicing by NowVoicingBus.state.collectAsState()
+                    val starredPhrases by app.starredPhrases.starred.collectAsState()
+                    NowVoicingPanel(
+                        app = app,
+                        pinned = nowVoicing,
+                        live = nowVoicing,
+                        isStarred = nowVoicing?.pl?.let { it in starredPhrases } == true,
+                        onToggleStar = {
+                            nowVoicing?.pl?.let { app.starredPhrases.toggle(it) }
+                        }
+                    )
                 }
 
-                // ── Two-column body — labels inline with chips/field ───────────
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(20.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                if (filtersExpanded) {
+                    // ── Two-column body — labels inline with chips/field ───────────
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(20.dp)
                     ) {
-                        InlineRow("Words") {
-                            OutlinedTextField(
-                                value = mustContain,
-                                onValueChange = { mustContain = it },
-                                placeholder = {
-                                    Text("e.g. kawa duża", fontSize = 12.sp)
-                                },
-                                singleLine = true,
-                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
-                                modifier = Modifier
-                                    .width(280.dp)
-                                    .defaultMinSize(minHeight = 44.dp)
-                            )
-                        }
-                        InlineRow("Persons") {
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                RandomConfig.PERSONS.forEach { k ->
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            InlineRow("Words") {
+                                OutlinedTextField(
+                                    value = mustContain,
+                                    onValueChange = { mustContain = it },
+                                    placeholder = {
+                                        Text("e.g. kawa duża", fontSize = 12.sp)
+                                    },
+                                    singleLine = true,
+                                    textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
+                                    modifier = Modifier
+                                        .width(280.dp)
+                                        .defaultMinSize(minHeight = 44.dp)
+                                )
+                            }
+                            InlineRow("Persons") {
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    RandomConfig.PERSONS.forEach { k ->
+                                        ToggleChip(
+                                            label = personChipLabel(k),
+                                            selected = k in persons,
+                                            onToggle = {
+                                                persons = if (k in persons) persons - k
+                                                else persons + k
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                            InlineRow("Tense") {
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     ToggleChip(
-                                        label = personChipLabel(k),
-                                        selected = k in persons,
+                                        label = "Present",
+                                        selected = VerbSentenceStore.TENSE_PRESENT in tenses,
                                         onToggle = {
-                                            persons = if (k in persons) persons - k
-                                            else persons + k
+                                            tenses = if (VerbSentenceStore.TENSE_PRESENT in tenses)
+                                                tenses - VerbSentenceStore.TENSE_PRESENT
+                                            else tenses + VerbSentenceStore.TENSE_PRESENT
+                                        }
+                                    )
+                                    ToggleChip(
+                                        label = "Past",
+                                        selected = VerbSentenceStore.TENSE_PAST in tenses,
+                                        onToggle = {
+                                            tenses = if (VerbSentenceStore.TENSE_PAST in tenses)
+                                                tenses - VerbSentenceStore.TENSE_PAST
+                                            else tenses + VerbSentenceStore.TENSE_PAST
                                         }
                                     )
                                 }
                             }
                         }
-                        InlineRow("Tense") {
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                ToggleChip(
-                                    label = "Present",
-                                    selected = VerbSentenceStore.TENSE_PRESENT in tenses,
-                                    onToggle = {
-                                        tenses = if (VerbSentenceStore.TENSE_PRESENT in tenses)
-                                            tenses - VerbSentenceStore.TENSE_PRESENT
-                                        else tenses + VerbSentenceStore.TENSE_PRESENT
-                                    }
-                                )
-                                ToggleChip(
-                                    label = "Past",
-                                    selected = VerbSentenceStore.TENSE_PAST in tenses,
-                                    onToggle = {
-                                        tenses = if (VerbSentenceStore.TENSE_PAST in tenses)
-                                            tenses - VerbSentenceStore.TENSE_PAST
-                                        else tenses + VerbSentenceStore.TENSE_PAST
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        InlineRow("Preps") {
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                ToggleChip(
-                                    label = "None",
-                                    selected = RandomConfig.PREPOSITION_NONE in preps,
-                                    onToggle = {
-                                        preps = if (RandomConfig.PREPOSITION_NONE in preps) {
-                                            val next = preps - RandomConfig.PREPOSITION_NONE
-                                            next.ifEmpty { setOf(RandomConfig.PREPOSITION_NONE) }
-                                        } else {
-                                            preps + RandomConfig.PREPOSITION_NONE
-                                        }
-                                    }
-                                )
-                                RandomConfig.PREPOSITIONS.forEach { p ->
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            InlineRow("Preps") {
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     ToggleChip(
-                                        label = p,
-                                        selected = p in preps,
+                                        label = "None",
+                                        selected = RandomConfig.PREPOSITION_NONE in preps,
                                         onToggle = {
-                                            preps = if (p in preps) preps - p else preps + p
-                                            preps = preps.toUiPrepositions()
+                                            preps = if (RandomConfig.PREPOSITION_NONE in preps) {
+                                                val next = preps - RandomConfig.PREPOSITION_NONE
+                                                next.ifEmpty { setOf(RandomConfig.PREPOSITION_NONE) }
+                                            } else {
+                                                preps + RandomConfig.PREPOSITION_NONE
+                                            }
                                         }
                                     )
+                                    RandomConfig.PREPOSITIONS.forEach { p ->
+                                        ToggleChip(
+                                            label = p,
+                                            selected = p in preps,
+                                            onToggle = {
+                                                preps = if (p in preps) preps - p else preps + p
+                                                preps = preps.toUiPrepositions()
+                                            }
+                                        )
+                                    }
                                 }
                             }
-                        }
-                        InlineRow("Adj") {
-                            TriStateRow(selected = adjMode, onSelect = { adjMode = it })
-                        }
-                        InlineRow("Adv") {
-                            TriStateRow(selected = advMode, onSelect = { advMode = it })
-                        }
-                    }
-                }
-
-                // ── Preflight (compact, only renders when there's something to say) ──
-                CompactPreflight(
-                    preflight = preflight,
-                    busy = preflightBusy,
-                    isOnline = app.network.isOnline(),
-                    onGenerateMissingAdjectives = {
-                        preflightBusy = true
-                        scope.launch {
-                            generateMissingAdjectiveSentences(app, preflight.missingAdjectives)
-                            preflight = computePreflight(app, config)
-                            preflightBusy = false
-                        }
-                    },
-                    onRegenerateForWord = {
-                        preflightBusy = true
-                        scope.launch {
-                            regenerateForMustContain(app, mustContain.trim())
-                            preflight = computePreflight(app, config)
-                            preflightBusy = false
+                            InlineRow("Adj") {
+                                TriStateRow(selected = adjMode, onSelect = { adjMode = it })
+                            }
+                            InlineRow("Adv") {
+                                TriStateRow(selected = advMode, onSelect = { advMode = it })
+                            }
                         }
                     }
-                )
-            }
-        }
-    }
-}
 
-/**
- * In-sheet Now Voicing panel. Delegates the body to the shared
- * [com.sponic.langbang.ui.common.NowVoicingBody] so it stays in lockstep with the
- * sticky-header panel. The sheet adds its own 2x2 transport on the right (these
- * transport callbacks bypass PlaybackController because the sheet has direct
- * access to RandomPlayerState and needs sheet-local pause-state semantics).
- */
-@Composable
-private fun NowPlayingPanel(player: RandomPlayerState) {
-    val nv by NowVoicingBus.state.collectAsState()
-    val statusLabel = when {
-        player.playing -> "NOW PLAYING"
-        player.paused -> "PAUSED"
-        else -> "QUEUE"
-    }
-    Surface(
-        color = GrammarVisuals.NowVoicingPanel.Background,
-        shape = RoundedCornerShape(8.dp),
-        border = androidx.compose.foundation.BorderStroke(
-            GrammarVisuals.NowVoicingPanel.BorderWidth,
-            GrammarVisuals.NowVoicingPanel.Border
-        ),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Box(modifier = Modifier.weight(1f)) {
-                com.sponic.langbang.ui.common.NowVoicingBody(
-                    pinned = nv,
-                    live = nv,
-                    statusText = "$statusLabel · ${player.position} / ${player.queueSize}",
-                    idlePlaceholder = "—"
-                )
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    TransportButton(
-                        icon = Icons.Filled.Replay,
-                        label = "Start over",
-                        onClick = { player.restart() }
-                    )
-                    TransportButton(
-                        icon = Icons.Filled.SkipPrevious,
-                        label = "Rewind",
-                        onClick = { player.rewind() }
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    TransportButton(
-                        icon = if (player.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        label = if (player.playing) "Pause" else "Play",
-                        onClick = {
-                            if (player.playing) player.pause() else player.resume()
+                    // ── Preflight (compact, only renders when there's something to say) ──
+                    CompactPreflight(
+                        preflight = preflight,
+                        busy = preflightBusy,
+                        isOnline = app.network.isOnline(),
+                        onGenerateMissingAdjectives = {
+                            preflightBusy = true
+                            scope.launch {
+                                generateMissingAdjectiveSentences(app, preflight.missingAdjectives)
+                                preflight = computePreflight(app, config)
+                                preflightBusy = false
+                            }
+                        },
+                        onRegenerateForWord = {
+                            preflightBusy = true
+                            scope.launch {
+                                regenerateForMustContain(app, mustContain.trim())
+                                preflight = computePreflight(app, config)
+                                preflightBusy = false
+                            }
                         }
-                    )
-                    TransportButton(
-                        icon = Icons.Filled.Stop,
-                        label = "Stop",
-                        onClick = { player.stop() }
                     )
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun TransportButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    onClick: () -> Unit
-) {
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier.size(36.dp)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            tint = LbColors.Primary,
-            modifier = Modifier.size(22.dp)
-        )
     }
 }
 
