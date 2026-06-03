@@ -158,6 +158,30 @@ internal class RandomPlayerState(
         }
     }
 
+    /** Jump to the next sentence and keep the existing play/pause state. */
+    fun next() {
+        if (phrases.isEmpty()) return
+        val wasPlaying = playing
+        val wasPaused = paused
+        job?.cancel()
+        job = null
+        app.audioPlayer.stop()
+        val nextIndex = currentIndex + 1
+        if (nextIndex >= phrases.size) {
+            stop()
+            return
+        }
+        currentIndex = nextIndex
+        position = currentIndex + 1
+        if (wasPlaying) {
+            launchFromCurrent()
+        } else {
+            paused = wasPaused
+            playing = false
+            republishCurrent()
+        }
+    }
+
     /** Restart the queue from sentence 1 with the current settings. */
     fun restart() {
         if (phrases.isEmpty()) return
@@ -192,6 +216,7 @@ internal class RandomPlayerState(
             PlaybackTransport(
                 stop = { stop() },
                 rewind = { rewind() },
+                next = { next() },
                 restart = { restart() },
                 pauseResume = { if (playing) pause() else resume() },
                 isPaused = { paused }
@@ -375,7 +400,7 @@ internal class RandomPlayerState(
     }
 
     // englishConjugate moved to domain/EnglishConjugator.kt so the Verbs tab's
-    // "Play All Conjugations" path can share it instead of re-rolling its own.
+    // Verbs Play path can share it instead of re-rolling its own.
     // See 2026-05-28 session note.
 
     private fun conjPronoun(k: String): String = when (k) {

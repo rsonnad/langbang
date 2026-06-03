@@ -8,8 +8,8 @@ import androidx.core.content.FileProvider
 import com.sponic.langbang.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.sponic.langbang.data.LbJson
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -34,7 +34,7 @@ class UpdateChecker(
     private val context: Context,
     private val network: NetworkMonitor
 ) {
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private val json = LbJson.lenient
 
     @Serializable
     private data class LatestManifest(

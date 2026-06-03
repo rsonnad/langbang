@@ -1,6 +1,9 @@
 package com.sponic.langbang.domain
 
 import com.sponic.langbang.LangbangApplication
+import com.sponic.langbang.integrations.AzureTtsClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import kotlin.coroutines.resume
@@ -40,5 +43,20 @@ suspend fun LangbangApplication.awaitAudioPlayback(file: File) {
             if (cont.isActive) cont.resume(Unit)
         }
         cont.invokeOnCancellation { audioPlayer.stop() }
+    }
+}
+
+/**
+ * Tap-to-play a single Polish word/form. Ensures the clip is cached (synth / R2 pull on a
+ * miss) BEFORE playing, so a tap on a not-yet-prefetched word actually sounds instead of
+ * silently doing nothing — a bare `audioPlayer.play(audioCache.fileFor(...))` no-ops when
+ * the file isn't on disk yet. Cache hits (the post-prefetch common case) play immediately.
+ */
+fun LangbangApplication.playPolishTapped(scope: CoroutineScope, text: String) {
+    if (text.isBlank()) return
+    scope.launch {
+        val file = ensureCachedAudio(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+            ?: return@launch
+        audioPlayer.play(file)
     }
 }

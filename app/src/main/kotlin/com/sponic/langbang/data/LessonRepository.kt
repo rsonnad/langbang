@@ -1,6 +1,7 @@
 package com.sponic.langbang.data
 
 import android.content.Context
+import com.sponic.langbang.cloud.CloudConfigStore
 import com.sponic.langbang.data.model.AdjectiveEntry
 import com.sponic.langbang.data.model.AdjectiveLesson
 import com.sponic.langbang.data.model.AdverbEntry
@@ -16,27 +17,32 @@ import com.sponic.langbang.data.model.VerbEntry
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.decodeFromJsonElement
 
-class LessonRepository(context: Context) {
+class LessonRepository(
+    context: Context,
+    private val cloudConfig: CloudConfigStore? = null
+) {
 
     private val context = context.applicationContext
-    private val json = Json { ignoreUnknownKeys = true }
-    private val userVerbs = UserVerbStore(this.context)
+    private val json = LbJson.lenient
+    private val userVerbs = JsonListStore(this.context, "user-verbs.json", VerbEntry.serializer()) { it.lemma }
     private val verbSentences = VerbSentenceStore(this.context)
-    private val userAdjectives = UserAdjectiveStore(this.context)
-    private val adjectiveSentences = AdjectiveSentenceStore(this.context)
-    private val userAdverbs = UserAdverbStore(this.context)
-    private val adverbSentences = AdverbSentenceStore(this.context)
-    private val userNouns = UserNounStore(this.context)
-    private val nounSentences = NounSentenceStore(this.context)
+    private val userAdjectives =
+        JsonListStore(this.context, "user-adjectives.json", AdjectiveEntry.serializer()) { it.lemma }
+    private val adjectiveSentences = SentenceStore(this.context, "adjective-sentences.json")
+    private val userAdverbs = JsonListStore(this.context, "user-adverbs.json", AdverbEntry.serializer()) { it.lemma }
+    private val adverbSentences = SentenceStore(this.context, "adverb-sentences.json")
+    private val userNouns = JsonListStore(this.context, "user-nouns.json", NounEntry.serializer()) { it.lemma }
+    private val nounSentences = SentenceStore(this.context, "noun-sentences.json")
 
     private val pastSentenceSerializer = MapSerializer(
         String.serializer(),
         ListSerializer(SentenceExample.serializer())
     )
 
-    private val userPhrases = UserPhraseStore(this.context)
+    private val userPhrases = JsonListStore(this.context, "user-phrases.json", PhraseGroup.serializer()) { it.id }
 
     private var cachedLesson2Base: Lesson? = null
     private var cachedLesson3Base: AdjectiveLesson? = null
@@ -50,8 +56,8 @@ class LessonRepository(context: Context) {
     /** Lesson 2 — core verbs in present tense, with user-added verbs merged in. */
     fun lesson2(): Lesson {
         val base = cachedLesson2Base ?: run {
-            val raw = context.assets.open("lesson-02.json").bufferedReader().use { it.readText() }
-            json.decodeFromString<Lesson>(raw).also { cachedLesson2Base = it }
+            (cloudLesson<Lesson>("lesson-02") ?: assetLesson<Lesson>("lesson-02.json"))
+                .also { cachedLesson2Base = it }
         }
         val added = userVerbs.load()
         if (added.isEmpty()) return base
@@ -62,8 +68,8 @@ class LessonRepository(context: Context) {
     /** Lesson 3 — core adjectives in nom + acc, with user-added adjectives merged in. */
     fun lesson3(): AdjectiveLesson {
         val base = cachedLesson3Base ?: run {
-            val raw = context.assets.open("lesson-03.json").bufferedReader().use { it.readText() }
-            json.decodeFromString<AdjectiveLesson>(raw).also { cachedLesson3Base = it }
+            (cloudLesson<AdjectiveLesson>("lesson-03") ?: assetLesson<AdjectiveLesson>("lesson-03.json"))
+                .also { cachedLesson3Base = it }
         }
         val added = userAdjectives.load()
         if (added.isEmpty()) return base
@@ -74,8 +80,7 @@ class LessonRepository(context: Context) {
     /** Lesson 1 — Polish pronunciation. */
     fun pronunciation(): PronunciationData {
         cachedPron?.let { return it }
-        val raw = context.assets.open("lesson-01.json").bufferedReader().use { it.readText() }
-        val parsed = json.decodeFromString<PronunciationData>(raw)
+        val parsed = cloudLesson<PronunciationData>("lesson-01") ?: assetLesson("lesson-01.json")
         cachedPron = parsed
         return parsed
     }
@@ -171,8 +176,8 @@ class LessonRepository(context: Context) {
     /** Lesson 4 — common adverbs, with user-added adverbs merged in. */
     fun lesson4(): AdverbLesson {
         val base = cachedLesson4Base ?: run {
-            val raw = context.assets.open("lesson-04.json").bufferedReader().use { it.readText() }
-            json.decodeFromString<AdverbLesson>(raw).also { cachedLesson4Base = it }
+            (cloudLesson<AdverbLesson>("lesson-04") ?: assetLesson<AdverbLesson>("lesson-04.json"))
+                .also { cachedLesson4Base = it }
         }
         val added = userAdverbs.load()
         if (added.isEmpty()) return base
@@ -194,8 +199,8 @@ class LessonRepository(context: Context) {
     /** Lesson 6 — core nouns in nom + acc + gen (sg/pl), with user-added nouns merged in. */
     fun lesson6(): NounLesson {
         val base = cachedLesson6Base ?: run {
-            val raw = context.assets.open("lesson-06.json").bufferedReader().use { it.readText() }
-            json.decodeFromString<NounLesson>(raw).also { cachedLesson6Base = it }
+            (cloudLesson<NounLesson>("lesson-06") ?: assetLesson<NounLesson>("lesson-06.json"))
+                .also { cachedLesson6Base = it }
         }
         val added = userNouns.load()
         if (added.isEmpty()) return base
@@ -222,8 +227,8 @@ class LessonRepository(context: Context) {
      */
     fun lesson5(): PhrasesLesson {
         val base = cachedLesson5Base ?: run {
-            val raw = context.assets.open("lesson-05.json").bufferedReader().use { it.readText() }
-            json.decodeFromString<PhrasesLesson>(raw).also { cachedLesson5Base = it }
+            (cloudLesson<PhrasesLesson>("lesson-05") ?: assetLesson<PhrasesLesson>("lesson-05.json"))
+                .also { cachedLesson5Base = it }
         }
         val added = userPhrases.load()
         val scrubbedBase = base.copy(
@@ -255,6 +260,27 @@ class LessonRepository(context: Context) {
         literal = s.literal?.let(::scrubPluralText),
         words = s.words?.map { it.copy(en = scrubPluralText(it.en)) }
     )
+
+    fun clearCloudBackedBaseCache() {
+        cachedLesson2Base = null
+        cachedLesson3Base = null
+        cachedLesson4Base = null
+        cachedLesson5Base = null
+        cachedLesson6Base = null
+        cachedPron = null
+    }
+
+    private inline fun <reified T> cloudLesson(id: String): T? {
+        val payload = cloudConfig?.state?.value?.bootstrap?.content?.lessons
+            ?.firstOrNull { it.id == id }
+            ?.payload ?: return null
+        return runCatching { json.decodeFromJsonElement<T>(payload) }.getOrNull()
+    }
+
+    private inline fun <reified T> assetLesson(fileName: String): T {
+        val raw = context.assets.open(fileName).bufferedReader().use { it.readText() }
+        return json.decodeFromString(raw)
+    }
 
     companion object {
         private val PLURAL_YOU_REGEX = Regex("\\b(Y|y)ou\\s*\\(plural\\)")

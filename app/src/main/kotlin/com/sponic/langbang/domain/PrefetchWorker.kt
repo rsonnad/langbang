@@ -38,7 +38,7 @@ class PrefetchWorker(
         // pulled, so this only spends Azure on genuine gaps.
         var finalTotal = 0
         return try {
-            app.prefetch.prefetchLesson1 { progress ->
+            app.prefetch.prefetchAll { progress ->
                 finalTotal = progress.total
                 setProgress(
                     workDataOf(

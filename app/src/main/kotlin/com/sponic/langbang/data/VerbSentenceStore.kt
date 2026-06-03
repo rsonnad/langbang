@@ -17,7 +17,7 @@ import java.io.File
 class VerbSentenceStore(context: Context) {
 
     private val file = File(context.filesDir, "verb-sentences.json")
-    private val json = Json { prettyPrint = true; ignoreUnknownKeys = true }
+    private val json = LbJson.pretty
     private val serializer = MapSerializer(
         String.serializer(),
         ListSerializer(SentenceExample.serializer())
@@ -27,7 +27,7 @@ class VerbSentenceStore(context: Context) {
      * In-memory snapshot of the on-disk map. Lazily filled on first read; mutated
      * in place on [put] so we never re-parse on subsequent reads in the same
      * session. Pre-memo, every call to [get] re-read + re-parsed the 1.3 MB file
-     * — `PrefetchService.prefetchLesson1` alone called this ~50× during the
+     * — `PrefetchService` audio-manifest walk alone called this ~50× during the
      * units build (~65 MB of redundant parsing) and `SentenceRegenService`
      * hammered it 124× more (~150 MB), all concurrently with main-thread
      * Compose work at app start. That was the 2026-05-28 ANR root cause.

@@ -7,7 +7,7 @@ package com.sponic.langbang.domain
  * dictionary entry "to be" / "to go".
  *
  * Two render paths used to duplicate this logic — Random Play
- * ([com.sponic.langbang.ui.RandomPlayer]) and the Verbs tab's "Play All
+ * ([com.sponic.langbang.ui.RandomPlayer]) and the Verbs tab's Play
  * Conjugations" button ([com.sponic.langbang.ui.lessons.VerbsTab]). The first
  * fix for "he — to be" → "he is" only landed in RandomPlayer, so the Verbs tab
  * regressed silently. Pulling it here so both paths converge and the bug class

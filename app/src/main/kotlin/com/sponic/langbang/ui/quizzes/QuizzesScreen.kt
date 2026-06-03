@@ -2,6 +2,7 @@ package com.sponic.langbang.ui.quizzes
 
 import com.sponic.langbang.ui.theme.LbColors
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,14 +15,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -32,6 +32,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,6 +47,8 @@ import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.data.VerbSentenceStore
 import com.sponic.langbang.data.model.VerbEntry
+import com.sponic.langbang.domain.NowVoicingBus
+import com.sponic.langbang.domain.PlaybackController
 
 /**
  * Tab-root for the new tap-to-answer quiz section. Lists the available drill modes
@@ -64,9 +67,21 @@ import com.sponic.langbang.data.model.VerbEntry
 @Composable
 fun QuizzesScreen(
     app: LangbangApplication,
-    nowVoicing: @Composable () -> Unit = {}
+    nowVoicing: @Composable () -> Unit = {},
+    resetToken: Int = 0
 ) {
     var mode by remember { mutableStateOf<QuizMode>(QuizMode.Hub) }
+    val returnToHub = {
+        PlaybackController.stop()
+        NowVoicingBus.clear()
+        mode = QuizMode.Hub
+    }
+    BackHandler(enabled = mode != QuizMode.Hub) {
+        returnToHub()
+    }
+    LaunchedEffect(resetToken) {
+        if (resetToken > 0) returnToHub()
+    }
     Column(modifier = Modifier.fillMaxSize()) {
         nowVoicing()
         Box(modifier = Modifier.weight(1f)) {
@@ -74,45 +89,64 @@ fun QuizzesScreen(
                 QuizMode.Hub -> Hub(onPick = { mode = it })
                 QuizMode.Practice -> PracticeQuiz(
                     app = app,
-                    onExit = { mode = QuizMode.Hub }
+                    onExit = returnToHub
+                )
+                QuizMode.HelperInfinitives -> PracticeQuiz(
+                    app = app,
+                    initialScope = PracticeScope(
+                        auto = true,
+                        wordTypes = setOf(PracticeWordType.HELPERS),
+                        personKeys = setOf("1sg", "2sg", "3sg", "1pl", "2pl", "3pl"),
+                        tenses = setOf(VerbSentenceStore.TENSE_PRESENT)
+                    ),
+                    title = "Helper + infinitive",
+                    onExit = returnToHub
                 )
                 is QuizMode.PerVerbPick -> PerVerbPicker(app = app,
                     onPick = { v, t -> mode = QuizMode.PerVerb(v, t) },
-                    onBack = { mode = QuizMode.Hub })
+                    onBack = returnToHub)
                 is QuizMode.CrossVerbPick -> CrossVerbPicker(
                     onPick = { p, t -> mode = QuizMode.CrossVerb(p, t) },
-                    onBack = { mode = QuizMode.Hub })
+                    onBack = returnToHub)
                 is QuizMode.PerVerb -> MultipleChoiceQuiz(
                     app = app,
                     title = "Verb forms · ${m.verb.lemma} (${m.tenseLabel()})",
-                    questions = QuizGenerators.perVerbConjugation(m.verb, m.tense),
-                    onExit = { mode = QuizMode.Hub }
+                    questions = remember(m.verb.lemma, m.tense) {
+                        QuizGenerators.perVerbConjugation(m.verb, m.tense)
+                    },
+                    onExit = returnToHub
                 )
                 is QuizMode.CrossVerb -> MultipleChoiceQuiz(
                     app = app,
                     title = "All verbs · ${m.personLabel()} (${m.tenseLabel()})",
-                    questions = QuizGenerators.crossVerbConjugation(
-                        app.lessonRepo, m.personKey, m.tense
-                    ),
-                    onExit = { mode = QuizMode.Hub }
+                    questions = remember(m.personKey, m.tense) {
+                        QuizGenerators.crossVerbConjugation(
+                            app.lessonRepo, m.personKey, m.tense
+                        )
+                    },
+                    onExit = returnToHub
                 )
                 is QuizMode.Adjectives -> MultipleChoiceQuiz(
                     app = app,
                     title = if (m.enToPl) "Adjectives · EN → PL" else "Adjectives · PL → EN",
-                    questions = QuizGenerators.adjectiveVocab(app.lessonRepo, enToPl = m.enToPl),
-                    onExit = { mode = QuizMode.Hub }
+                    questions = remember(m.enToPl) {
+                        QuizGenerators.adjectiveVocab(app.lessonRepo, enToPl = m.enToPl)
+                    },
+                    onExit = returnToHub
                 )
                 is QuizMode.Adverbs -> MultipleChoiceQuiz(
                     app = app,
                     title = if (m.enToPl) "Adverbs · EN → PL" else "Adverbs · PL → EN",
-                    questions = QuizGenerators.adverbVocab(app.lessonRepo, enToPl = m.enToPl),
-                    onExit = { mode = QuizMode.Hub }
+                    questions = remember(m.enToPl) {
+                        QuizGenerators.adverbVocab(app.lessonRepo, enToPl = m.enToPl)
+                    },
+                    onExit = returnToHub
                 )
                 QuizMode.Pronouns -> MultipleChoiceQuiz(
                     app = app,
                     title = "Pronoun case forms",
-                    questions = QuizGenerators.pronounCaseForms(app.lessonRepo),
-                    onExit = { mode = QuizMode.Hub }
+                    questions = remember { QuizGenerators.pronounCaseForms(app.lessonRepo) },
+                    onExit = returnToHub
                 )
             }
         }
@@ -122,6 +156,7 @@ fun QuizzesScreen(
 private sealed interface QuizMode {
     data object Hub : QuizMode
     data object Practice : QuizMode
+    data object HelperInfinitives : QuizMode
     data object PerVerbPick : QuizMode
     data object CrossVerbPick : QuizMode
     data class PerVerb(val verb: VerbEntry, val tense: String) : QuizMode {
@@ -140,78 +175,128 @@ private sealed interface QuizMode {
     data object Pronouns : QuizMode
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun Hub(onPick: (QuizMode) -> Unit) {
+    val cards = listOf(
+        QuizCardSpec(
+            title = "Practice",
+            subtitle = "Adaptive self-grade cards. Misses repeat once, then return as variations.",
+            mode = QuizMode.Practice
+        ),
+        QuizCardSpec(
+            title = "Helper + infinitive",
+            subtitle = "Common want/need/can/could/should patterns with everyday infinitives.",
+            mode = QuizMode.HelperInfinitives
+        ),
+        QuizCardSpec(
+            title = "One verb",
+            subtitle = "Pick a verb, drill all 6 person forms in present or past.",
+            mode = QuizMode.PerVerbPick
+        ),
+        QuizCardSpec(
+            title = "One person, all verbs",
+            subtitle = "Lock a pronoun, then drill that form across every verb.",
+            mode = QuizMode.CrossVerbPick
+        ),
+        QuizCardSpec(
+            title = "Adjectives EN -> PL",
+            subtitle = "Pick the Polish word for each English adjective.",
+            mode = QuizMode.Adjectives(enToPl = true)
+        ),
+        QuizCardSpec(
+            title = "Adjectives PL -> EN",
+            subtitle = "Pick the English meaning for each Polish adjective.",
+            mode = QuizMode.Adjectives(enToPl = false)
+        ),
+        QuizCardSpec(
+            title = "Adverbs EN -> PL",
+            subtitle = "Pick the Polish word for each English adverb.",
+            mode = QuizMode.Adverbs(enToPl = true)
+        ),
+        QuizCardSpec(
+            title = "Adverbs PL -> EN",
+            subtitle = "Pick the English meaning for each Polish adverb.",
+            mode = QuizMode.Adverbs(enToPl = false)
+        ),
+        QuizCardSpec(
+            title = "Pronouns",
+            subtitle = "ja/mnie/mi, on/go/mu: drill nom / acc / dat across pronouns.",
+            mode = QuizMode.Pronouns
+        )
+    )
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
-            "Quizzes", fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
+            "Quizzes", fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
             color = LbColors.Primary
         )
-        Text(
-            "Practice is the main self-graded drill. Multiple choice remains below " +
-                "as a lightweight recognition test.",
-            fontSize = 13.sp, color = LbColors.TextSecondary
-        )
-        QuizCard(
-            title = "Practice — adaptive check / X",
-            subtitle = "Self-grade cards. Misses repeat once, then return as four variations.",
-            onClick = { onPick(QuizMode.Practice) }
-        )
-        QuizCard(
-            title = "Verb forms — one verb",
-            subtitle = "Pick a verb, drill all 6 person forms in present or past.",
-            onClick = { onPick(QuizMode.PerVerbPick) }
-        )
-        QuizCard(
-            title = "Verb forms — one person, all verbs",
-            subtitle = "Lock a pronoun (e.g. 3sg), drill across every verb.",
-            onClick = { onPick(QuizMode.CrossVerbPick) }
-        )
-        QuizCard(
-            title = "Adjectives — EN → PL",
-            subtitle = "Pick the Polish word for each English adjective.",
-            onClick = { onPick(QuizMode.Adjectives(enToPl = true)) }
-        )
-        QuizCard(
-            title = "Adjectives — PL → EN",
-            subtitle = "Pick the English meaning for each Polish adjective.",
-            onClick = { onPick(QuizMode.Adjectives(enToPl = false)) }
-        )
-        QuizCard(
-            title = "Adverbs — EN → PL",
-            subtitle = "Pick the Polish word for each English adverb.",
-            onClick = { onPick(QuizMode.Adverbs(enToPl = true)) }
-        )
-        QuizCard(
-            title = "Adverbs — PL → EN",
-            subtitle = "Pick the English meaning for each Polish adverb.",
-            onClick = { onPick(QuizMode.Adverbs(enToPl = false)) }
-        )
-        QuizCard(
-            title = "Pronoun case forms",
-            subtitle = "ja/mnie/mi, on/go/mu — drill nom / acc / dat across all pronouns.",
-            onClick = { onPick(QuizMode.Pronouns) }
-        )
+        cards.chunked(4).forEach { rowCards ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                rowCards.forEach { card ->
+                    QuizCard(
+                        title = card.title,
+                        subtitle = card.subtitle,
+                        onClick = { onPick(card.mode) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(108.dp)
+                    )
+                }
+                repeat(4 - rowCards.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
     }
 }
 
+private data class QuizCardSpec(
+    val title: String,
+    val subtitle: String,
+    val mode: QuizMode
+)
+
 @Composable
-private fun QuizCard(title: String, subtitle: String, onClick: () -> Unit) {
+private fun QuizCard(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .clickable { onClick() }
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.Black)
-            Text(subtitle, fontSize = 12.sp, color = LbColors.TextSecondary)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 14.dp, top = 9.dp, end = 14.dp, bottom = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Text(
+                title,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.Black,
+                maxLines = 1
+            )
+            Text(
+                subtitle,
+                fontSize = 10.sp,
+                lineHeight = 12.sp,
+                color = LbColors.TextSecondary,
+                maxLines = 3
+            )
         }
     }
 }

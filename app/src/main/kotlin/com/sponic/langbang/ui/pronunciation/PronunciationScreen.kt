@@ -2,11 +2,12 @@ package com.sponic.langbang.ui.pronunciation
 
 import com.sponic.langbang.ui.theme.LbColors
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -26,8 +27,6 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -47,9 +46,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -59,6 +60,7 @@ import com.sponic.langbang.data.model.PhonemeEntry
 import com.sponic.langbang.data.model.TokenPair
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
+import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.integrations.AzureTtsClient
 import com.sponic.langbang.ui.common.CompactLessonListCard
 import com.sponic.langbang.ui.common.CompactLessonListDefaults
@@ -83,7 +85,7 @@ fun PronunciationScreen(app: LangbangApplication) {
                 selected = selected,
                 onSelect = { selected = it },
                 modifier = Modifier
-                    .width(300.dp)
+                    .width(360.dp)
                     .fillMaxHeight()
                     .background(LbColors.Canvas)
             )
@@ -201,13 +203,68 @@ private fun PhonemeDetail(
     var playAllJob by remember(phoneme) {
         mutableStateOf<kotlinx.coroutines.Job?>(null)
     }
+
+    fun publishExample(ex: ExampleWord) {
+        NowVoicingBus.publish(
+            NowVoicing(
+                en = ex.en,
+                pl = ex.pl,
+                literal = null,
+                lang = "pl",
+                words = listOf(TokenPair(ex.pl, ex.en))
+            )
+        )
+    }
+
+    fun stopPronunciationPlayback() {
+        playAllJob?.cancel()
+        playAllJob = null
+        playingAll = false
+        playingWord = null
+        app.audioPlayer.stop()
+        NowVoicingBus.clear()
+        PlaybackController.unregister()
+    }
+
+    fun startPronunciationPlayback() {
+        playingAll = true
+        PlaybackController.register { stopPronunciationPlayback() }
+        playAllJob = scope.launch {
+            try {
+                phoneme.examples.forEach { ex ->
+                    playingWord = ex.pl
+                    publishExample(ex)
+                    val f = app.audioCache.fileFor(
+                        AzureTtsClient.LOCALE_PL,
+                        AzureTtsClient.PL_PL_F,
+                        ex.pl
+                    )
+                    playFileAndAwait(app, f)
+                    kotlinx.coroutines.delay(220)
+                }
+            } finally {
+                playingAll = false
+                playingWord = null
+                NowVoicingBus.clear()
+                PlaybackController.unregister()
+            }
+        }
+    }
+
+    fun playSingleExample(ex: ExampleWord) {
+        stopPronunciationPlayback()
+        val f = app.audioCache.fileFor(AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, ex.pl)
+        if (!f.exists()) return
+        playingWord = ex.pl
+        app.audioPlayer.play(f) {
+            if (playingWord == ex.pl) playingWord = null
+        }
+    }
+
     // Stop any in-flight queue when the user navigates to a different phoneme.
     DisposableEffect(phoneme) {
         onDispose {
-            playAllJob?.cancel()
-            playAllJob = null
-            app.audioPlayer.stop()
-            NowVoicingBus.clear()
+            stopPronunciationPlayback()
         }
     }
 
@@ -229,7 +286,7 @@ private fun PhonemeDetail(
                 color = LbColors.Primary
             )
             Spacer(Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
+            Column {
                 Text(phoneme.name, fontSize = 12.sp, color = LbColors.TextMuted)
                 Text(
                     phoneme.ipa,
@@ -238,98 +295,32 @@ private fun PhonemeDetail(
                     color = LbColors.TextPrimary
                 )
             }
+            Spacer(Modifier.weight(1f))
             // Flashcard quiz — relocated here from the top of the left list and made
-            // compact, sitting just to the LEFT of "Play all".
-            Button(
+            // compact, sitting just to the LEFT of the play queue control.
+            CompactPronHeaderButton(
+                label = "Flashcard quiz",
                 onClick = onStartQuiz,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.secondary
-                ),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-            ) {
-                Icon(
-                    Icons.Default.School,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    "?? Flashcard",
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            // Play all at the TOP next to the phoneme — was buried beside "Common
+                icon = Icons.Default.School,
+                containerColor = MaterialTheme.colorScheme.secondary
+            )
+            Spacer(Modifier.width(6.dp))
+            // Play queue at the TOP next to the phoneme — was buried beside "Common
             // words" further down, easy to miss / below the fold (reported 2026-05-30).
-            Button(
+            CompactPronHeaderButton(
+                label = if (playingAll) "Stop" else "Play ${phoneme.examples.size}",
                 onClick = {
                     if (playingAll) {
-                        playAllJob?.cancel()
-                        playAllJob = null
-                        playingAll = false
-                        playingWord = null
-                        app.audioPlayer.stop()
-                        NowVoicingBus.clear()
+                        stopPronunciationPlayback()
                     } else {
-                        playingAll = true
-                        playAllJob = scope.launch {
-                            try {
-                                phoneme.examples.forEach { ex ->
-                                    playingWord = ex.pl
-                                    // Surface the word in the sticky Now Voicing panel so the
-                                    // user sees the PL/EN of whatever is sounding (same panel the
-                                    // verb/noun reciters drive). Single-token gloss.
-                                    NowVoicingBus.publish(
-                                        NowVoicing(
-                                            en = ex.en,
-                                            pl = ex.pl,
-                                            literal = null,
-                                            lang = "pl",
-                                            words = listOf(TokenPair(ex.pl, ex.en))
-                                        )
-                                    )
-                                    val f = app.audioCache.fileFor(
-                                        AzureTtsClient.LOCALE_PL,
-                                        AzureTtsClient.PL_PL_F,
-                                        ex.pl
-                                    )
-                                    playFileAndAwait(app, f)
-                                    kotlinx.coroutines.delay(220)
-                                }
-                            } finally {
-                                playingAll = false
-                                playingWord = null
-                                NowVoicingBus.clear()
-                            }
-                        }
+                        startPronunciationPlayback()
                     }
                 },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (playingAll) LbColors.Danger
-                    else MaterialTheme.colorScheme.primary
-                ),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp)
-            ) {
-                Icon(
-                    if (playingAll) Icons.Default.Stop else Icons.Default.PlayArrow,
-                    contentDescription = if (playingAll) "Stop" else "Play all",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    if (playingAll) "Stop" else "Play all",
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-            Spacer(Modifier.width(10.dp))
+                icon = if (playingAll) Icons.Default.Stop else Icons.Default.PlayArrow,
+                contentDescription = if (playingAll) "Stop playback" else "Play ${phoneme.examples.size}",
+                containerColor = if (playingAll) LbColors.Danger else MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.width(8.dp))
             SelectionNavButtons(
                 items = phonemes,
                 selected = phoneme,
@@ -369,60 +360,6 @@ private fun PhonemeDetail(
                 color = LbColors.Primary,
                 modifier = Modifier.weight(1f)
             )
-            // Play-all moved to the phoneme header (top of panel). This duplicate
-            // beside "Common words" is disabled via `if (false)` so it never renders;
-            // kept the block minimal to avoid a risky multi-line delete during a
-            // concurrent edit of this file (2026-05-30).
-            if (false) Button(
-                onClick = {
-                    if (playingAll) {
-                        playAllJob?.cancel()
-                        playAllJob = null
-                        playingAll = false
-                        playingWord = null
-                        app.audioPlayer.stop()
-                    } else {
-                        playingAll = true
-                        playAllJob = scope.launch {
-                            try {
-                                phoneme.examples.forEach { ex ->
-                                    playingWord = ex.pl
-                                    val f = app.audioCache.fileFor(
-                                        AzureTtsClient.LOCALE_PL,
-                                        AzureTtsClient.PL_PL_F,
-                                        ex.pl
-                                    )
-                                    playFileAndAwait(app, f)
-                                    kotlinx.coroutines.delay(220)
-                                }
-                            } finally {
-                                playingAll = false
-                                playingWord = null
-                            }
-                        }
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (playingAll) LbColors.Danger
-                    else MaterialTheme.colorScheme.primary
-                ),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-            ) {
-                Icon(
-                    if (playingAll) Icons.Default.Stop else Icons.Default.PlayArrow,
-                    contentDescription = if (playingAll) "Stop" else "Play all",
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    if (playingAll) "Stop" else "Play all",
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
             if (online) {
                 Text(
                     "Tap mic to score yourself",
@@ -489,10 +426,7 @@ private fun PhonemeDetail(
                     isCurrent = playingWord == ex.pl,
                     score = scores.value[ex.pl],
                     onPlay = {
-                        val f = app.audioCache.fileFor(
-                            AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, ex.pl
-                        )
-                        app.audioPlayer.play(f)
+                        playSingleExample(ex)
                     },
                     onMic = {
                         if (assessing != null) return@ExampleRow
@@ -523,6 +457,47 @@ private fun PhonemeDetail(
 }
 
 @Composable
+private fun CompactPronHeaderButton(
+    label: String,
+    onClick: () -> Unit,
+    icon: ImageVector,
+    containerColor: Color,
+    contentDescription: String? = label
+) {
+    Surface(
+        color = containerColor,
+        contentColor = Color.White,
+        shape = RoundedCornerShape(7.dp),
+        border = BorderStroke(1.dp, containerColor),
+        modifier = Modifier
+            .height(30.dp)
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = Color.White,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(Modifier.width(5.dp))
+            Text(
+                label,
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
 private fun ExampleRow(
     ex: ExampleWord,
     online: Boolean,
@@ -544,14 +519,15 @@ private fun ExampleRow(
                 .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onPlay, modifier = Modifier.size(28.dp)) {
-                Icon(
-                    Icons.Default.PlayArrow,
-                    contentDescription = "Play",
-                    tint = LbColors.Primary
-                )
-            }
-            Spacer(Modifier.width(4.dp))
+            Icon(
+                Icons.Default.PlayArrow,
+                contentDescription = "Play",
+                tint = LbColors.Primary,
+                modifier = Modifier
+                    .size(18.dp)
+                    .clickable(onClick = onPlay)
+            )
+            Spacer(Modifier.width(8.dp))
             Text(
                 ex.pl,
                 fontSize = 17.sp,

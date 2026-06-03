@@ -14,7 +14,7 @@ class PracticePrefsStore(context: Context) {
 
     /**
      * Sticky set of verb lemmas the learner has ticked in the Verbs list. These are the
-     * verbs included (in random order) when Play all / the quizzes run across multiple
+     * verbs included (in random order) when Play / the quizzes run across multiple
      * verbs. Empty set = nothing ticked → fall back to the single selected verb.
      */
     fun checkedVerbs(): Set<String> =

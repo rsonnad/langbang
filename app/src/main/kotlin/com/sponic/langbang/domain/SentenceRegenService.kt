@@ -17,8 +17,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import com.sponic.langbang.data.LbJson
 import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.json.Json
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.atomic.AtomicInteger
@@ -46,7 +46,7 @@ class SentenceRegenService(
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private val json = LbJson.lenient
 
     /**
      * Serializes every write into the per-type SharedPreferences-style JSON stores

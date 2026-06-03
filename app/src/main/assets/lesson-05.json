@@ -32,6 +32,16 @@
           ]
         },
         {
+          "pl": "Jestem człowiekiem szczerym.",
+          "en": "I am an honest person.",
+          "literal": "I-am person honest.",
+          "words": [
+            {"pl": "Jestem",       "en": "I-am"},
+            {"pl": "człowiekiem",  "en": "person"},
+            {"pl": "szczerym.",    "en": "honest."}
+          ]
+        },
+        {
           "pl": "Jestem z Austin, w Teksasie.",
           "en": "I am from Austin, Texas.",
           "literal": "I-am from Austin, in Texas.",
@@ -41,6 +51,35 @@
             {"pl": "Austin,",   "en": "Austin,"},
             {"pl": "w",         "en": "in"},
             {"pl": "Teksasie.", "en": "Texas."}
+          ]
+        },
+        {
+          "pl": "To tam zwykle mieszka Elon Musk.",
+          "en": "That's where Elon Musk usually lives.",
+          "literal": "It there usually lives Elon Musk.",
+          "words": [
+            {"pl": "To",        "en": "it"},
+            {"pl": "tam",       "en": "there"},
+            {"pl": "zwykle",    "en": "usually"},
+            {"pl": "mieszka",   "en": "lives"},
+            {"pl": "Elon",      "en": "Elon"},
+            {"pl": "Musk.",     "en": "Musk."}
+          ]
+        },
+        {
+          "pl": "Mieszkam obok głównej siedziby Tesli i fabryki humanoidalnych robotów.",
+          "en": "I live next to the Tesla headquarters and humanoid robot factory.",
+          "literal": "I-live next-to main headquarters of-Tesla and factory of-humanoid robots.",
+          "words": [
+            {"pl": "Mieszkam",  "en": "I-live"},
+            {"pl": "obok",      "en": "next-to"},
+            {"pl": "głównej",   "en": "main"},
+            {"pl": "siedziby",  "en": "headquarters"},
+            {"pl": "Tesli",     "en": "of-Tesla"},
+            {"pl": "i",         "en": "and"},
+            {"pl": "fabryki",          "en": "factory"},
+            {"pl": "humanoidalnych",   "en": "of-humanoid"},
+            {"pl": "robotów.",         "en": "robots."}
           ]
         },
         {
@@ -117,6 +156,32 @@
             {"pl": "cię",       "en": "you"},
             {"pl": "zaprosić.", "en": "to-invite."}
           ]
+        },
+        {
+          "pl": "Ale wyglądasz pięknie w każdym języku.",
+          "en": "But you look beautiful in any language.",
+          "literal": "But you-look beautifully in every language.",
+          "words": [
+            {"pl": "Ale",        "en": "but"},
+            {"pl": "wyglądasz",  "en": "you-look"},
+            {"pl": "pięknie",    "en": "beautifully"},
+            {"pl": "w",          "en": "in"},
+            {"pl": "każdym",     "en": "every"},
+            {"pl": "języku.",    "en": "language."}
+          ]
+        },
+        {
+          "pl": "Tego nie da się opisać słowami.",
+          "en": "This is beyond words.",
+          "literal": "This not can self describe with-words.",
+          "words": [
+            {"pl": "Tego",      "en": "this"},
+            {"pl": "nie",       "en": "not"},
+            {"pl": "da",        "en": "can"},
+            {"pl": "się",       "en": "self"},
+            {"pl": "opisać",    "en": "describe"},
+            {"pl": "słowami.",  "en": "with-words."}
+          ]
         }
       ]
     },
@@ -134,6 +199,56 @@
             {"pl": "polski",  "en": "Polish"},
             {"pl": "jest",    "en": "is"},
             {"pl": "fatalny.","en": "terrible."}
+          ]
+        },
+        {
+          "pl": "Mam nadzieję na szybką poprawę.",
+          "en": "I am hopeful of rapid improvement.",
+          "literal": "I-have hope for rapid improvement.",
+          "words": [
+            {"pl": "Mam",       "en": "I-have"},
+            {"pl": "nadzieję",  "en": "hope"},
+            {"pl": "na",        "en": "for"},
+            {"pl": "szybką",    "en": "rapid"},
+            {"pl": "poprawę.",  "en": "improvement."}
+          ]
+        },
+        {
+          "pl": "Mój polski nie jest świetny.",
+          "en": "My Polish is not great.",
+          "literal": "My Polish not is great.",
+          "words": [
+            {"pl": "Mój",      "en": "my"},
+            {"pl": "polski",   "en": "Polish"},
+            {"pl": "nie",      "en": "not"},
+            {"pl": "jest",     "en": "is"},
+            {"pl": "świetny.", "en": "great."}
+          ]
+        },
+        {
+          "pl": "Tak naprawdę nic nie rozumiem.",
+          "en": "I can't really understand anything.",
+          "literal": "So really nothing not I-understand.",
+          "words": [
+            {"pl": "Tak",        "en": "so"},
+            {"pl": "naprawdę",   "en": "really"},
+            {"pl": "nic",        "en": "nothing"},
+            {"pl": "nie",        "en": "not"},
+            {"pl": "rozumiem.",  "en": "I-understand."}
+          ]
+        },
+        {
+          "pl": "Moje okulary czasami potrafią słuchać i tłumaczyć.",
+          "en": "My glasses can listen and translate sometimes.",
+          "literal": "My glasses sometimes can listen and translate.",
+          "words": [
+            {"pl": "Moje",       "en": "my"},
+            {"pl": "okulary",    "en": "glasses"},
+            {"pl": "czasami",    "en": "sometimes"},
+            {"pl": "potrafią",   "en": "can"},
+            {"pl": "słuchać",    "en": "listen"},
+            {"pl": "i",          "en": "and"},
+            {"pl": "tłumaczyć.", "en": "translate."}
           ]
         },
         {
@@ -257,6 +372,75 @@
             {"pl": "Szukam",       "en": "I-look-for"},
             {"pl": "korepetytora", "en": "tutor"},
             {"pl": "polskiego.",   "en": "Polish."}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "welcome-to-poland",
+      "title": "Welcome to Poland",
+      "subtitle": "A welcome for someone arriving in Poland, with a little end-of-days optimism.",
+      "sentences": [
+        {
+          "pl": "Mam nadzieję, że podróż była dobra.",
+          "en": "I hope you had a good trip.",
+          "literal": "I-have hope, that trip was good.",
+          "words": [
+            {"pl": "Mam",       "en": "I-have"},
+            {"pl": "nadzieję,", "en": "hope,"},
+            {"pl": "że",        "en": "that"},
+            {"pl": "podróż",    "en": "trip"},
+            {"pl": "była",      "en": "was"},
+            {"pl": "dobra.",    "en": "good."}
+          ]
+        },
+        {
+          "pl": "Witaj w ojczyźnie, w Polsce.",
+          "en": "Welcome to the fatherland, Poland.",
+          "literal": "Welcome in fatherland, in Poland.",
+          "words": [
+            {"pl": "Witaj",      "en": "welcome"},
+            {"pl": "w",          "en": "in"},
+            {"pl": "ojczyźnie,", "en": "fatherland,"},
+            {"pl": "w",          "en": "in"},
+            {"pl": "Polsce.",    "en": "Poland."}
+          ]
+        },
+        {
+          "pl": "Myślę, że spodoba ci się tutaj.",
+          "en": "I think you will like it here.",
+          "literal": "I-think, that will-please to-you self here.",
+          "words": [
+            {"pl": "Myślę,",   "en": "I-think,"},
+            {"pl": "że",       "en": "that"},
+            {"pl": "spodoba",  "en": "will-please"},
+            {"pl": "ci",       "en": "to-you"},
+            {"pl": "się",      "en": "self"},
+            {"pl": "tutaj.",   "en": "here."}
+          ]
+        },
+        {
+          "pl": "Przyszłość może być budowana tutaj.",
+          "en": "The future may be built here.",
+          "literal": "Future can be built here.",
+          "words": [
+            {"pl": "Przyszłość", "en": "future"},
+            {"pl": "może",       "en": "can"},
+            {"pl": "być",        "en": "be"},
+            {"pl": "budowana",   "en": "built"},
+            {"pl": "tutaj.",     "en": "here."}
+          ]
+        },
+        {
+          "pl": "Zanim roboty nas wszystkich zabiją.",
+          "en": "before the robots kill us all.",
+          "literal": "Before robots us all kill.",
+          "words": [
+            {"pl": "Zanim",       "en": "before"},
+            {"pl": "roboty",      "en": "robots"},
+            {"pl": "nas",         "en": "us"},
+            {"pl": "wszystkich",  "en": "all"},
+            {"pl": "zabiją.",     "en": "kill."}
           ]
         }
       ]

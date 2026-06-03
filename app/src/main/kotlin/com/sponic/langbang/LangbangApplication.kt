@@ -7,6 +7,9 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import com.sponic.langbang.BuildConfig
+import com.sponic.langbang.cloud.CloudBackendClient
+import com.sponic.langbang.cloud.CloudConfigStore
 import com.sponic.langbang.data.AudioPrefsStore
 import com.sponic.langbang.data.LessonRepository
 import com.sponic.langbang.data.PracticePrefsStore
@@ -26,9 +29,17 @@ import com.sponic.langbang.domain.UsageTracker
 import com.sponic.langbang.integrations.AzurePronunciationClient
 import com.sponic.langbang.integrations.AzureTtsClient
 import com.sponic.langbang.integrations.GeminiClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class LangbangApplication : Application() {
 
+    lateinit var cloudConfig: CloudConfigStore
+        private set
+    lateinit var cloudBackend: CloudBackendClient
+        private set
     lateinit var lessonRepo: LessonRepository
         private set
     lateinit var audioCache: AudioCache
@@ -66,10 +77,14 @@ class LangbangApplication : Application() {
     lateinit var updateChecker: UpdateChecker
         private set
 
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     override fun onCreate() {
         super.onCreate()
         AdbWifiKeeper.enableIfGranted(this, "app start")
-        lessonRepo = LessonRepository(this)
+        cloudConfig = CloudConfigStore(this, BuildConfig.LANGBANGML_INSTANCE_ID)
+        cloudBackend = CloudBackendClient(apiBase = BuildConfig.LANGBANGML_API_BASE)
+        lessonRepo = LessonRepository(this, cloudConfig)
         migrateSentenceCachesIfNeeded()
         sentenceRegen = SentenceRegenService(lessonRepo)
         pronounFilter = PronounFilterStore(this)
@@ -105,6 +120,30 @@ class LangbangApplication : Application() {
         // No-ops when every bundle is already cached locally; surfaces progress
         // through the always-visible banner in LangbangApp when work is needed.
         sentenceRegen.startIfNeeded()
+        syncCloudConfig()
+    }
+
+    fun syncCloudConfig() {
+        cloudConfig.markSyncing()
+        appScope.launch {
+            cloudBackend.fetchInstances()
+                .onSuccess { cloudConfig.saveInstances(it) }
+            cloudBackend.fetchBootstrap(cloudConfig.state.value.selectedInstanceId).fold(
+                onSuccess = { bootstrap ->
+                    cloudConfig.saveBootstrap(bootstrap)
+                    lessonRepo.clearCloudBackedBaseCache()
+                },
+                onFailure = { t ->
+                    cloudConfig.saveError(t.message ?: t.javaClass.simpleName)
+                }
+            )
+        }
+    }
+
+    fun selectCloudInstance(instanceId: String) {
+        cloudConfig.setSelectedInstance(instanceId)
+        lessonRepo.clearCloudBackedBaseCache()
+        syncCloudConfig()
     }
 
     /**

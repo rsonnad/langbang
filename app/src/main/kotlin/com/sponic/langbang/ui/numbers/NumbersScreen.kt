@@ -42,8 +42,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
+import com.sponic.langbang.data.model.TokenPair
+import com.sponic.langbang.domain.NowVoicing
+import com.sponic.langbang.domain.NowVoicingBus
+import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.integrations.AzureTtsClient
 import com.sponic.langbang.ui.common.CompactLessonListDefaults
+import com.sponic.langbang.ui.common.LbButton
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -54,7 +59,7 @@ import kotlin.coroutines.resume
  * Polish cardinal numbers 0–100. The list holds the memorizable building blocks —
  * 0–20 individually, then the tens (20, 30 … 100). 21–99 are just tens + ones
  * (dwadzieścia jeden = 21), noted at the top, so we don't ship 100 near-identical
- * rows. Tap any row to hear it; "Play all" reads the whole list top to bottom.
+ * rows. Tap any row to hear it; "Play" reads the whole list top to bottom.
  *
  * Audio isn't part of the bulk R2/prefetch set, so each number is synthesized via
  * Azure TTS on first play and cached locally (same fileFor key as everywhere else),
@@ -68,11 +73,63 @@ fun NumbersScreen(app: LangbangApplication) {
     var playingPl by remember { mutableStateOf<String?>(null) }
     var job by remember { mutableStateOf<Job?>(null) }
 
+    fun publishNumber(n: Num) {
+        NowVoicingBus.publish(
+            NowVoicing(
+                en = n.en,
+                pl = n.pl,
+                literal = null,
+                lang = "pl",
+                words = listOf(TokenPair(n.pl, n.en))
+            )
+        )
+    }
+
+    fun stopNumberPlayback() {
+        job?.cancel()
+        job = null
+        playingAll = false
+        playingPl = null
+        app.audioPlayer.stop()
+        NowVoicingBus.clear()
+        PlaybackController.unregister()
+    }
+
+    fun playOneNumber(n: Num) {
+        stopNumberPlayback()
+        job = scope.launch {
+            playingPl = n.pl
+            try {
+                playAndAwait(app, n.pl)
+            } finally {
+                if (playingPl == n.pl) playingPl = null
+            }
+        }
+    }
+
+    fun startAllNumbers() {
+        playingAll = true
+        PlaybackController.register { stopNumberPlayback() }
+        job = scope.launch {
+            try {
+                NUMBERS.forEach { n ->
+                    playingPl = n.pl
+                    publishNumber(n)
+                    playAndAwait(app, n.pl)
+                    delay(200)
+                }
+            } finally {
+                playingAll = false
+                playingPl = null
+                NowVoicingBus.clear()
+                PlaybackController.unregister()
+            }
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose {
-            job?.cancel()
-            job = null
-            app.audioPlayer.stop()
+            stopNumberPlayback()
         }
     }
 
@@ -97,47 +154,17 @@ fun NumbersScreen(app: LangbangApplication) {
                     color = LbColors.TextSecondary
                 )
             }
-            Button(
-                onClick = {
-                    if (playingAll) {
-                        job?.cancel(); job = null
-                        playingAll = false; playingPl = null
-                        app.audioPlayer.stop()
-                    } else {
-                        playingAll = true
-                        job = scope.launch {
-                            try {
-                                NUMBERS.forEach { n ->
-                                    playingPl = n.pl
-                                    playAndAwait(app, n.pl)
-                                    delay(200)
-                                }
-                            } finally {
-                                playingAll = false; playingPl = null
-                            }
-                        }
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (playingAll) LbColors.Danger
-                    else MaterialTheme.colorScheme.primary
-                ),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp)
-            ) {
-                Icon(
-                    if (playingAll) Icons.Default.Stop else Icons.Default.PlayArrow,
-                    contentDescription = if (playingAll) "Stop" else "Play all",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    if (playingAll) "Stop" else "Play all",
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
+            val togglePlayAll = {
+                if (playingAll) {
+                    stopNumberPlayback()
+                } else {
+                    startAllNumbers()
+                }
+            }
+            if (playingAll) {
+                LbButton.Stop("Stop", onClick = togglePlayAll, icon = Icons.Default.Stop)
+            } else {
+                LbButton.Audio("Play", onClick = togglePlayAll, count = NUMBERS.size)
             }
         }
         if (!online) {
@@ -150,7 +177,7 @@ fun NumbersScreen(app: LangbangApplication) {
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             itemsIndexed(NUMBERS) { index, n ->
                 val isPlaying = playingPl == n.pl
@@ -166,20 +193,20 @@ fun NumbersScreen(app: LangbangApplication) {
                         .background(rowColor)
                         .clickable {
                             // Single tap plays just this number (cancels any queue).
-                            job?.cancel()
-                            playingAll = false
-                            job = scope.launch {
-                                playingPl = n.pl
-                                try {
-                                    playAndAwait(app, n.pl)
-                                } finally {
-                                    if (playingPl == n.pl) playingPl = null
-                                }
-                            }
+                            playOneNumber(n)
                         }
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = "Play",
+                        tint = LbColors.Primary,
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clickable { playOneNumber(n) }
+                    )
+                    Spacer(Modifier.width(8.dp))
                     Text(
                         n.digit,
                         fontSize = 20.sp,
@@ -199,12 +226,6 @@ fun NumbersScreen(app: LangbangApplication) {
                         fontSize = 14.sp,
                         color = LbColors.TextSecondary,
                         modifier = Modifier.weight(1f)
-                    )
-                    Icon(
-                        Icons.Default.PlayArrow,
-                        contentDescription = "Play ${n.en}",
-                        tint = if (isPlaying) LbColors.Danger else LbColors.Primary,
-                        modifier = Modifier.size(20.dp)
                     )
                 }
             }

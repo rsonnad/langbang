@@ -16,9 +16,9 @@ val localProps = Properties().apply {
 }
 
 // Single source of truth for the app version: root version.properties.
-//   versionName  → human-visible semver ("0.1.6"). Bump this when shipping a release.
+//   versionName  → Android manifest semver prefix ("0.1.8"), not the app-visible tag.
 //   buildNumber  → auto-incremented on every assemble/bundle/install so versionCode
-//                  is unique and the displayed versionName always has a fresh suffix.
+//                  is unique. App-visible labels use v{buildNumber} only.
 // providers.fileContents() declares the file as a config-cache input — without it,
 // re-runs of the same gradle command would replay the cached values.
 val versionPropsFile = rootProject.file("version.properties")
@@ -31,7 +31,7 @@ val baseVersionName =
 val currentBuildNumber =
     Regex("buildNumber=(\\d+)").find(versionFileContent)?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
-val producesApk = gradle.startParameter.taskNames.any { name ->
+val producesApk = !gradle.startParameter.isDryRun && gradle.startParameter.taskNames.any { name ->
     val n = name.lowercase()
     "assemble" in n || "bundle" in n || "install" in n
 }
@@ -41,8 +41,8 @@ if (producesApk) {
         "versionName=$baseVersionName\nbuildNumber=$effectiveBuildNumber\n"
     )
 }
-// Displayed version always reflects the actual build that's running — no more
-// "stuck at 0.1.6" while internals change. Reads as e.g. "0.1.6.28".
+// Android manifest versionName keeps the semver prefix for OS/package metadata.
+// In-app and publish labels use BuildConfig.BUILD_NUMBER as v{buildNumber}.
 val composedVersionName = "$baseVersionName.$effectiveBuildNumber"
 
 val buildTimestamp: String = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
@@ -68,7 +68,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.sponic.langbang"
+        applicationId = "com.sponic.langbangml"
         minSdk = 33
         targetSdk = 36
         versionCode = effectiveBuildNumber
@@ -93,18 +93,15 @@ android {
             "\"${localProps.getProperty("GEMINI_API_KEY", "")}\""
         )
 
-        // Supabase project shared with alpacapps (alpacaplayhouse.com). The anon
-        // key is already public on that site, so the local.properties indirection
-        // is for symmetry with the other secrets, not because these are sensitive.
         buildConfigField(
             "String",
-            "SUPABASE_URL",
-            "\"${localProps.getProperty("SUPABASE_URL", "https://aphrrfprbixmhissnjfn.supabase.co")}\""
+            "LANGBANGML_API_BASE",
+            "\"${localProps.getProperty("LANGBANGML_API_BASE", "https://langbangml-api.alpacapps.workers.dev")}\""
         )
         buildConfigField(
             "String",
-            "SUPABASE_ANON_KEY",
-            "\"${localProps.getProperty("SUPABASE_ANON_KEY", "")}\""
+            "LANGBANGML_INSTANCE_ID",
+            "\"${localProps.getProperty("LANGBANGML_INSTANCE_ID", "langbangml-en-pl")}\""
         )
     }
 
@@ -171,15 +168,6 @@ dependencies {
     // SFTP client for backup uploads to ALPUCA. mwiede fork = actively
     // maintained drop-in for the abandoned com.jcraft:jsch.
     implementation("com.github.mwiede:jsch:0.2.17")
-
-    // Supabase Kotlin SDK — shares the alpacapps Supabase project under the
-    // dedicated `langbang` schema. Pinned to 2.6.1 (2.x line) because 3.x
-    // requires Kotlin 2.x and the rest of the project is on Kotlin 1.9.25.
-    // Note: 2.x uses `gotrue-kt` (3.x renamed it to `auth-kt`).
-    implementation(platform("io.github.jan-tennert.supabase:bom:2.6.1"))
-    implementation("io.github.jan-tennert.supabase:postgrest-kt")
-    implementation("io.github.jan-tennert.supabase:gotrue-kt")
-    implementation("io.ktor:ktor-client-android:2.3.12")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
