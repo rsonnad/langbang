@@ -46,6 +46,7 @@ import com.sponic.langbang.data.model.TokenPair
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
+import com.sponic.langbang.domain.targetAudioVoice
 import com.sponic.langbang.integrations.AzureTtsClient
 import com.sponic.langbang.ui.common.CompactLessonListDefaults
 import com.sponic.langbang.ui.common.LbButton
@@ -57,8 +58,8 @@ import kotlin.coroutines.resume
 
 /**
  * Polish cardinal numbers 0–100. The list holds the memorizable building blocks —
- * 0–20 individually, then the tens (20, 30 … 100). 21–99 are just tens + ones
- * (dwadzieścia jeden = 21), noted at the top, so we don't ship 100 near-identical
+ * 0–29 individually, then the tens (30 … 100). 30–99 are just tens + ones
+ * (trzydzieści pięć = 35), noted at the top, so we don't ship 100 near-identical
  * rows. Tap any row to hear it; "Play" reads the whole list top to bottom.
  *
  * Audio isn't part of the bulk R2/prefetch set, so each number is synthesized via
@@ -69,18 +70,27 @@ import kotlin.coroutines.resume
 fun NumbersScreen(app: LangbangApplication) {
     val scope = rememberCoroutineScope()
     val online by app.network.online.collectAsState()
+    val cloudState by app.cloudConfig.state.collectAsState()
+    val labels = cloudState.bootstrap?.labels.orEmpty()
+    val targetVoice = app.targetAudioVoice()
+    val targetIsEnglish = targetVoice.locale == AzureTtsClient.LOCALE_EN
     var playingAll by remember { mutableStateOf(false) }
-    var playingPl by remember { mutableStateOf<String?>(null) }
+    var playingTarget by remember { mutableStateOf<String?>(null) }
     var job by remember { mutableStateOf<Job?>(null) }
 
+    fun targetText(n: Num): String = if (targetIsEnglish) n.en else n.pl
+    fun sourceText(n: Num): String = if (targetIsEnglish) n.pl else n.en
+
     fun publishNumber(n: Num) {
+        val target = targetText(n)
+        val source = sourceText(n)
         NowVoicingBus.publish(
             NowVoicing(
-                en = n.en,
-                pl = n.pl,
+                en = source,
+                pl = target,
                 literal = null,
-                lang = "pl",
-                words = listOf(TokenPair(n.pl, n.en))
+                lang = if (targetIsEnglish) "en" else "pl",
+                words = listOf(TokenPair(target, source))
             )
         )
     }
@@ -89,7 +99,7 @@ fun NumbersScreen(app: LangbangApplication) {
         job?.cancel()
         job = null
         playingAll = false
-        playingPl = null
+        playingTarget = null
         app.audioPlayer.stop()
         NowVoicingBus.clear()
         PlaybackController.unregister()
@@ -98,11 +108,12 @@ fun NumbersScreen(app: LangbangApplication) {
     fun playOneNumber(n: Num) {
         stopNumberPlayback()
         job = scope.launch {
-            playingPl = n.pl
+            val target = targetText(n)
+            playingTarget = target
             try {
-                playAndAwait(app, n.pl)
+                playAndAwait(app, target, targetVoice.locale, targetVoice.voice)
             } finally {
-                if (playingPl == n.pl) playingPl = null
+                if (playingTarget == target) playingTarget = null
             }
         }
     }
@@ -113,14 +124,15 @@ fun NumbersScreen(app: LangbangApplication) {
         job = scope.launch {
             try {
                 NUMBERS.forEach { n ->
-                    playingPl = n.pl
+                    val target = targetText(n)
+                    playingTarget = target
                     publishNumber(n)
-                    playAndAwait(app, n.pl)
+                    playAndAwait(app, target, targetVoice.locale, targetVoice.voice)
                     delay(200)
                 }
             } finally {
                 playingAll = false
-                playingPl = null
+                playingTarget = null
                 NowVoicingBus.clear()
                 PlaybackController.unregister()
             }
@@ -142,14 +154,25 @@ fun NumbersScreen(app: LangbangApplication) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    "Numbers · Liczby",
+                    label(
+                        labels,
+                        "numbers.title",
+                        if (targetIsEnglish) "Liczby · Numbers" else "Numbers · Liczby"
+                    ),
                     fontSize = 22.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = LbColors.Primary
                 )
                 Text(
-                    "0–100. For 21–99, combine tens + ones — e.g. dwadzieścia jeden (21), " +
-                        "trzydzieści pięć (35).",
+                    label(
+                        labels,
+                        "numbers.description",
+                        if (targetIsEnglish) {
+                            "0–100. Dla 30–99 łącz dziesiątki i jedności — np. thirty-five (35)."
+                        } else {
+                            "0–100. For 30–99, combine tens + ones — e.g. trzydzieści pięć (35)."
+                        }
+                    ),
                     fontSize = 12.sp,
                     color = LbColors.TextSecondary
                 )
@@ -162,14 +185,22 @@ fun NumbersScreen(app: LangbangApplication) {
                 }
             }
             if (playingAll) {
-                LbButton.Stop("Stop", onClick = togglePlayAll, icon = Icons.Default.Stop)
+                LbButton.Stop(label(labels, "numbers.stop", if (targetIsEnglish) "Stop" else "Stop"), onClick = togglePlayAll, icon = Icons.Default.Stop)
             } else {
-                LbButton.Audio("Play", onClick = togglePlayAll, count = NUMBERS.size)
+                LbButton.Audio(label(labels, "numbers.play", if (targetIsEnglish) "Odtwórz" else "Play"), onClick = togglePlayAll, count = NUMBERS.size)
             }
         }
         if (!online) {
             Text(
-                "Offline — only numbers you've already played will have audio.",
+                label(
+                    labels,
+                    "numbers.offline",
+                    if (targetIsEnglish) {
+                        "Offline — audio działa tylko dla liczb odtworzonych wcześniej."
+                    } else {
+                        "Offline — only numbers you've already played will have audio."
+                    }
+                ),
                 fontSize = 11.sp,
                 color = LbColors.Danger
             )
@@ -180,7 +211,9 @@ fun NumbersScreen(app: LangbangApplication) {
             verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             itemsIndexed(NUMBERS) { index, n ->
-                val isPlaying = playingPl == n.pl
+                val target = targetText(n)
+                val source = sourceText(n)
+                val isPlaying = playingTarget == target
                 val rowColor = when {
                     isPlaying -> LbColors.GoldSoft
                     index % 2 == 1 -> CompactLessonListDefaults.AlternateItemColor
@@ -200,7 +233,7 @@ fun NumbersScreen(app: LangbangApplication) {
                 ) {
                     Icon(
                         Icons.Default.PlayArrow,
-                        contentDescription = "Play",
+                        contentDescription = label(labels, "numbers.play", if (targetIsEnglish) "Odtwórz" else "Play"),
                         tint = LbColors.Primary,
                         modifier = Modifier
                             .size(18.dp)
@@ -215,14 +248,14 @@ fun NumbersScreen(app: LangbangApplication) {
                         modifier = Modifier.width(56.dp)
                     )
                     Text(
-                        n.pl,
+                        target,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = LbColors.Primary,
                         modifier = Modifier.weight(1f)
                     )
                     Text(
-                        n.en,
+                        source,
                         fontSize = 14.sp,
                         color = LbColors.TextSecondary,
                         modifier = Modifier.weight(1f)
@@ -235,7 +268,7 @@ fun NumbersScreen(app: LangbangApplication) {
 
 private data class Num(val digit: String, val pl: String, val en: String)
 
-/** Memorizable set: 0–20 + tens up to 100. 21–99 compose from these. */
+/** Memorizable set: 0–29 + tens up to 100. 30–99 compose from these. */
 private val NUMBERS: List<Num> = listOf(
     Num("0", "zero", "zero"),
     Num("1", "jeden", "one"),
@@ -258,6 +291,15 @@ private val NUMBERS: List<Num> = listOf(
     Num("18", "osiemnaście", "eighteen"),
     Num("19", "dziewiętnaście", "nineteen"),
     Num("20", "dwadzieścia", "twenty"),
+    Num("21", "dwadzieścia jeden", "twenty-one"),
+    Num("22", "dwadzieścia dwa", "twenty-two"),
+    Num("23", "dwadzieścia trzy", "twenty-three"),
+    Num("24", "dwadzieścia cztery", "twenty-four"),
+    Num("25", "dwadzieścia pięć", "twenty-five"),
+    Num("26", "dwadzieścia sześć", "twenty-six"),
+    Num("27", "dwadzieścia siedem", "twenty-seven"),
+    Num("28", "dwadzieścia osiem", "twenty-eight"),
+    Num("29", "dwadzieścia dziewięć", "twenty-nine"),
     Num("30", "trzydzieści", "thirty"),
     Num("40", "czterdzieści", "forty"),
     Num("50", "pięćdziesiąt", "fifty"),
@@ -272,11 +314,11 @@ private val NUMBERS: List<Num> = listOf(
  * Synth-on-miss + play, mirroring RandomPlayer.playAndAwait. fileFor's key is
  * (locale, voice, text) so it shares the cache with the rest of the app.
  */
-private suspend fun playAndAwait(app: LangbangApplication, text: String) {
+private suspend fun playAndAwait(app: LangbangApplication, text: String, locale: String, voice: String) {
     if (text.isEmpty()) return
-    val file = app.audioCache.fileFor(AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, text)
+    val file = app.audioCache.fileFor(locale, voice, text)
     if (!app.audioCache.has(file)) {
-        runCatching { app.tts.synthesize(text, AzureTtsClient.PL_PL_F, AzureTtsClient.LOCALE_PL, file) }
+        runCatching { app.tts.synthesize(text, voice, locale, file) }
     }
     if (!app.audioCache.has(file)) return
     suspendCancellableCoroutine<Unit> { cont ->
@@ -284,3 +326,6 @@ private suspend fun playAndAwait(app: LangbangApplication, text: String) {
         cont.invokeOnCancellation { app.audioPlayer.stop() }
     }
 }
+
+private fun label(labels: Map<String, String>, key: String, fallback: String): String =
+    labels[key]?.takeIf { it.isNotBlank() } ?: fallback

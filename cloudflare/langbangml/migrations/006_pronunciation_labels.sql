@@ -11,6 +11,11 @@ INSERT OR REPLACE INTO ui_labels (locale, label_key, label_value) VALUES
   ('en-US', 'pronunciation.listening_say', 'Listening — say'),
   ('en-US', 'pronunciation.opening_mic', 'Opening mic…'),
   ('en-US', 'pronunciation.heard', 'Heard'),
+  ('en-US', 'numbers.title', 'Numbers · Liczby'),
+  ('en-US', 'numbers.description', '0–100. For 30–99, combine tens + ones — e.g. trzydzieści pięć (35).'),
+  ('en-US', 'numbers.play', 'Play'),
+  ('en-US', 'numbers.stop', 'Stop'),
+  ('en-US', 'numbers.offline', 'Offline — only numbers you''ve already played will have audio.'),
   ('pl-PL', 'pronunciation.flashcard_quiz', 'Quiz fiszek'),
   ('pl-PL', 'pronunciation.play', 'Odtwórz'),
   ('pl-PL', 'pronunciation.stop', 'Stop'),
@@ -22,4 +27,9 @@ INSERT OR REPLACE INTO ui_labels (locale, label_key, label_value) VALUES
   ('pl-PL', 'pronunciation.offline_mic', 'Offline — ocena wymowy niedostępna'),
   ('pl-PL', 'pronunciation.listening_say', 'Słucham — powiedz'),
   ('pl-PL', 'pronunciation.opening_mic', 'Otwieram mikrofon…'),
-  ('pl-PL', 'pronunciation.heard', 'Usłyszano');
+  ('pl-PL', 'pronunciation.heard', 'Usłyszano'),
+  ('pl-PL', 'numbers.title', 'Liczby · Numbers'),
+  ('pl-PL', 'numbers.description', '0–100. Dla 30–99 łącz dziesiątki i jedności — np. thirty-five (35).'),
+  ('pl-PL', 'numbers.play', 'Odtwórz'),
+  ('pl-PL', 'numbers.stop', 'Stop'),
+  ('pl-PL', 'numbers.offline', 'Offline — audio działa tylko dla liczb odtworzonych wcześniej.');

@@ -55,6 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
+import com.sponic.langbang.data.PracticePrefsStore
 import com.sponic.langbang.data.model.AdverbEntry
 import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.domain.NowVoicing
@@ -72,6 +73,9 @@ import com.sponic.langbang.ui.common.CompactLessonListDefaults
 import com.sponic.langbang.ui.common.DelayedEnglishTranslation
 import com.sponic.langbang.ui.common.LbButton
 import com.sponic.langbang.ui.common.SelectionNavButtons
+import com.sponic.langbang.ui.common.SubtleCheckbox
+import com.sponic.langbang.ui.common.WordListPlaybackHeader
+import com.sponic.langbang.ui.common.WordPlayLimitControl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -93,6 +97,19 @@ internal class AdverbsScreenState(
         private set
     var error: String? by mutableStateOf(null)
         private set
+    var checkedLemmas: Set<String> by mutableStateOf(
+        app.practicePrefs.checkedWordLemmas(PracticePrefsStore.CATEGORY_ADVERBS)
+    )
+        private set
+    var playLimitText: String by mutableStateOf(
+        app.practicePrefs.wordPlayLimit(PracticePrefsStore.CATEGORY_ADVERBS).toString()
+    )
+        private set
+    var randomOrder: Boolean by mutableStateOf(
+        app.practicePrefs.wordPlayRandom(PracticePrefsStore.CATEGORY_ADVERBS)
+    )
+        private set
+    private var checkedDefaultsLoaded = false
 
     private val player = StudyQueuePlayer(app, scope)
     val playingIndex: Int get() = player.playingIndex
@@ -126,10 +143,76 @@ internal class AdverbsScreenState(
         player.stop()
     }
 
-    fun playAll(quiz: Boolean) {
+    fun ensureCheckedDefaults(allLemmas: List<String>) {
+        if (checkedDefaultsLoaded) return
+        checkedDefaultsLoaded = true
+        if (!app.practicePrefs.hasCheckedWordLemmas(PracticePrefsStore.CATEGORY_ADVERBS)) {
+            checkedLemmas = allLemmas.toSet()
+            app.practicePrefs.setCheckedWordLemmas(
+                PracticePrefsStore.CATEGORY_ADVERBS,
+                checkedLemmas
+            )
+        } else {
+            checkedLemmas = checkedLemmas.intersect(allLemmas.toSet())
+        }
+    }
+
+    fun toggleChecked(lemma: String, checked: Boolean) {
+        checkedLemmas = if (checked) checkedLemmas + lemma else checkedLemmas - lemma
+        app.practicePrefs.setCheckedWordLemmas(PracticePrefsStore.CATEGORY_ADVERBS, checkedLemmas)
+    }
+
+    fun setAllChecked(lemmas: List<String>, checked: Boolean) {
+        checkedLemmas = if (checked) lemmas.toSet() else emptySet()
+        app.practicePrefs.setCheckedWordLemmas(PracticePrefsStore.CATEGORY_ADVERBS, checkedLemmas)
+    }
+
+    fun updatePlayLimitText(value: String) {
+        val cleaned = value.filter { it.isDigit() }.take(2)
+        playLimitText = cleaned
+        cleaned.toIntOrNull()?.let {
+            app.practicePrefs.setWordPlayLimit(PracticePrefsStore.CATEGORY_ADVERBS, it)
+        }
+    }
+
+    fun updateRandomOrder(enabled: Boolean) {
+        randomOrder = enabled
+        app.practicePrefs.setWordPlayRandom(PracticePrefsStore.CATEGORY_ADVERBS, enabled)
+    }
+
+    private fun playLimit(): Int =
+        playLimitText.toIntOrNull()
+            ?.coerceIn(PracticePrefsStore.MIN_WORD_PLAY_LIMIT, PracticePrefsStore.MAX_WORD_PLAY_LIMIT)
+            ?: 0
+
+    fun playCount(adverbs: List<AdverbEntry>): Int {
+        val limit = playLimit()
+        if (limit <= 0) return 0
+        return adverbs
+            .filter { it.lemma in checkedLemmas }
+            .sumOf { app.lessonRepo.adverbSentencesFor(it.lemma).size.coerceAtMost(limit) }
+    }
+
+    fun playAll(adverbs: List<AdverbEntry>, quiz: Boolean) {
         if (player.hasQueue) { stop(); return }
-        if (sentences.isEmpty()) return
-        startQueue(sentences.shuffled(), quiz)
+        val items = buildCheckedSentenceQueue(adverbs, quiz)
+        if (items.isEmpty()) return
+        startQueue(items, quiz)
+    }
+
+    private fun buildCheckedSentenceQueue(
+        adverbs: List<AdverbEntry>,
+        quiz: Boolean
+    ): List<SentenceExample> {
+        val limit = playLimit()
+        if (limit <= 0) return emptyList()
+        val items = adverbs
+            .filter { it.lemma in checkedLemmas }
+            .flatMap { adv ->
+                val pool = app.lessonRepo.adverbSentencesFor(adv.lemma)
+                if (randomOrder) pool.shuffled().take(limit) else pool.take(limit)
+            }
+        return if (randomOrder || quiz) items.shuffled() else items
     }
 
     private fun startQueue(items: List<SentenceExample>, quiz: Boolean) {
@@ -248,6 +331,7 @@ fun AdverbsScreen(
             }
         }
     }
+    state.ensureCheckedDefaults(lesson.adverbs.map { it.lemma })
 
     // Left list flush to the top; right column = Now Voicing band, controls, examples.
     Row(modifier = Modifier.fillMaxSize()) {
@@ -255,6 +339,14 @@ fun AdverbsScreen(
             adverbs = lesson.adverbs,
             selected = state.selected,
             onSelect = { state.select(it) },
+            checkedLemmas = state.checkedLemmas,
+            onToggleAdverb = { lemma, checked -> state.toggleChecked(lemma, checked) },
+            onToggleAll = { checked ->
+                state.setAllChecked(lesson.adverbs.map { it.lemma }, checked)
+            },
+            randomOrder = state.randomOrder,
+            onRandomOrderChange = { state.updateRandomOrder(it) },
+            enabled = !state.playing,
             modifier = Modifier
                 .width(269.dp)
                 .fillMaxHeight()
@@ -266,7 +358,8 @@ fun AdverbsScreen(
                 onGenerateAll = generateAll,
                 generateAllBusy = generateAllBusy,
                 generateAllProgress = generateAllProgress,
-                state = state
+                state = state,
+                adverbs = lesson.adverbs
             )
             generateAllError?.let {
                 Text(
@@ -295,7 +388,8 @@ private fun AdvControlsBar(
     onGenerateAll: () -> Unit,
     generateAllBusy: Boolean,
     generateAllProgress: String?,
-    state: AdverbsScreenState
+    state: AdverbsScreenState,
+    adverbs: List<AdverbEntry>
 ) {
     Surface(color = LbColors.SurfaceRaised, modifier = Modifier.fillMaxWidth()) {
         Column {
@@ -305,7 +399,7 @@ private fun AdvControlsBar(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 if (state.selected != null) {
-                    AdvExamplesControls(state = state)
+                    AdvExamplesControls(state = state, adverbs = adverbs)
                 }
             }
             generateAllProgress?.let {
@@ -325,23 +419,29 @@ private fun AdvControlsBar(
 // and buttons wrap together as one band.
 @Composable
 private fun AdvExamplesControls(
-    state: AdverbsScreenState
+    state: AdverbsScreenState,
+    adverbs: List<AdverbEntry>
 ) {
+    val playCount = state.playCount(adverbs)
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (state.sentences.isNotEmpty()) {
+            if (playCount > 0) {
                 if (state.playing) {
                     LbButton.Stop("Stop", onClick = { state.stop() }, icon = Icons.Default.Stop)
                 } else {
-                    LbButton.Audio("Play", onClick = { state.playAll(quiz = false) }, count = state.sentences.size)
+                    LbButton.Audio("Play", onClick = { state.playAll(adverbs, quiz = false) }, count = playCount)
+                    WordPlayLimitControl(
+                        limitText = state.playLimitText,
+                        onLimitTextChange = { state.updatePlayLimitText(it) }
+                    )
                 }
             }
             if (state.sentences.isNotEmpty() && !state.playing) {
-                LbButton.Ghost("Sent. quiz", onClick = { state.playAll(quiz = true) }, icon = Icons.Default.PlayArrow)
+                LbButton.Ghost("Sent. quiz", onClick = { state.playAll(adverbs, quiz = true) }, icon = Icons.Default.PlayArrow)
             }
             if (state.busy) {
                 CircularProgressIndicator(
@@ -366,39 +466,68 @@ private fun AdverbList(
     adverbs: List<AdverbEntry>,
     selected: AdverbEntry?,
     onSelect: (AdverbEntry) -> Unit,
+    checkedLemmas: Set<String>,
+    onToggleAdverb: (String, Boolean) -> Unit,
+    onToggleAll: (Boolean) -> Unit,
+    randomOrder: Boolean,
+    onRandomOrderChange: (Boolean) -> Unit,
+    enabled: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val allLemmas = adverbs.map { it.lemma }
     LazyColumn(
         modifier = modifier,
         contentPadding = CompactLessonListDefaults.ContentPadding,
         verticalArrangement = Arrangement.spacedBy(CompactLessonListDefaults.ItemGap)
     ) {
+        item(key = "all-adverbs-master") {
+            WordListPlaybackHeader(
+                allChecked = allLemmas.isNotEmpty() && checkedLemmas.containsAll(allLemmas),
+                onAllCheckedChange = onToggleAll,
+                random = randomOrder,
+                onRandomChange = onRandomOrderChange,
+                enabled = enabled
+            )
+        }
         itemsIndexed(adverbs, key = { _, a -> "adv-${a.lemma}" }) { index, a ->
             val isSel = a == selected
-            CompactLessonListCard(
-                selected = isSel,
-                onClick = { onSelect(a) },
-                alternate = index % 2 == 1
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Top
+                SubtleCheckbox(
+                    checked = a.lemma in checkedLemmas,
+                    onCheckedChange = { onToggleAdverb(a.lemma, it) },
+                    enabled = enabled,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                CompactLessonListCard(
+                    selected = isSel,
+                    onClick = { onSelect(a) },
+                    modifier = Modifier.weight(1f),
+                    alternate = index % 2 == 1
                 ) {
-                    Text(
-                        a.lemma,
-                        color = if (isSel) Color.White else LbColors.Primary,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    DelayedEnglishTranslation(
-                        text = a.en,
-                        color = if (isSel) Color.White.copy(alpha = 0.85f)
-                        else LbColors.TextSecondary,
-                        fontSize = 12.sp,
-                        lineHeight = 14.sp,
-                        modifier = Modifier.weight(1f)
-                    )
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            a.lemma,
+                            color = if (isSel) Color.White else LbColors.Primary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        DelayedEnglishTranslation(
+                            text = a.en,
+                            color = if (isSel) Color.White.copy(alpha = 0.85f)
+                            else LbColors.TextSecondary,
+                            fontSize = 12.sp,
+                            lineHeight = 14.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
             }
         }

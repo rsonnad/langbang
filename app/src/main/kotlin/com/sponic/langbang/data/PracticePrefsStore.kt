@@ -26,8 +26,46 @@ class PracticePrefsStore(context: Context) {
         prefs.edit().putStringSet(KEY_CHECKED_VERBS, HashSet(lemmas)).apply()
     }
 
+    fun hasCheckedWordLemmas(category: String): Boolean =
+        prefs.contains(checkedWordKey(category))
+
+    fun checkedWordLemmas(category: String): Set<String> =
+        prefs.getStringSet(checkedWordKey(category), emptySet())?.toSet() ?: emptySet()
+
+    fun setCheckedWordLemmas(category: String, lemmas: Set<String>) {
+        prefs.edit().putStringSet(checkedWordKey(category), HashSet(lemmas)).apply()
+    }
+
+    fun wordPlayLimit(category: String): Int =
+        prefs.getInt(wordPlayLimitKey(category), DEFAULT_WORD_PLAY_LIMIT)
+            .coerceIn(MIN_WORD_PLAY_LIMIT, MAX_WORD_PLAY_LIMIT)
+
+    fun setWordPlayLimit(category: String, count: Int) {
+        prefs.edit()
+            .putInt(wordPlayLimitKey(category), count.coerceIn(MIN_WORD_PLAY_LIMIT, MAX_WORD_PLAY_LIMIT))
+            .apply()
+    }
+
+    fun wordPlayRandom(category: String): Boolean =
+        prefs.getBoolean(wordPlayRandomKey(category), false)
+
+    fun setWordPlayRandom(category: String, enabled: Boolean) {
+        prefs.edit().putBoolean(wordPlayRandomKey(category), enabled).apply()
+    }
+
     companion object {
         private const val KEY_SLOW_FIRST = "slow-first"
         private const val KEY_CHECKED_VERBS = "checked-verbs"
+        const val CATEGORY_VERBS = "verbs"
+        const val CATEGORY_ADJECTIVES = "adjectives"
+        const val CATEGORY_ADVERBS = "adverbs"
+        const val CATEGORY_NOUNS = "nouns"
+        const val DEFAULT_WORD_PLAY_LIMIT = 3
+        const val MIN_WORD_PLAY_LIMIT = 1
+        const val MAX_WORD_PLAY_LIMIT = 99
+
+        private fun checkedWordKey(category: String) = "checked-words-$category"
+        private fun wordPlayLimitKey(category: String) = "word-play-limit-$category"
+        private fun wordPlayRandomKey(category: String) = "word-play-random-$category"
     }
 }

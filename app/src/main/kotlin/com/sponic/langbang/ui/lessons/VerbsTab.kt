@@ -66,6 +66,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.Constraints
 import androidx.work.NetworkType
+import com.sponic.langbang.data.PracticePrefsStore
 import com.sponic.langbang.data.PronounFilterStore
 import com.sponic.langbang.data.VerbSentenceStore
 import com.sponic.langbang.data.model.ConjugationClass
@@ -97,6 +98,8 @@ import com.sponic.langbang.ui.common.GrammarVisuals
 import com.sponic.langbang.ui.common.LbButton
 import com.sponic.langbang.ui.common.SubtleCheckbox
 import com.sponic.langbang.ui.common.VariablePolishText
+import com.sponic.langbang.ui.common.WordListPlaybackHeader
+import com.sponic.langbang.ui.common.WordPlayLimitControl
 import com.sponic.langbang.ui.common.variableEndForPolishForm
 import com.sponic.langbang.ui.common.variableStartForPolishForm
 import kotlinx.coroutines.CoroutineScope
@@ -142,6 +145,14 @@ internal class VerbsTabState(
      */
     var checkedLemmas: Set<String> by mutableStateOf(app.practicePrefs.checkedVerbs())
         private set
+    var playLimitText: String by mutableStateOf(
+        app.practicePrefs.wordPlayLimit(PracticePrefsStore.CATEGORY_VERBS).toString()
+    )
+        private set
+    var randomOrder: Boolean by mutableStateOf(
+        app.practicePrefs.wordPlayRandom(PracticePrefsStore.CATEGORY_VERBS)
+    )
+        private set
     var generateProgress: String? by mutableStateOf(null)
         private set
     var includedPresentKeys: Set<String> by mutableStateOf(
@@ -186,13 +197,33 @@ internal class VerbsTabState(
         app.practicePrefs.setCheckedVerbs(checkedLemmas)
     }
 
+    fun updatePlayLimitText(value: String) {
+        val cleaned = value.filter { it.isDigit() }.take(2)
+        playLimitText = cleaned
+        cleaned.toIntOrNull()?.let {
+            app.practicePrefs.setWordPlayLimit(PracticePrefsStore.CATEGORY_VERBS, it)
+        }
+    }
+
+    fun updateRandomOrder(enabled: Boolean) {
+        randomOrder = enabled
+        app.practicePrefs.setWordPlayRandom(PracticePrefsStore.CATEGORY_VERBS, enabled)
+    }
+
+    private fun playLimit(): Int =
+        playLimitText.toIntOrNull()
+            ?.coerceIn(PracticePrefsStore.MIN_WORD_PLAY_LIMIT, PracticePrefsStore.MAX_WORD_PLAY_LIMIT)
+            ?: 0
+
     /**
-     * The verbs a multi-verb action should run over: the ticked verbs (shuffled, so the
-     * learner gets them in random order), or just the selected verb when nothing's ticked.
+     * The verbs a multi-verb action should run over: the ticked verbs, or just the
+     * selected verb when nothing's ticked. The random checkbox owns whether that target
+     * list is shuffled or left in lesson order.
      */
     private fun resolveTargets(allVerbs: List<VerbEntry>): List<VerbEntry> {
         val checked = allVerbs.filter { it.lemma in checkedLemmas }
-        return if (checked.isNotEmpty()) checked.shuffled() else listOfNotNull(selected)
+        val targets = if (checked.isNotEmpty()) checked else listOfNotNull(selected)
+        return if (randomOrder) targets.shuffled() else targets
     }
 
     fun toggleIncluded(
@@ -433,17 +464,25 @@ internal class VerbsTabState(
         val targets = resolveTargets(allVerbs)
         val v = targets.firstOrNull() ?: return
         scope.launch {
+            val limit = playLimit()
+            if (limit <= 0) return@launch
             // Build the queue up-front so rewind/restart can re-enter any item.
-            val built: List<SentenceExample> = if (checkedLemmas.isNotEmpty()) {
-                targets.flatMap { vv ->
-                    ensureSentencesFor(vv).let { all ->
-                        if (quiz) filterByTense(vv, all) else all
-                    }
+            val built: List<SentenceExample> = targets.flatMap { vv ->
+                val all = if (checkedLemmas.isNotEmpty()) ensureSentencesFor(vv)
+                    else if (vv.lemma == v.lemma) sentences
+                    else ensureSentencesFor(vv)
+                val filtered = if (quiz) filterByTense(vv, all) else all
+                if (randomOrder || quiz) {
+                    filtered.shuffled().take(limit)
+                } else {
+                    filtered.take(limit)
                 }
-            } else {
-                if (quiz) filterByTense(v, sentences) else sentences
             }
-            val items = if (quiz) built.shuffled().sortedBy { tokenCountOf(it.pl) } else built
+            val items = when {
+                randomOrder -> built.shuffled()
+                quiz -> built.sortedBy { tokenCountOf(it.pl) }
+                else -> built
+            }
             if (items.isEmpty()) return@launch
             startSentenceQueue(items, quiz)
         }
@@ -522,9 +561,30 @@ internal class VerbsTabState(
         startConjugationQueue(cues, mode)
     }
 
+    fun conjugationPlayCount(allVerbs: List<VerbEntry>): Int {
+        val limit = playLimit()
+        if (limit <= 0) return 0
+        return resolveTargets(allVerbs).sumOf { verb ->
+            conjugationCueCount(verb).coerceAtMost(limit)
+        }
+    }
+
+    private fun conjugationCueCount(verb: VerbEntry): Int {
+        val present = verb.forms.count { (key, form) ->
+            key in includedPresentKeys && form.isNotBlank()
+        }
+        val past = verb.past_forms.orEmpty().count { (key, form) ->
+            key in includedPastKeys && form.isNotBlank()
+        }
+        return present + past
+    }
+
     private fun buildConjugationQueue(targets: List<VerbEntry>): List<ConjugationCue> {
+        val limit = playLimit()
+        if (limit <= 0) return emptyList()
         val cues = mutableListOf<ConjugationCue>()
         fun addForms(
+            out: MutableList<ConjugationCue>,
             vv: VerbEntry,
             formMap: Map<String, String>,
             included: Set<String>,
@@ -550,7 +610,7 @@ internal class VerbsTabState(
                         variableKind = "conjugation"
                     )
                 )
-                cues += ConjugationCue(
+                out += ConjugationCue(
                     lemma = vv.lemma,
                     combined = combined,
                     englishGloss = englishGloss,
@@ -559,10 +619,12 @@ internal class VerbsTabState(
             }
         }
         targets.forEach { vv ->
-            addForms(vv, vv.forms, includedPresentKeys, isPast = false)
-            vv.past_forms?.let { addForms(vv, it, includedPastKeys, isPast = true) }
+            val perVerb = mutableListOf<ConjugationCue>()
+            addForms(perVerb, vv, vv.forms, includedPresentKeys, isPast = false)
+            vv.past_forms?.let { addForms(perVerb, vv, it, includedPastKeys, isPast = true) }
+            cues += if (randomOrder) perVerb.shuffled().take(limit) else perVerb.take(limit)
         }
-        return cues
+        return if (randomOrder) cues.shuffled() else cues
     }
 
     private fun startConjugationQueue(cues: List<ConjugationCue>, mode: String) {
@@ -696,6 +758,9 @@ internal fun VerbsTab(
                 allLemmas = lesson.verbs.map { it.lemma },
                 onToggleVerb = { lemma, c -> state.toggleVerbChecked(lemma, c) },
                 onToggleVerbs = { lemmas, c -> state.setVerbsChecked(lemmas, c) },
+                randomOrder = state.randomOrder,
+                onRandomOrderChange = { state.updateRandomOrder(it) },
+                enabled = !state.playing,
                 modifier = Modifier
                     .width(307.dp)
                     .fillMaxHeight()
@@ -779,10 +844,17 @@ private fun TopBar(
                     Spacer(Modifier.width(8.dp))
                     VerbPlayButton(
                         playing = state.playing,
-                        count = state.checkedLemmas.size.coerceAtLeast(1),
+                        count = state.conjugationPlayCount(allVerbs),
                         onPlay = { state.playAllConjugations(allVerbs) },
                         onStop = { state.stop() }
                     )
+                    if (!state.playing) {
+                        Spacer(Modifier.width(8.dp))
+                        WordPlayLimitControl(
+                            limitText = state.playLimitText,
+                            onLimitTextChange = { state.updatePlayLimitText(it) }
+                        )
+                    }
                 }
             }
             state.generateProgress?.let {
@@ -888,6 +960,9 @@ private fun VerbList(
     allLemmas: List<String>,
     onToggleVerb: (String, Boolean) -> Unit,
     onToggleVerbs: (List<String>, Boolean) -> Unit,
+    randomOrder: Boolean,
+    onRandomOrderChange: (Boolean) -> Unit,
+    enabled: Boolean,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -899,23 +974,13 @@ private fun VerbList(
         // unticks every verb. Ticked verbs are what Play + the quizzes run over.
         item(key = "all-verbs-master") {
             val allChecked = allLemmas.isNotEmpty() && checkedLemmas.containsAll(allLemmas)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp)
-            ) {
-                SubtleCheckbox(
-                    checked = allChecked,
-                    onCheckedChange = { onToggleVerbs(allLemmas, it) },
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    "All verbs",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = LbColors.TextSecondary
-                )
-            }
+            WordListPlaybackHeader(
+                allChecked = allChecked,
+                onAllCheckedChange = { onToggleVerbs(allLemmas, it) },
+                random = randomOrder,
+                onRandomChange = onRandomOrderChange,
+                enabled = enabled
+            )
         }
         grouped.forEach { (cls, verbs) ->
             item(key = "h-${cls.name}") {
@@ -933,6 +998,7 @@ private fun VerbList(
                     SubtleCheckbox(
                         checked = classChecked,
                         onCheckedChange = { onToggleVerbs(classLemmas, it) },
+                        enabled = enabled,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(Modifier.width(4.dp))
@@ -953,6 +1019,7 @@ private fun VerbList(
                     SubtleCheckbox(
                         checked = v.lemma in checkedLemmas,
                         onCheckedChange = { onToggleVerb(v.lemma, it) },
+                        enabled = enabled,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(Modifier.width(6.dp))

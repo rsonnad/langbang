@@ -48,6 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
+import com.sponic.langbang.data.PracticePrefsStore
 import com.sponic.langbang.domain.PrefetchProgress
 import com.sponic.langbang.data.model.NounEntry
 import com.sponic.langbang.data.model.SentenceExample
@@ -68,7 +69,10 @@ import com.sponic.langbang.ui.common.FilterGroup
 import com.sponic.langbang.ui.common.LbButton
 import com.sponic.langbang.ui.common.LbChip
 import com.sponic.langbang.ui.common.SelectionNavButtons
+import com.sponic.langbang.ui.common.SubtleCheckbox
 import com.sponic.langbang.ui.common.VariablePolishText
+import com.sponic.langbang.ui.common.WordListPlaybackHeader
+import com.sponic.langbang.ui.common.WordPlayLimitControl
 import com.sponic.langbang.ui.common.variableEndForPolishForm
 import com.sponic.langbang.ui.common.variableStartForPolishForm
 import kotlinx.coroutines.CoroutineScope
@@ -131,6 +135,19 @@ internal class NounsScreenState(
         private set
     var selectedNumberKeys: Set<String> by mutableStateOf(NUMBER_KEYS.toSet())
         private set
+    var checkedLemmas: Set<String> by mutableStateOf(
+        app.practicePrefs.checkedWordLemmas(PracticePrefsStore.CATEGORY_NOUNS)
+    )
+        private set
+    var playLimitText: String by mutableStateOf(
+        app.practicePrefs.wordPlayLimit(PracticePrefsStore.CATEGORY_NOUNS).toString()
+    )
+        private set
+    var randomOrder: Boolean by mutableStateOf(
+        app.practicePrefs.wordPlayRandom(PracticePrefsStore.CATEGORY_NOUNS)
+    )
+        private set
+    private var checkedDefaultsLoaded = false
     val canPlayForms: Boolean
         get() = selectedCaseKeys.isNotEmpty() && selectedNumberKeys.isNotEmpty()
 
@@ -166,10 +183,76 @@ internal class NounsScreenState(
         player.stop()
     }
 
-    fun playAll(quiz: Boolean) {
+    fun ensureCheckedDefaults(allLemmas: List<String>) {
+        if (checkedDefaultsLoaded) return
+        checkedDefaultsLoaded = true
+        if (!app.practicePrefs.hasCheckedWordLemmas(PracticePrefsStore.CATEGORY_NOUNS)) {
+            checkedLemmas = allLemmas.toSet()
+            app.practicePrefs.setCheckedWordLemmas(
+                PracticePrefsStore.CATEGORY_NOUNS,
+                checkedLemmas
+            )
+        } else {
+            checkedLemmas = checkedLemmas.intersect(allLemmas.toSet())
+        }
+    }
+
+    fun toggleChecked(lemma: String, checked: Boolean) {
+        checkedLemmas = if (checked) checkedLemmas + lemma else checkedLemmas - lemma
+        app.practicePrefs.setCheckedWordLemmas(PracticePrefsStore.CATEGORY_NOUNS, checkedLemmas)
+    }
+
+    fun setAllChecked(lemmas: List<String>, checked: Boolean) {
+        checkedLemmas = if (checked) lemmas.toSet() else emptySet()
+        app.practicePrefs.setCheckedWordLemmas(PracticePrefsStore.CATEGORY_NOUNS, checkedLemmas)
+    }
+
+    fun updatePlayLimitText(value: String) {
+        val cleaned = value.filter { it.isDigit() }.take(2)
+        playLimitText = cleaned
+        cleaned.toIntOrNull()?.let {
+            app.practicePrefs.setWordPlayLimit(PracticePrefsStore.CATEGORY_NOUNS, it)
+        }
+    }
+
+    fun updateRandomOrder(enabled: Boolean) {
+        randomOrder = enabled
+        app.practicePrefs.setWordPlayRandom(PracticePrefsStore.CATEGORY_NOUNS, enabled)
+    }
+
+    private fun playLimit(): Int =
+        playLimitText.toIntOrNull()
+            ?.coerceIn(PracticePrefsStore.MIN_WORD_PLAY_LIMIT, PracticePrefsStore.MAX_WORD_PLAY_LIMIT)
+            ?: 0
+
+    fun playCount(nouns: List<NounEntry>): Int {
+        val limit = playLimit()
+        if (limit <= 0) return 0
+        return nouns
+            .filter { it.lemma in checkedLemmas }
+            .sumOf { app.lessonRepo.nounSentencesFor(it.lemma).size.coerceAtMost(limit) }
+    }
+
+    fun playAll(nouns: List<NounEntry>, quiz: Boolean) {
         if (player.hasQueue) { stop(); return }
-        if (sentences.isEmpty()) return
-        startQueue(sentences.shuffled(), quiz)
+        val items = buildCheckedSentenceQueue(nouns, quiz)
+        if (items.isEmpty()) return
+        startQueue(items, quiz)
+    }
+
+    private fun buildCheckedSentenceQueue(
+        nouns: List<NounEntry>,
+        quiz: Boolean
+    ): List<SentenceExample> {
+        val limit = playLimit()
+        if (limit <= 0) return emptyList()
+        val items = nouns
+            .filter { it.lemma in checkedLemmas }
+            .flatMap { noun ->
+                val pool = app.lessonRepo.nounSentencesFor(noun.lemma)
+                if (randomOrder) pool.shuffled().take(limit) else pool.take(limit)
+            }
+        return if (randomOrder || quiz) items.shuffled() else items
     }
 
     /**
@@ -324,6 +407,7 @@ fun NounsScreen(
 ) {
     val lesson = remember { app.lessonRepo.lesson6() }
     val state = rememberNounsScreenState(app)
+    state.ensureCheckedDefaults(lesson.nouns.map { it.lemma })
 
     if (state.selected == null ||
         lesson.nouns.none { it.lemma == state.selected?.lemma }
@@ -338,6 +422,14 @@ fun NounsScreen(
             nouns = lesson.nouns,
             selected = state.selected,
             onSelect = { state.select(it) },
+            checkedLemmas = state.checkedLemmas,
+            onToggleNoun = { lemma, checked -> state.toggleChecked(lemma, checked) },
+            onToggleAll = { checked ->
+                state.setAllChecked(lesson.nouns.map { it.lemma }, checked)
+            },
+            randomOrder = state.randomOrder,
+            onRandomOrderChange = { state.updateRandomOrder(it) },
+            enabled = !state.playing,
             modifier = Modifier
                 .width(269.dp)
                 .fillMaxHeight()
@@ -346,7 +438,8 @@ fun NounsScreen(
         Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
             nowVoicing()
             NounControlsBar(
-                state = state
+                state = state,
+                nouns = lesson.nouns
             )
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 state.selected?.let {
@@ -364,14 +457,15 @@ fun NounsScreen(
 
 @Composable
 private fun NounControlsBar(
-    state: NounsScreenState
+    state: NounsScreenState,
+    nouns: List<NounEntry>
 ) {
     Surface(color = LbColors.SurfaceRaised, modifier = Modifier.fillMaxWidth()) {
         Column {
             // ExamplesControls supplies its own compact layout, so just pad the wrapper.
             Box(Modifier.padding(horizontal = 12.dp, vertical = 3.dp)) {
                 if (state.selected != null) {
-                    ExamplesControls(state = state)
+                    ExamplesControls(state = state, nouns = nouns)
                 }
             }
         }
@@ -380,9 +474,10 @@ private fun NounControlsBar(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ExamplesControls(state: NounsScreenState) {
+private fun ExamplesControls(state: NounsScreenState, nouns: List<NounEntry>) {
     var filtersExpanded by remember { mutableStateOf(false) }
-    val count = state.selectedCaseKeys.size * state.selectedNumberKeys.size
+    val formCount = state.selectedCaseKeys.size * state.selectedNumberKeys.size
+    val playCount = state.playCount(nouns)
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -406,7 +501,8 @@ private fun ExamplesControls(state: NounsScreenState) {
                     LbButton.Ghost(
                         label = "Sent. quiz",
                         icon = Icons.Default.PlayArrow,
-                        onClick = { state.playAll(quiz = true) }
+                        enabled = playCount > 0,
+                        onClick = { state.playAll(nouns, quiz = true) }
                     )
                 }
             }
@@ -421,11 +517,21 @@ private fun ExamplesControls(state: NounsScreenState) {
             if (state.playing) {
                 LbButton.Stop("Stop", onClick = { state.stop() }, icon = Icons.Default.Stop)
             } else {
-                LbButton.Audio(
-                    label = "Play",
-                    count = count,
+                LbButton.Ghost(
+                    label = "Forms",
+                    count = formCount,
                     enabled = state.canPlayForms,
                     onClick = { state.playForms() }
+                )
+                LbButton.Audio(
+                    label = "Play",
+                    count = playCount,
+                    enabled = playCount > 0,
+                    onClick = { state.playAll(nouns, quiz = false) }
+                )
+                WordPlayLimitControl(
+                    limitText = state.playLimitText,
+                    onLimitTextChange = { state.updatePlayLimitText(it) }
                 )
             }
         }
@@ -494,49 +600,78 @@ private fun NounList(
     nouns: List<NounEntry>,
     selected: NounEntry?,
     onSelect: (NounEntry) -> Unit,
+    checkedLemmas: Set<String>,
+    onToggleNoun: (String, Boolean) -> Unit,
+    onToggleAll: (Boolean) -> Unit,
+    randomOrder: Boolean,
+    onRandomOrderChange: (Boolean) -> Unit,
+    enabled: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val allLemmas = nouns.map { it.lemma }
     LazyColumn(
         modifier = modifier,
         contentPadding = CompactLessonListDefaults.ContentPadding,
         verticalArrangement = Arrangement.spacedBy(CompactLessonListDefaults.ItemGap)
     ) {
+        item(key = "all-nouns-master") {
+            WordListPlaybackHeader(
+                allChecked = allLemmas.isNotEmpty() && checkedLemmas.containsAll(allLemmas),
+                onAllCheckedChange = onToggleAll,
+                random = randomOrder,
+                onRandomChange = onRandomOrderChange,
+                enabled = enabled
+            )
+        }
         itemsIndexed(nouns, key = { _, n -> "n-${n.lemma}" }) { index, n ->
             val isSel = n == selected
-            CompactLessonListCard(
-                selected = isSel,
-                onClick = { onSelect(n) },
-                alternate = index % 2 == 1
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Top
+                SubtleCheckbox(
+                    checked = n.lemma in checkedLemmas,
+                    onCheckedChange = { onToggleNoun(n.lemma, it) },
+                    enabled = enabled,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                CompactLessonListCard(
+                    selected = isSel,
+                    onClick = { onSelect(n) },
+                    modifier = Modifier.weight(1f),
+                    alternate = index % 2 == 1
                 ) {
-                    Text(
-                        n.lemma,
-                        color = if (isSel) Color.White else LbColors.Primary,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
-                    // Gender tag (m/f/n) so the learner sees it at a glance.
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        n.gender.lowercase(),
-                        color = if (isSel) Color.White.copy(alpha = 0.7f) else LbColors.Warning,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(top = 3.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    DelayedEnglishTranslation(
-                        text = n.en,
-                        color = if (isSel) Color.White.copy(alpha = 0.85f)
-                        else LbColors.TextSecondary,
-                        fontSize = 12.sp,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(top = 2.dp)
-                    )
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            n.lemma,
+                            color = if (isSel) Color.White else LbColors.Primary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        // Gender tag (m/f/n) so the learner sees it at a glance.
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            n.gender.lowercase(),
+                            color = if (isSel) Color.White.copy(alpha = 0.7f) else LbColors.Warning,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(top = 3.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        DelayedEnglishTranslation(
+                            text = n.en,
+                            color = if (isSel) Color.White.copy(alpha = 0.85f)
+                            else LbColors.TextSecondary,
+                            fontSize = 12.sp,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(top = 2.dp)
+                        )
+                    }
                 }
             }
         }
