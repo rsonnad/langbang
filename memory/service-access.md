@@ -310,10 +310,10 @@ GEMINI_API_KEY=$(bw get item c4b16931-335b-457a-9910-b416006d3b8c --session "$BW
   | tr -d '\000-\037' | jq -r '.login.password')
 ```
 
-Used by `langbang` for English→Polish verb translation + conjugation via REST
-`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$GEMINI_API_KEY`
-with `generationConfig.responseMimeType=application/json` to force JSON-only output.
-Wired into `local.properties` as `GEMINI_API_KEY=…` → BuildConfig field.
+Used by `langbang` for English→Polish verb translation + conjugation through
+the LangBangML Worker-side Gemini proxy. The default model is
+`gemini-3.5-flash`, with `generationConfig.responseMimeType=application/json`
+set server-side to force JSON-only output.
 
 ## Other provisioned services relevant to langbang
 
