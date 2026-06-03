@@ -70,49 +70,49 @@ function englishPronunciationLesson() {
   return basePayload(
     "lesson-01",
     "Wymowa angielska",
-    "English sounds that Polish speakers need to hear and practice first: th, w/v, English r, h, ng, short vowels, schwa, and final consonant clusters.",
+    "Angielskie dźwięki, które polscy użytkownicy powinni najpierw usłyszeć i przećwiczyć: th, w/v, angielskie r, h, ng, krótkie samogłoski, schwa i końcowe zbitki spółgłosek.",
     {
       phonemes: [
-        phoneme("th", "voiceless th", "/θ/", "Put the tongue lightly between the teeth; it is not Polish f, t, or s.", "Soft airflow with no voice. Keep it short and avoid adding a vowel after it.", [
+        phoneme("th", "bezdźwięczne th", "/θ/", "Połóż czubek języka lekko między zębami; to nie jest polskie f, t ani s.", "Miękki przepływ powietrza bez głosu. Wypowiedz krótko i nie dodawaj samogłoski po dźwięku.", [
           ["think", "myśleć"], ["thin", "cienki"], ["thanks", "dzięki"], ["three", "trzy"], ["bath", "kąpiel"], ["with", "z"],
         ]),
-        phoneme("th", "voiced th", "/ð/", "Same tongue position as /θ/, but with voice; it is not d or z.", "Use vibration in the throat while the tongue stays between the teeth.", [
+        phoneme("th", "dźwięczne th", "/ð/", "Ten sam układ języka co przy /θ/, ale z głosem; to nie jest d ani z.", "Włącz wibrację w gardle, a język zostaw lekko między zębami.", [
           ["this", "to"], ["that", "tamto"], ["they", "oni / one"], ["the", "the"], ["mother", "matka"], ["weather", "pogoda"],
         ]),
-        phoneme("r", "English r", "/ɹ/", "English r is not rolled. The tongue pulls back and does not tap the roof of the mouth.", "Keep the tongue tense and curled/back, with no Polish trill.", [
+        phoneme("r", "angielskie r", "/ɹ/", "Angielskie r nie jest rolowane. Język cofa się i nie uderza o podniebienie.", "Trzymaj język napięty i lekko cofnięty; bez polskiego drżenia r.", [
           ["red", "czerwony"], ["read", "czytać"], ["right", "prawo / dobrze"], ["around", "dookoła"], ["sorry", "przepraszam"], ["car", "samochód"],
         ]),
-        phoneme("w", "w", "/w/", "Round the lips before the vowel. Polish w is closer to English v, so this needs a clear lip glide.", "Start with rounded lips like u, then glide into the vowel.", [
+        phoneme("w", "angielskie w", "/w/", "Zaokrąglij usta przed samogłoską. Polskie w brzmi bliżej angielskiego v, więc tu potrzebny jest wyraźny ruch ust.", "Zacznij od ust ułożonych jak do u, potem płynnie przejdź w samogłoskę.", [
           ["water", "woda"], ["want", "chcieć"], ["window", "okno"], ["we", "my"], ["work", "praca"], ["woman", "kobieta"],
         ]),
-        phoneme("v", "v", "/v/", "English v is like Polish w: teeth touch the lower lip and the voice is on.", "Do not round the lips like English w.", [
+        phoneme("v", "angielskie v", "/v/", "Angielskie v jest jak polskie w: zęby dotykają dolnej wargi i głos jest włączony.", "Nie zaokrąglaj ust tak jak przy angielskim w.", [
           ["very", "bardzo"], ["voice", "głos"], ["visit", "odwiedzać"], ["love", "miłość"], ["have", "mieć"], ["move", "ruszać się"],
         ]),
-        phoneme("h", "h", "/h/", "English h is a light breath sound. It should not become Polish ch /x/.", "Use open airflow from the throat with no scraping sound.", [
+        phoneme("h", "angielskie h", "/h/", "Angielskie h to lekki oddech. Nie powinno zamieniać się w polskie ch /x/.", "Wypuść powietrze swobodnie z gardła, bez szorstkiego tarcia.", [
           ["hello", "cześć"], ["happy", "szczęśliwy"], ["house", "dom"], ["hungry", "głodny"], ["help", "pomoc"], ["hot", "gorący"],
         ]),
-        phoneme("ng", "ng", "/ŋ/", "The final sound in sing is made at the back of the mouth. Do not add a hard g after it.", "Let the sound end in the nose, like the final sound of English sing.", [
+        phoneme("ng", "końcowe ng", "/ŋ/", "Końcowy dźwięk w sing powstaje z tyłu jamy ustnej. Nie dodawaj po nim twardego g.", "Pozwól, żeby dźwięk zakończył się nosowo, jak na końcu angielskiego sing.", [
           ["sing", "śpiewać"], ["long", "długi"], ["thing", "rzecz"], ["morning", "rano"], ["thinking", "myślenie"], ["walking", "chodzenie"],
         ]),
-        phoneme("i", "short i", "/ɪ/", "Short i is relaxed, like a small sound between Polish y and i.", "Do not make it a long Polish i /i/.", [
+        phoneme("i", "krótkie i", "/ɪ/", "Krótkie i jest rozluźnione, między polskim y i i.", "Nie przeciągaj go jak polskiego i /i/.", [
           ["sit", "siedzieć"], ["big", "duży"], ["this", "to"], ["milk", "mleko"], ["city", "miasto"], ["listen", "słuchać"],
         ]),
-        phoneme("ee", "long ee", "/iː/", "Long ee is tense and held longer than short i.", "Smile slightly and keep the vowel steady.", [
+        phoneme("ee", "długie ee", "/iː/", "Długie ee jest napięte i trwa dłużej niż krótkie i.", "Uśmiechnij się lekko i utrzymaj samogłoskę równo.", [
           ["see", "widzieć"], ["read", "czytać"], ["eat", "jeść"], ["street", "ulica"], ["green", "zielony"], ["sleep", "spać"],
         ]),
-        phoneme("a", "trap vowel", "/æ/", "This vowel is wider than Polish e and not as open as Polish a.", "Open the mouth, keep the tongue forward, and do not turn it into e.", [
+        phoneme("a", "samogłoska trap", "/æ/", "Ta samogłoska jest szersza niż polskie e, ale mniej otwarta niż polskie a.", "Otwórz usta, trzymaj język z przodu i nie zamieniaj jej w e.", [
           ["cat", "kot"], ["man", "mężczyzna"], ["happy", "szczęśliwy"], ["family", "rodzina"], ["bad", "zły"], ["that", "tamto"],
         ]),
-        phoneme("u", "strut vowel", "/ʌ/", "The vowel in cup is central and short. It is not Polish a or o.", "Keep it relaxed and short.", [
+        phoneme("u", "samogłoska strut", "/ʌ/", "Samogłoska w cup jest centralna i krótka. To nie jest polskie a ani o.", "Wypowiedz ją luźno i krótko.", [
           ["cup", "kubek"], ["love", "miłość"], ["must", "musieć"], ["mother", "matka"], ["fun", "zabawa"], ["under", "pod"],
         ]),
-        phoneme("schwa", "schwa", "/ə/", "The most common weak vowel in English. It is short, neutral, and unstressed.", "Do not pronounce every written vowel fully.", [
+        phoneme("schwa", "schwa", "/ə/", "Najczęstsza słaba samogłoska w angielskim. Jest krótka, neutralna i nieakcentowana.", "Nie wymawiaj każdej zapisanej samogłoski pełnym dźwiękiem.", [
           ["about", "o / około"], ["today", "dzisiaj"], ["open", "otwarty"], ["teacher", "nauczyciel"], ["person", "osoba"], ["again", "znowu"],
         ]),
-        phoneme("er", "stressed er", "/ɜːr/", "This is the r-colored vowel in word and work.", "Hold the central vowel and keep the English r shape.", [
+        phoneme("er", "akcentowane er", "/ɜːr/", "To samogłoska z odcieniem r w word i work.", "Przytrzymaj centralną samogłoskę i zachowaj układ angielskiego r.", [
           ["word", "słowo"], ["work", "pracować"], ["girl", "dziewczyna"], ["first", "pierwszy"], ["learn", "uczyć się"], ["turn", "skręcić"],
         ]),
-        phoneme("finals", "final consonants", "/-t -d -k -p -s/", "English often ends words sharply. Do not add an extra vowel after final consonants.", "Finish the consonant cleanly, especially in clusters.", [
+        phoneme("finals", "końcowe spółgłoski", "/-t -d -k -p -s/", "Angielski często kończy słowa ostro. Nie dodawaj dodatkowej samogłoski po końcowej spółgłosce.", "Zakończ spółgłoskę czysto, szczególnie w zbitkach.", [
           ["asked", "zapytał"], ["helped", "pomógł"], ["walked", "szedł"], ["books", "książki"], ["next", "następny"], ["world", "świat"],
         ]),
       ],
@@ -132,7 +132,7 @@ function phoneme(letter, name, ipa, approximation, description, examples) {
 }
 
 function reverseVerbLesson(lesson) {
-  return basePayload("lesson-02", "Lekcja 2 — czasowniki angielskie", "The same core verb set, reversed for Polish speakers studying English. The English target appears first; Polish stays as the prompt/gloss.", {
+  return basePayload("lesson-02", "Lekcja 2 — czasowniki angielskie", "Ten sam podstawowy zestaw czasowników, odwrócony dla polskich użytkowników uczących się angielskiego. Angielski cel jest pierwszy, a polski zostaje jako podpowiedź.", {
     verbs: lesson.verbs.map((verb) => {
       const base = cleanEnglishVerbBase(verb.en);
       return {
@@ -165,7 +165,7 @@ function pronoun(lemma, en, nom, acc, dat) {
 }
 
 function reverseAdjectiveLesson(lesson) {
-  return basePayload("lesson-03", "Lekcja 3 — przymiotniki angielskie", "The same adjective list, reversed so Polish speakers practice the English adjectives first.", {
+  return basePayload("lesson-03", "Lekcja 3 — przymiotniki angielskie", "Ta sama lista przymiotników, odwrócona tak, żeby polscy użytkownicy ćwiczyli najpierw angielskie formy.", {
     adjectives: lesson.adjectives.map((adj) => {
       const target = displayEnglish(adj.en);
       const forms = { m: target, f: target, n: target, mp: target, other: target };
@@ -175,7 +175,7 @@ function reverseAdjectiveLesson(lesson) {
 }
 
 function reverseAdverbLesson(lesson) {
-  return basePayload("lesson-04", "Lekcja 4 — przysłówki angielskie", "The same common adverbs, reversed so the English target is practiced from Polish prompts.", {
+  return basePayload("lesson-04", "Lekcja 4 — przysłówki angielskie", "Te same częste przysłówki, odwrócone tak, żeby angielski cel był ćwiczony z polskiej podpowiedzi.", {
     adverbs: lesson.adverbs.map((adv) => ({
       lemma: displayEnglish(adv.en),
       en: adv.lemma,
@@ -184,11 +184,11 @@ function reverseAdverbLesson(lesson) {
 }
 
 function reversePhrasesLesson(lesson) {
-  return basePayload("lesson-05", "Lekcja 5 — zwroty angielskie", "The same real-world phrase groups, reversed for Polish speakers: Polish prompt, English target.", {
+  return basePayload("lesson-05", "Lekcja 5 — zwroty angielskie", "Te same praktyczne grupy zwrotów, odwrócone dla polskich użytkowników: polska podpowiedź, angielski cel.", {
     groups: lesson.groups.map((group) => ({
       id: group.id,
-      title: group.title,
-      subtitle: group.subtitle || "",
+      title: polishPhraseGroupTitle(group.id, group.title),
+      subtitle: polishPhraseGroupSubtitle(group.id, group.subtitle || ""),
       sentences: group.sentences.map((sentence) => ({
         pl: sentence.en,
         en: sentence.pl,
@@ -212,7 +212,7 @@ function reversePhrasesLesson(lesson) {
 }
 
 function reverseNounLesson(lesson) {
-  return basePayload("lesson-06", "Lekcja 6 — rzeczowniki angielskie", "The same noun set, reversed so Polish speakers practice the English nouns first.", {
+  return basePayload("lesson-06", "Lekcja 6 — rzeczowniki angielskie", "Ten sam zestaw rzeczowników, odwrócony tak, żeby polscy użytkownicy ćwiczyli najpierw angielskie rzeczowniki.", {
     nouns: lesson.nouns.map((noun) => {
       const singular = displayEnglish(noun.en);
       const plural = pluralizeEnglish(firstVariant(noun.en));
@@ -226,6 +226,24 @@ function reverseNounLesson(lesson) {
       };
     }),
   });
+}
+
+function polishPhraseGroupTitle(id, fallback) {
+  const titles = {
+    "intro-rahul": "Przedstawienie się — Rahul",
+    "language-icebreakers": "Pierwsze rozmowy językowe",
+    "welcome-to-poland": "Witamy w Polsce",
+  };
+  return titles[id] || fallback;
+}
+
+function polishPhraseGroupSubtitle(id, fallback) {
+  const subtitles = {
+    "intro-rahul": "Poznajesz nową osobę i wyjaśniasz, czym się zajmujesz.",
+    "language-icebreakers": "Naturalna rozmowa, kiedy dopiero uczysz się angielskiego: przeproś, poproś o pomoc i zmień język.",
+    "welcome-to-poland": "Powitanie osoby przyjeżdżającej do Polski, z odrobiną optymizmu na koniec świata.",
+  };
+  return subtitles[id] || fallback;
 }
 
 function displayEnglish(value) {

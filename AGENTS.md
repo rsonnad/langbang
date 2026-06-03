@@ -51,6 +51,24 @@ Samsung tablet when `100.103.110.7:5555` is connected.
 Admin tokens and new Cloudflare operational credentials belong in Bitwarden
 collection `devops-langbang`.
 
+## Bitwarden Recipe
+
+In non-interactive Codex shells, `bw unlock` and scripts that wrap
+`~/bin/bw-unlock` can crash at the master-password prompt with
+`ERR_USE_AFTER_CLOSE`. Seed `BW_SESSION` from the macOS keychain first, then run
+the helper script. Keep output restricted to IDs, counts, and status; never
+print secret values.
+
+```bash
+export BW_PASSWORD="$(security find-generic-password -a "rahulioson@gmail.com" -s "bitwarden-cli" -w)"
+export BW_SESSION="$(/opt/homebrew/bin/bw unlock --passwordenv BW_PASSWORD --raw)"
+unset BW_PASSWORD
+
+# Example: verify access without printing the secret.
+bw get item "Cloudflare R2 - LangBang S3 Admin" --session "$BW_SESSION" \
+  | jq -r '.id, .name'
+```
+
 ## Cleanup Boundary
 
 Do not delete Cloudflare resources unless the user explicitly asks for cleanup.

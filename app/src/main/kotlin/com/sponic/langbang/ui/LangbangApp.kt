@@ -57,6 +57,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
@@ -322,28 +323,34 @@ fun LangbangApp(app: LangbangApplication) {
             val noNowVoicingSlot: @Composable () -> Unit = {}
             Row(modifier = Modifier.fillMaxSize()) {
                 Box(modifier = Modifier.weight(1.5f).fillMaxHeight()) {
-                    when (section) {
-                        Section.Pronunciation -> PronunciationScreen(app = app)
-                        Section.Verbs -> LessonScreen(
-                            app = app, prefetch = progress, nowVoicing = noNowVoicingSlot
-                        )
-                        Section.Adjectives -> AdjectivesScreen(
-                            app = app, prefetch = progress, nowVoicing = noNowVoicingSlot
-                        )
-                        Section.Adverbs -> AdverbsScreen(
-                            app = app, prefetch = progress, nowVoicing = noNowVoicingSlot
-                        )
-                        Section.Nouns -> NounsScreen(
-                            app = app, prefetch = progress, nowVoicing = noNowVoicingSlot
-                        )
-                        Section.Phrases -> PhrasesScreen(app = app, nowVoicing = noNowVoicingSlot)
-                        Section.Numbers -> NumbersScreen(app = app)
-                        Section.Quizzes -> QuizzesScreen(
-                            app = app,
-                            nowVoicing = noNowVoicingSlot,
-                            resetToken = quizResetToken
-                        )
-                        Section.Settings -> SettingsScreen(app = app)
+                    key(
+                        cloudState.selectedInstanceId,
+                        cloudState.bootstrap?.content?.versionId,
+                        cloudState.bootstrap?.syncedAt
+                    ) {
+                        when (section) {
+                            Section.Pronunciation -> PronunciationScreen(app = app)
+                            Section.Verbs -> LessonScreen(
+                                app = app, prefetch = progress, nowVoicing = noNowVoicingSlot
+                            )
+                            Section.Adjectives -> AdjectivesScreen(
+                                app = app, prefetch = progress, nowVoicing = noNowVoicingSlot
+                            )
+                            Section.Adverbs -> AdverbsScreen(
+                                app = app, prefetch = progress, nowVoicing = noNowVoicingSlot
+                            )
+                            Section.Nouns -> NounsScreen(
+                                app = app, prefetch = progress, nowVoicing = noNowVoicingSlot
+                            )
+                            Section.Phrases -> PhrasesScreen(app = app, nowVoicing = noNowVoicingSlot)
+                            Section.Numbers -> NumbersScreen(app = app)
+                            Section.Quizzes -> QuizzesScreen(
+                                app = app,
+                                nowVoicing = noNowVoicingSlot,
+                                resetToken = quizResetToken
+                            )
+                            Section.Settings -> SettingsScreen(app = app)
+                        }
                     }
                 }
             }

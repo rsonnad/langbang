@@ -74,6 +74,8 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun PronunciationScreen(app: LangbangApplication) {
+    val cloudState by app.cloudConfig.state.collectAsState()
+    val labels = cloudState.bootstrap?.labels.orEmpty()
     val data = remember { app.lessonRepo.pronunciation() }
     var selected by remember { mutableStateOf(data.phonemes.firstOrNull()) }
     var quizOpen by remember { mutableStateOf(false) }
@@ -96,6 +98,7 @@ fun PronunciationScreen(app: LangbangApplication) {
                         app = app,
                         phoneme = ph,
                         phonemes = data.phonemes,
+                        labels = labels,
                         online = online,
                         onSelectPhoneme = { selected = it },
                         onStartQuiz = { quizOpen = true }
@@ -182,6 +185,7 @@ private fun PhonemeDetail(
     app: LangbangApplication,
     phoneme: PhonemeEntry,
     phonemes: List<PhonemeEntry>,
+    labels: Map<String, String>,
     online: Boolean,
     onSelectPhoneme: (PhonemeEntry) -> Unit,
     onStartQuiz: () -> Unit
@@ -298,7 +302,7 @@ private fun PhonemeDetail(
             // Flashcard quiz — relocated here from the top of the left list and made
             // compact, sitting just to the LEFT of the play queue control.
             CompactPronHeaderButton(
-                label = "Flashcard quiz",
+                label = label(labels, "pronunciation.flashcard_quiz", "Flashcard quiz"),
                 onClick = onStartQuiz,
                 icon = Icons.Default.School,
                 containerColor = MaterialTheme.colorScheme.secondary
@@ -307,7 +311,11 @@ private fun PhonemeDetail(
             // Play queue at the TOP next to the phoneme — was buried beside "Common
             // words" further down, easy to miss / below the fold (reported 2026-05-30).
             CompactPronHeaderButton(
-                label = if (playingAll) "Stop" else "Play ${phoneme.examples.size}",
+                label = if (playingAll) {
+                    label(labels, "pronunciation.stop", "Stop")
+                } else {
+                    "${label(labels, "pronunciation.play", "Play")} ${phoneme.examples.size}"
+                },
                 onClick = {
                     if (playingAll) {
                         stopPronunciationPlayback()
@@ -316,7 +324,11 @@ private fun PhonemeDetail(
                     }
                 },
                 icon = if (playingAll) Icons.Default.Stop else Icons.Default.PlayArrow,
-                contentDescription = if (playingAll) "Stop playback" else "Play ${phoneme.examples.size}",
+                contentDescription = if (playingAll) {
+                    label(labels, "pronunciation.stop_playback", "Stop playback")
+                } else {
+                    "${label(labels, "pronunciation.play", "Play")} ${phoneme.examples.size}"
+                },
                 containerColor = if (playingAll) LbColors.Danger else MaterialTheme.colorScheme.primary
             )
             Spacer(Modifier.width(8.dp))
@@ -324,8 +336,8 @@ private fun PhonemeDetail(
                 items = phonemes,
                 selected = phoneme,
                 onSelect = onSelectPhoneme,
-                previousContentDescription = "Previous phoneme",
-                nextContentDescription = "Next phoneme"
+                previousContentDescription = label(labels, "pronunciation.previous", "Previous phoneme"),
+                nextContentDescription = label(labels, "pronunciation.next", "Next phoneme")
             )
         }
 
@@ -353,7 +365,7 @@ private fun PhonemeDetail(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                "Common words",
+                label(labels, "pronunciation.common_words", "Common words"),
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = LbColors.Primary,
@@ -361,13 +373,13 @@ private fun PhonemeDetail(
             )
             if (online) {
                 Text(
-                    "Tap mic to score yourself",
+                    label(labels, "pronunciation.tap_mic", "Tap mic to score yourself"),
                     fontSize = 11.sp,
                     color = LbColors.TextMuted
                 )
             } else {
                 Text(
-                    "Offline — mic scoring unavailable",
+                    label(labels, "pronunciation.offline_mic", "Offline — mic scoring unavailable"),
                     fontSize = 11.sp,
                     color = LbColors.Danger
                 )
@@ -396,14 +408,18 @@ private fun PhonemeDetail(
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text(
-                            if (micActive) "Listening — say \"${assessing}\"" else "Opening mic…",
+                            if (micActive) {
+                                "${label(labels, "pronunciation.listening_say", "Listening — say")} \"${assessing}\""
+                            } else {
+                                label(labels, "pronunciation.opening_mic", "Opening mic…")
+                            },
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = if (micActive) LbColors.Success else LbColors.Label
                         )
                         if (partial.isNotBlank()) {
                             Text(
-                                "Heard: $partial",
+                                "${label(labels, "pronunciation.heard", "Heard")}: $partial",
                                 fontSize = 12.sp,
                                 color = LbColors.TextSecondary
                             )
@@ -454,6 +470,9 @@ private fun PhonemeDetail(
         }
     }
 }
+
+private fun label(labels: Map<String, String>, key: String, fallback: String): String =
+    labels[key]?.takeIf { it.isNotBlank() } ?: fallback
 
 @Composable
 private fun CompactPronHeaderButton(
