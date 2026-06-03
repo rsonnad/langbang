@@ -43,6 +43,9 @@ import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.awaitAudioPlayback
 import com.sponic.langbang.domain.ensureCachedAudio
+import com.sponic.langbang.domain.sourceAudioVoice
+import com.sponic.langbang.domain.targetAudioVoice
+import com.sponic.langbang.domain.targetSlowVoice
 import com.sponic.langbang.integrations.AzureTtsClient
 import com.sponic.langbang.ui.theme.LbColors
 import kotlinx.coroutines.Job
@@ -81,10 +84,11 @@ fun NowVoicingPanel(
         pinned.nowVoicingPolishWords()
     }
     LaunchedEffect(visibleWords) {
-        val slowVoice = app.audioPrefs.slowPlVoice()
+        val slowVoice = app.targetSlowVoice()
+        val target = app.targetAudioVoice()
         visibleWords.forEach { word ->
-            app.ensureCachedAudio(word, AzureTtsClient.LOCALE_PL, slowVoice)
-            app.ensureCachedAudio(word, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+            app.ensureCachedAudio(word, target.locale, slowVoice)
+            app.ensureCachedAudio(word, target.locale, target.voice)
         }
     }
     val playTappedWord: (String) -> Unit = { raw ->
@@ -102,11 +106,11 @@ fun NowVoicingPanel(
             wordDrillJob = scope.launch {
                 val thisJob = coroutineContext[Job]
                 try {
-                    val slowVoice = app.audioPrefs.slowPlVoice()
+                    val slowVoice = app.targetSlowVoice()
                     NowVoicingBus.publish(item.copy(lang = "pl-slow", plHidden = false))
-                    app.playCachedFirst(word, AzureTtsClient.LOCALE_PL, slowVoice)
+                    app.playCachedFirst(word, app.targetAudioVoice().locale, slowVoice)
                     NowVoicingBus.publish(item.copy(lang = "pl", plHidden = false))
-                    app.playCachedFirst(word, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                    app.playCachedFirst(word, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                 } finally {
                     if (wordDrillJob == thisJob) {
                         wordDrillJob = null
@@ -235,17 +239,17 @@ private suspend fun LangbangApplication.playCachedFirst(
 
 private suspend fun LangbangApplication.replayNowVoicingPhrase(item: NowVoicing) {
     val slowFirst = practicePrefs.slowFirst()
-    val slowVoice = audioPrefs.slowPlVoice()
+    val slowVoice = targetSlowVoice()
     NowVoicingBus.publish(item.copy(lang = "en", plHidden = false))
-    playCachedFirst(item.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+    playCachedFirst(item.en, sourceAudioVoice().locale, sourceAudioVoice().voice)
     if (slowFirst) {
         NowVoicingBus.publish(item.copy(lang = "pl-slow", plHidden = false))
-        playCachedFirst(item.pl, AzureTtsClient.LOCALE_PL, slowVoice)
+        playCachedFirst(item.pl, targetAudioVoice().locale, slowVoice)
         NowVoicingBus.publish(item.copy(lang = "en", plHidden = false))
-        playCachedFirst(item.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+        playCachedFirst(item.en, sourceAudioVoice().locale, sourceAudioVoice().voice)
     }
     NowVoicingBus.publish(item.copy(lang = "pl", plHidden = false))
-    playCachedFirst(item.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+    playCachedFirst(item.pl, targetAudioVoice().locale, targetAudioVoice().voice)
 }
 
 private fun nowVoicingStatus(pinned: NowVoicing?, live: NowVoicing?): String {

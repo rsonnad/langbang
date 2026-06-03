@@ -226,7 +226,7 @@ class SentenceRegenService(
 
     companion object {
         private const val MANIFEST_BASE =
-            "https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev/langbang/sentences"
+            "https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev/langbang/sentences"
 
         // Six concurrent downloads is plenty for ~120 sub-10KB JSON bundles —
         // wall time is dominated by latency, not throughput.

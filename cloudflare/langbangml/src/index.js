@@ -319,13 +319,7 @@ async function warmMissingAudio(request, env, contentVersionId) {
     lessons.flatMap((lesson) => audioRequestsForPayload(content.languagePair, lesson.payload, { includeSourceSlow }))
   );
 
-  const missing = [];
-  for (const phrase of allRequests) {
-    if (!(await audioExists(env, phrase))) {
-      missing.push(phrase);
-      if (missing.length >= (body.scanLimit || 2000)) break;
-    }
-  }
+  const missing = await missingAudioByMetadata(env, allRequests);
 
   if (dryRun) {
     return json({
@@ -353,6 +347,21 @@ async function warmMissingAudio(request, env, contentVersionId) {
     remainingEstimate: Math.max(0, missing.length - manifest.length),
   };
   return json({ contentVersionId, lessonId: body.lessonId || null, summary, manifest });
+}
+
+async function missingAudioByMetadata(env, phrases) {
+  const rows = await env.DB.prepare(`
+    SELECT sha1
+    FROM audio_assets
+    WHERE last_error IS NULL
+  `).all();
+  const existing = new Set(rows.results.map((row) => row.sha1));
+  const missing = [];
+  for (const phrase of phrases) {
+    const sha1 = await sha1Hex(`${phrase.locale}|${phrase.voice}|${phrase.text}`);
+    if (!existing.has(sha1)) missing.push(phrase);
+  }
+  return missing;
 }
 
 async function loadLesson(env, contentVersionId, lessonId) {
@@ -627,6 +636,9 @@ async function audioExists(env, phrase) {
 
 function audioRequestsForPayload(pair, payload, options = {}) {
   const out = [];
+  const fieldLocales = payload && typeof payload.fieldLocales === "object" && !Array.isArray(payload.fieldLocales)
+    ? payload.fieldLocales
+    : {};
   const sourceSlowVoices = options.includeSourceSlow
     ? [`${pair.sourceVoice}${SLOW_60_SUFFIX}`, `${pair.sourceVoice}${SLOW_ART_SUFFIX}`]
     : [];
@@ -648,15 +660,27 @@ function audioRequestsForPayload(pair, payload, options = {}) {
     }
   }
 
+  function localeForField(field, fallback) {
+    const locale = String(fieldLocales[field] || "").trim();
+    return locale || fallback;
+  }
+
+  function includeSlowForLocale(locale) {
+    if (locale === pair.targetLocale) return true;
+    return options.includeSourceSlow === true && locale === pair.sourceLocale;
+  }
+
   function addKnownText(text, field) {
     if (field === "source") {
       add(text, pair.sourceLocale, options.includeSourceSlow === true);
     } else if (field === "target") {
       add(text, pair.targetLocale, true);
     } else if (field === "pl") {
-      add(text, "pl-PL", pair.targetLocale === "pl-PL" || pair.sourceLocale === "pl-PL");
+      const locale = localeForField("pl", "pl-PL");
+      add(text, locale, includeSlowForLocale(locale));
     } else if (field === "en") {
-      add(text, "en-US", pair.targetLocale === "en-US" || pair.sourceLocale === "en-US");
+      const locale = localeForField("en", "en-US");
+      add(text, locale, includeSlowForLocale(locale));
     }
   }
 
@@ -688,7 +712,10 @@ function audioRequestsForPayload(pair, payload, options = {}) {
     }
 
     for (const [key, child] of Object.entries(value)) {
-      if (["source", "target", "pl", "en", "lemma", "forms", "past_forms", "nom", "acc", "gen", "case_forms", "literal", "words"].includes(key)) {
+      if ([
+        "source", "target", "pl", "en", "lemma", "forms", "past_forms", "nom", "acc", "gen", "case_forms", "literal", "words",
+        "schema", "sourceLocale", "targetLocale", "sourceField", "targetField", "fieldLocales",
+      ].includes(key)) {
         continue;
       }
       walk(child, key);

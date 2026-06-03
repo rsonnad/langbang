@@ -76,7 +76,7 @@ the pilot Discord.
 ## 4. Portfolio / links
 - **Plugin + app source:** https://github.com/rsonnad/langbang
 - **LangBang landing page:** https://alpacaplayhouse.com/rahulio/pages/langbang/
-- **Latest build (R2):** https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev/langbang/langbang-latest.apk
+- **Latest build (R2):** https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev/langbang/langbang-latest.apk
 - [OPTIONAL: add a 20-sec screen capture of the plugin running in the simulator —
   the framebuffer screenshot at `captures/langbang-g2-glasses-current-visible.png`
   is a good still if you want one image.]

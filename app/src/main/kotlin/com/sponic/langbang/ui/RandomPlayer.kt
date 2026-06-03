@@ -16,7 +16,9 @@ import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.ensureCachedAudio
 import com.sponic.langbang.domain.englishConjugate
 import com.sponic.langbang.domain.playAudioAndAwait
-import com.sponic.langbang.integrations.AzureTtsClient
+import com.sponic.langbang.domain.sourceAudioVoice
+import com.sponic.langbang.domain.targetAudioVoice
+import com.sponic.langbang.domain.targetSlowVoice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -229,21 +231,21 @@ internal class RandomPlayerState(
                 position = i + 1
                 val pos = "${i + 1}/${phrases.size}"
                 val slowFirst = app.practicePrefs.slowFirst()
-                val slowPlVoice = app.audioPrefs.slowPlVoice()
+                val slowPlVoice = app.targetSlowVoice()
                 if (slowFirst) {
-                    app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                    app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, slowPlVoice)
                 }
-                app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                 pub(s, "en", pos)
-                playAndAwait(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                playAndAwait(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 if (slowFirst) {
                     pub(s, "pl-slow", pos)
-                    playAndAwait(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                    playAndAwait(s.pl, app.targetAudioVoice().locale, slowPlVoice)
                     pub(s, "en", pos)
-                    playAndAwait(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                    playAndAwait(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 }
                 pub(s, "pl", pos)
-                playAndAwait(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                playAndAwait(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                 // Only advance if pause/rewind/restart didn't move us elsewhere.
                 if (currentIndex == i) {
                     currentIndex = i + 1

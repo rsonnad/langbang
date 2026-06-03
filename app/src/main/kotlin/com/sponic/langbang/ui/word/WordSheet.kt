@@ -32,7 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
-import com.sponic.langbang.integrations.AzureTtsClient
+import com.sponic.langbang.domain.targetAudioVoice
 
 @Composable
 fun WordSheet(
@@ -89,7 +89,7 @@ fun WordSheet(
                         items(verbMatch.forms.entries.toList()) { (k, v) ->
                             FormRow(label = personLabel(k), form = v) {
                                 val f = app.audioCache.fileFor(
-                                    AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, v
+                                    app.targetAudioVoice().locale, app.targetAudioVoice().voice, v
                                 )
                                 app.audioPlayer.play(f)
                             }
@@ -108,7 +108,7 @@ fun WordSheet(
                         items(pronounMatch.case_forms.entries.toList()) { (k, v) ->
                             FormRow(label = caseLabel(k), form = v) {
                                 val f = app.audioCache.fileFor(
-                                    AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, v
+                                    app.targetAudioVoice().locale, app.targetAudioVoice().voice, v
                                 )
                                 app.audioPlayer.play(f)
                             }

@@ -61,7 +61,8 @@ import com.sponic.langbang.data.model.TokenPair
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
-import com.sponic.langbang.integrations.AzureTtsClient
+import com.sponic.langbang.domain.ensureCachedAudio
+import com.sponic.langbang.domain.targetAudioVoice
 import com.sponic.langbang.ui.common.CompactLessonListCard
 import com.sponic.langbang.ui.common.CompactLessonListDefaults
 import com.sponic.langbang.ui.common.SelectionNavButtons
@@ -186,6 +187,7 @@ private fun PhonemeDetail(
     onStartQuiz: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val targetVoice = app.targetAudioVoice()
     // Word currently being scored (only one at a time).
     var assessing by remember(phoneme) { mutableStateOf<String?>(null) }
     // Mic capture confirmed by SDK sessionStarted event. Drives "Listening…" badge.
@@ -234,12 +236,8 @@ private fun PhonemeDetail(
                 phoneme.examples.forEach { ex ->
                     playingWord = ex.pl
                     publishExample(ex)
-                    val f = app.audioCache.fileFor(
-                        AzureTtsClient.LOCALE_PL,
-                        AzureTtsClient.PL_PL_F,
-                        ex.pl
-                    )
-                    playFileAndAwait(app, f)
+                    val f = app.ensureCachedAudio(ex.pl, targetVoice.locale, targetVoice.voice)
+                    if (f != null) playFileAndAwait(app, f)
                     kotlinx.coroutines.delay(220)
                 }
             } finally {
@@ -253,11 +251,12 @@ private fun PhonemeDetail(
 
     fun playSingleExample(ex: ExampleWord) {
         stopPronunciationPlayback()
-        val f = app.audioCache.fileFor(AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, ex.pl)
-        if (!f.exists()) return
         playingWord = ex.pl
-        app.audioPlayer.play(f) {
-            if (playingWord == ex.pl) playingWord = null
+        scope.launch {
+            val f = app.ensureCachedAudio(ex.pl, targetVoice.locale, targetVoice.voice) ?: return@launch
+            app.audioPlayer.play(f) {
+                if (playingWord == ex.pl) playingWord = null
+            }
         }
     }
 
@@ -436,7 +435,7 @@ private fun PhonemeDetail(
                         error = null
                         scope.launch {
                             app.pron.assessOnce(
-                                locale = "pl-PL",
+                                locale = targetVoice.locale,
                                 referenceText = ex.pl,
                                 onListening = { micActive = true },
                                 onPartial = { partial = it }

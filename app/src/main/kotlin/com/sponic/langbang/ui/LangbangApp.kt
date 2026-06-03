@@ -427,6 +427,57 @@ private fun AppHeader(
                     .padding(start = 10.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clickable(onClick = onTitleClick)
+                        .padding(start = 2.dp, end = 13.dp)
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.langbang_logo_square),
+                        contentDescription = label(labels, "app.title", "LangBangML"),
+                        modifier = Modifier.size(31.dp),
+                        contentScale = ContentScale.Fit
+                    )
+                    Image(
+                        painter = painterResource(R.drawable.langbang_logo_wordmark),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(start = 7.dp)
+                            .width(108.dp)
+                            .height(32.dp),
+                        contentScale = ContentScale.Fit
+                    )
+                    Surface(
+                        color = LbColors.Primary.copy(alpha = 0.18f),
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(1.dp, LbColors.Primary.copy(alpha = 0.5f)),
+                        modifier = Modifier.padding(start = 8.dp)
+                    ) {
+                        Text(
+                            languagePairBadge(),
+                            color = LbColors.AudioBright,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    Text(
+                        " v${BuildConfig.BUILD_NUMBER}",
+                        color = LbColors.OnDark2,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(start = 5.dp, top = 1.dp)
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TabStrip(section = section, labels = labels, onSelect = onSelect)
+                }
                 IconButton(
                     onClick = onToggleSettings,
                     modifier = Modifier.size(34.dp),
@@ -440,35 +491,6 @@ private fun AppHeader(
                         contentDescription = label(labels, "tabs.settings", "Settings"),
                         modifier = Modifier.size(20.dp)
                     )
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clickable(onClick = onTitleClick)
-                        .padding(start = 5.dp, end = 13.dp)
-                ) {
-                    Text(
-                        label(labels, "app.title", "LangBangML"),
-                        color = LbColors.OnDark,
-                        fontSize = 15.sp,
-                        fontFamily = FontFamily.Serif,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                    Text(
-                        " ${label(labels, "app.version_prefix", "v")}${BuildConfig.BUILD_NUMBER}",
-                        color = LbColors.OnDark2,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(top = 1.dp)
-                    )
-                }
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TabStrip(section = section, labels = labels, onSelect = onSelect)
                 }
                 // Top bar stays single-row tall. The CacheBadge ("audio 9667/10054")
                 // used to sit stacked under the pill here — moved to the chip strip
@@ -505,6 +527,11 @@ private fun AppHeader(
             // body Row in LangbangApp) so the left panel gets full height.
         }
     }
+}
+
+private fun languagePairBadge(): String = when (BuildConfig.LANGBANGML_INSTANCE_ID) {
+    "langbangml-pl-en" -> "PL/EN"
+    else -> "EN/PL"
 }
 
 @Composable

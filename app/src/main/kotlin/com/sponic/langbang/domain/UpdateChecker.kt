@@ -16,7 +16,7 @@ import java.net.URL
 
 /**
  * In-app APK self-update for this sideloaded build. On launch we fetch a tiny JSON
- * manifest from R2 ([MANIFEST_URL]) describing the newest published build; if its
+ * manifest from R2 ([BuildConfig.LANGBANGML_UPDATE_MANIFEST_URL]) describing the newest published build; if its
  * versionCode is higher than the running [BuildConfig.BUILD_NUMBER] we surface an
  * "update available" banner. Tapping it downloads langbang-latest.apk to cacheDir and
  * fires the system package installer.
@@ -55,7 +55,7 @@ class UpdateChecker(
     suspend fun check(): Available? = withContext(Dispatchers.IO) {
         if (!network.isOnline()) return@withContext null
         val manifest = try {
-            val conn = (URL(MANIFEST_URL).openConnection() as HttpURLConnection).apply {
+            val conn = (URL(BuildConfig.LANGBANGML_UPDATE_MANIFEST_URL).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 8000
                 readTimeout = 8000
                 // R2 caches aggressively; ask for a fresh copy so a just-published
@@ -127,10 +127,4 @@ class UpdateChecker(
         runCatching { context.startActivity(intent) }
     }
 
-    companion object {
-        // Public R2 dev URL — no auth, no secret. Written by scripts/publish-r2.sh on
-        // every publish so it always names the newest build.
-        private const val MANIFEST_URL =
-            "https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev/langbang/langbang-latest.json"
-    }
 }

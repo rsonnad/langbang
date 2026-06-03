@@ -2,8 +2,6 @@ package com.sponic.langbang.domain
 
 import com.sponic.langbang.data.LessonRepository
 import com.sponic.langbang.data.VerbSentenceStore
-import com.sponic.langbang.data.model.audioPronoun
-import com.sponic.langbang.integrations.AzureTtsClient
 
 /** One unit of audio the app needs cached: a (text, locale, voice) triple. */
 data class AudioUnit(val text: String, val locale: String, val voice: String)
@@ -30,56 +28,60 @@ fun audioManifest(repo: LessonRepository): List<AudioUnit> {
     val advLesson = repo.lesson4()
     val nounLesson = repo.lesson6()
     val pron = repo.pronunciation()
+    val source = repo.sourceAudioVoice()
+    val target = repo.targetAudioVoice()
+    val targetSlow = repo.targetSlowVoices().ifEmpty {
+        listOf("${target.voice}|slow60v1", "${target.voice}|slowart1")
+    }
     return buildList {
-        fun addEn(text: String) {
+        fun addSource(text: String) {
             if (text.isEmpty()) return
-            add(AudioUnit(text, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F))
+            add(AudioUnit(text, source.locale, source.voice))
         }
-        fun addPl(text: String) {
+        fun addTarget(text: String) {
             if (text.isEmpty()) return
-            add(AudioUnit(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F))
-            add(AudioUnit(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F_SLOW_V2))
-            add(AudioUnit(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F_SLOW_ART))
+            add(AudioUnit(text, target.locale, target.voice))
+            targetSlow.forEach { add(AudioUnit(text, target.locale, it)) }
         }
 
         // --- Core forms ---
-        lesson.phrases.forEach { p -> addEn(p.en); addPl(p.pl) }
+        lesson.phrases.forEach { p -> addSource(p.en); addTarget(p.pl) }
         lesson.verbs.forEach { v ->
-            v.forms.forEach { (k, f) -> addPl("${audioPronoun(k)} $f".trim()) }
-            v.past_forms?.forEach { (k, f) -> addPl("${audioPronoun(k)} $f".trim()) }
+            v.forms.forEach { (k, f) -> addTarget("${repo.targetSubjectFor(k)} $f".trim()) }
+            v.past_forms?.forEach { (k, f) -> addTarget("${repo.targetSubjectFor(k)} $f".trim()) }
         }
-        lesson.pronouns.forEach { p -> p.case_forms.values.forEach { addPl(it) } }
+        lesson.pronouns.forEach { p -> p.case_forms.values.forEach { addTarget(it) } }
         adjLesson.adjectives.forEach { a ->
-            a.nom.values.forEach { addPl(it) }
-            a.acc.values.forEach { addPl(it) }
+            a.nom.values.forEach { addTarget(it) }
+            a.acc.values.forEach { addTarget(it) }
         }
-        advLesson.adverbs.forEach { adv -> addPl(adv.lemma) }
+        advLesson.adverbs.forEach { adv -> addTarget(adv.lemma) }
         nounLesson.nouns.forEach { n ->
-            n.nom.values.forEach { addPl(it) }
-            n.acc.values.forEach { addPl(it) }
-            n.gen.values.forEach { addPl(it) }
+            n.nom.values.forEach { addTarget(it) }
+            n.acc.values.forEach { addTarget(it) }
+            n.gen.values.forEach { addTarget(it) }
         }
-        pron.phonemes.forEach { ph -> ph.examples.forEach { addPl(it.pl) } }
+        pron.phonemes.forEach { ph -> ph.examples.forEach { addTarget(it.pl) } }
 
         // --- Generated example sentences (EN cue + PL target + slow PL) ---
         lesson.verbs.forEach { v ->
-            repo.sentencesFor(v.lemma, VerbSentenceStore.TENSE_PRESENT).forEach { s -> addEn(s.en); addPl(s.pl) }
-            repo.sentencesFor(v.lemma, VerbSentenceStore.TENSE_PAST).forEach { s -> addEn(s.en); addPl(s.pl) }
+            repo.sentencesFor(v.lemma, VerbSentenceStore.TENSE_PRESENT).forEach { s -> addSource(s.en); addTarget(s.pl) }
+            repo.sentencesFor(v.lemma, VerbSentenceStore.TENSE_PAST).forEach { s -> addSource(s.en); addTarget(s.pl) }
         }
         adjLesson.adjectives.forEach { a ->
-            repo.adjectiveSentencesFor(a.lemma).forEach { s -> addEn(s.en); addPl(s.pl) }
+            repo.adjectiveSentencesFor(a.lemma).forEach { s -> addSource(s.en); addTarget(s.pl) }
         }
         advLesson.adverbs.forEach { adv ->
-            repo.adverbSentencesFor(adv.lemma).forEach { s -> addEn(s.en); addPl(s.pl) }
+            repo.adverbSentencesFor(adv.lemma).forEach { s -> addSource(s.en); addTarget(s.pl) }
         }
         nounLesson.nouns.forEach { n ->
-            repo.nounSentencesFor(n.lemma).forEach { s -> addEn(s.en); addPl(s.pl) }
+            repo.nounSentencesFor(n.lemma).forEach { s -> addSource(s.en); addTarget(s.pl) }
         }
         // Phrase-bank (lesson 5) sentences feed the "Play Phrases" queue exactly like the
         // verb/adj/adv sentences above, so they MUST be enumerated too — otherwise they
         // miss the bulk cache and fall through to slow per-phrase on-demand synth.
         repo.lesson5().groups.forEach { g ->
-            g.sentences.forEach { s -> addEn(s.en); addPl(s.pl) }
+            g.sentences.forEach { s -> addSource(s.en); addTarget(s.pl) }
         }
     }.distinctBy { it.text + "|" + it.locale + "|" + it.voice }
 }

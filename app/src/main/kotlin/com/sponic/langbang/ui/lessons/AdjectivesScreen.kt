@@ -63,7 +63,9 @@ import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.ensureCachedAudio
-import com.sponic.langbang.integrations.AzureTtsClient
+import com.sponic.langbang.domain.sourceAudioVoice
+import com.sponic.langbang.domain.targetAudioVoice
+import com.sponic.langbang.domain.targetSlowVoice
 import com.sponic.langbang.ui.common.CompactLessonListCard
 import com.sponic.langbang.ui.common.StudyQueuePlayer
 import com.sponic.langbang.ui.common.CompactLessonListDefaults
@@ -197,7 +199,7 @@ internal class AdjectivesScreenState(
 
     private fun startQueue(items: List<SentenceExample>, quiz: Boolean) {
         val slowFirst = app.practicePrefs.slowFirst()
-        val slowPlVoice = app.audioPrefs.slowPlVoice()
+        val slowPlVoice = app.targetSlowVoice()
         player.start(
             total = items.size,
             publishParked = { i ->
@@ -212,9 +214,9 @@ internal class AdjectivesScreenState(
             },
             prefetchItem = { i ->
                 val s = items[i]
-                app.ensureCachedAudio(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                if (slowFirst && !quiz) app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                app.ensureCachedAudio(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
+                if (slowFirst && !quiz) app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, slowPlVoice)
             },
         ) { i ->
             val s = items[i]
@@ -232,27 +234,27 @@ internal class AdjectivesScreenState(
                 // Hide PL during the EN clip + recall window so the learner can't peek.
                 // Reveal it before speaking so eye + brain align.
                 pub("en", plHidden = true)
-                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 pub("pause", plHidden = true)
                 reveal(2000L)
                 pub("pause", plHidden = false)
                 reveal(2000L)
                 pub("pl", plHidden = false)
-                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             } else if (slowFirst) {
                 pub("en")
-                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 pub("pl-slow")
-                say(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                say(s.pl, app.targetAudioVoice().locale, slowPlVoice)
                 pub("en")
-                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 pub("pl")
-                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             } else {
                 pub("en")
-                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 pub("pl")
-                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             }
             // Short beat between items (down from 1s) — pause-aware. Skipped after last.
             if (!quiz && i < items.size - 1) reveal(500L)
@@ -642,7 +644,7 @@ private fun SentenceRow(
 private fun playForm(app: LangbangApplication, form: String) {
     if (form.isEmpty()) return
     val f = app.audioCache.fileFor(
-        AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, form
+        app.targetAudioVoice().locale, app.targetAudioVoice().voice, form
     )
     app.audioPlayer.play(f)
 }

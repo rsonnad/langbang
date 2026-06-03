@@ -49,7 +49,10 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.data.model.PhraseEntry
-import com.sponic.langbang.integrations.AzureTtsClient
+import com.sponic.langbang.domain.sourceAudioVoice
+import com.sponic.langbang.domain.sourceLanguageLabel
+import com.sponic.langbang.domain.targetAudioVoice
+import com.sponic.langbang.domain.targetLanguageLabel
 import com.sponic.langbang.integrations.PronunciationScore
 import kotlinx.coroutines.launch
 
@@ -62,6 +65,9 @@ fun PhraseDetail(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val sourceLabel = app.sourceLanguageLabel()
+    val targetLabel = app.targetLanguageLabel()
+    val targetVoice = app.targetAudioVoice()
     var assessing by remember { mutableStateOf(false) }
     var score by remember(phrase) { mutableStateOf<PronunciationScore?>(null) }
     var error by remember(phrase) { mutableStateOf<String?>(null) }
@@ -88,9 +94,10 @@ fun PhraseDetail(
         Text(phrase.en, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
 
         Row(verticalAlignment = Alignment.CenterVertically) {
-            PlayChip(label = "▶ English") {
+            PlayChip(label = "▶ $sourceLabel") {
+                val source = app.sourceAudioVoice()
                 val f = app.audioCache.fileFor(
-                    AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F, phrase.en
+                    source.locale, source.voice, phrase.en
                 )
                 app.audioPlayer.play(f)
             }
@@ -99,9 +106,9 @@ fun PhraseDetail(
         PolishLine(phrase.pl, onWordTap = onWordTap)
 
         Row(verticalAlignment = Alignment.CenterVertically) {
-            PlayChip(label = "▶ Polish") {
+            PlayChip(label = "▶ $targetLabel") {
                 val f = app.audioCache.fileFor(
-                    AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, phrase.pl
+                    targetVoice.locale, targetVoice.voice, phrase.pl
                 )
                 app.audioPlayer.play(f)
             }
@@ -114,7 +121,7 @@ fun PhraseDetail(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Your turn — say it in Polish", fontSize = 14.sp, color = LbColors.Label)
+                Text("Your turn — say it in $targetLabel", fontSize = 14.sp, color = LbColors.Label)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Button(
                         onClick = {
@@ -126,7 +133,7 @@ fun PhraseDetail(
                                 error = null
                                 score = null
                                 scope.launch {
-                                    app.pron.assessOnce("pl-PL", phrase.pl)
+                                    app.pron.assessOnce(targetVoice.locale, phrase.pl)
                                         .onSuccess { score = it }
                                         .onFailure { error = it.message }
                                     assessing = false

@@ -12,7 +12,7 @@
       "desc": "Fetches the current LangBang practice phrase when a feed URL is configured.",
       "whitelist": [
         "https://aphrrfprbixmhissnjfn.supabase.co",
-        "https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev"
+        "https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev"
       ]
     }
   ],

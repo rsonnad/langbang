@@ -84,6 +84,10 @@ import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.ensureCachedAudio
 import com.sponic.langbang.domain.englishConjugate
 import com.sponic.langbang.domain.playAudioAndAwait
+import com.sponic.langbang.domain.sourceAudioVoice
+import com.sponic.langbang.domain.targetAudioVoice
+import com.sponic.langbang.domain.targetSlowVoice
+import com.sponic.langbang.domain.targetSubjectFor
 import com.sponic.langbang.integrations.AzureTtsClient
 import com.sponic.langbang.ui.common.CompactLessonListCard
 import com.sponic.langbang.ui.common.StudyQueuePlayer
@@ -449,15 +453,15 @@ internal class VerbsTabState(
         // Sentence playback doesn't set playingLemma (only the conjugation drill does), so
         // the per-verb sentence-list highlight stays scoped to the conjugation flow.
         playingLemma = null
-        val slowPlVoice = app.audioPrefs.slowPlVoice()
+        val slowPlVoice = app.targetSlowVoice()
         player.start(
             total = items.size,
             publishParked = { i -> publishQuiz("pause", items[i], "${i + 1}/${items.size}", plHidden = quiz) },
             prefetchItem = { i ->
                 val s = items[i]
-                app.ensureCachedAudio(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                if (slowFirst && !quiz) app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                app.ensureCachedAudio(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
+                if (slowFirst && !quiz) app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, slowPlVoice)
             },
         ) { i ->
             val s = items[i]
@@ -467,27 +471,27 @@ internal class VerbsTabState(
                 val configMs = (app.randomConfig.load().quizDelaySeconds * 1000).toLong()
                 val delayMs = configMs.coerceAtLeast(2000L)
                 publishQuiz("en", s, position, plHidden = true)
-                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 publishQuiz("pause", s, position, plHidden = true)
                 reveal(delayMs)
                 publishQuiz("pause", s, position, plHidden = false)
                 reveal(delayMs)
                 publishQuiz("pl", s, position, plHidden = false)
-                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             } else if (slowFirst) {
                 setLang("en", s, position)
-                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 setLang("pl-slow", s, position)
-                say(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                say(s.pl, app.targetAudioVoice().locale, slowPlVoice)
                 setLang("en", s, position)
-                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 setLang("pl", s, position)
-                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             } else {
                 setLang("en", s, position)
-                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 setLang("pl", s, position)
-                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             }
             if (!quiz && i < items.size - 1) reveal(500L)
         }
@@ -526,20 +530,21 @@ internal class VerbsTabState(
             included: Set<String>,
             isPast: Boolean
         ) {
+            val targetIsEnglish = app.targetAudioVoice().locale == AzureTtsClient.LOCALE_EN
             PERSON_KEYS.forEach { key ->
                 if (key !in included) return@forEach
                 val form = formMap[key].orEmpty()
                 if (form.isBlank()) return@forEach
-                val pron = audioPronoun(key)
+                val pron = if (targetIsEnglish) app.targetSubjectFor(key) else audioPronoun(key)
                 val combined = "$pron $form".trim()
-                val englishSubject = englishSubjectFor(key)
-                val englishVerbForm = englishConjugate(vv.en, key, isPast)
-                val englishGloss = "$englishSubject $englishVerbForm"
+                val sourceSubject = if (targetIsEnglish) audioPronoun(key) else englishSubjectFor(key)
+                val sourceVerbForm = if (targetIsEnglish) vv.en else englishConjugate(vv.en, key, isPast)
+                val englishGloss = "$sourceSubject $sourceVerbForm".trim()
                 val tokens = listOf(
-                    TokenPair(pron, englishSubject),
+                    TokenPair(pron, sourceSubject),
                     TokenPair(
                         pl = form,
-                        en = englishVerbForm,
+                        en = sourceVerbForm,
                         variableStart = variableStartForPolishForm(vv.lemma, form),
                         variableEnd = variableEndForPolishForm(vv.lemma, form),
                         variableKind = "conjugation"
@@ -562,15 +567,15 @@ internal class VerbsTabState(
 
     private fun startConjugationQueue(cues: List<ConjugationCue>, mode: String) {
         val quiz = mode != "play"
-        val slowPlVoice = app.audioPrefs.slowPlVoice()
+        val slowPlVoice = app.targetSlowVoice()
         player.start(
             total = cues.size,
             publishParked = { i -> publishConjugation(cues[i], i, cues.size, mode, "pause", plHidden = quiz) },
             prefetchItem = { i ->
                 val cue = cues[i]
-                if (quiz) app.ensureCachedAudio(cue.englishGloss, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                app.ensureCachedAudio(cue.combined, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                if (slowFirst && !quiz) app.ensureCachedAudio(cue.combined, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                if (quiz) app.ensureCachedAudio(cue.englishGloss, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                app.ensureCachedAudio(cue.combined, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
+                if (slowFirst && !quiz) app.ensureCachedAudio(cue.combined, app.targetAudioVoice().locale, slowPlVoice)
             },
         ) { i ->
             val cue = cues[i]
@@ -579,21 +584,21 @@ internal class VerbsTabState(
             when (mode) {
                 "conjQuiz", "recall" -> {
                     publishConjugation(cue, i, total, mode, "en", plHidden = true)
-                    say(cue.englishGloss, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                    say(cue.englishGloss, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                     publishConjugation(cue, i, total, mode, "pause", plHidden = true)
                     reveal(2000L)
                     publishConjugation(cue, i, total, mode, "pause", plHidden = false)
                     reveal(2000L)
                     publishConjugation(cue, i, total, mode, "pl", plHidden = false)
-                    say(cue.combined, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                    say(cue.combined, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                 }
                 else -> {
                     if (slowFirst) {
                         publishConjugation(cue, i, total, mode, "pl-slow", plHidden = false)
-                        say(cue.combined, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                        say(cue.combined, app.targetAudioVoice().locale, slowPlVoice)
                     }
                     publishConjugation(cue, i, total, mode, "pl", plHidden = false)
-                    say(cue.combined, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                    say(cue.combined, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                 }
             }
             if (i < total - 1) reveal(500L)
@@ -1476,7 +1481,7 @@ private fun playPolish(app: LangbangApplication, scope: CoroutineScope, text: St
     PlaybackController.stop()
     app.audioPlayer.stop()
     scope.launch {
-        app.playAudioAndAwait(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+        app.playAudioAndAwait(text, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
     }
 }
 

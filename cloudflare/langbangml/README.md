@@ -2,9 +2,10 @@
 
 Cloudflare is the only backend for LangBangML.
 
-- Worker: `https://langbangml-api.alpacapps.workers.dev`
+- Worker: `https://langbangml-api.langbangml.workers.dev`
 - D1 database: `langbangml`
-- R2 bucket: `alpacapps`
+- R2 bucket: `langbangml`
+- Public R2 base: `https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev`
 - Audio prefix: `langbang/audio`
 
 ## Endpoints
@@ -40,8 +41,10 @@ needed for content or UX-label changes that are represented in the bootstrap.
 Run from this directory:
 
 ```bash
-export BW_SESSION=$(~/bin/bw-unlock)
-export CLOUDFLARE_API_TOKEN=$(bw get item "Cloudflare — LangBangML Worker Deploy" | jq -r '.login.password')
+BW_PASSWORD="$(security find-generic-password -a "rahulioson@gmail.com" -s "bitwarden-cli" -w 2>/dev/null)"
+export BW_PASSWORD
+export BW_SESSION="$(bw unlock --passwordenv BW_PASSWORD --raw)"
+export CLOUDFLARE_API_TOKEN="$(bw get item "Cloudflare - LangBang Codex Claude Admin" --session "$BW_SESSION" | jq -r '.fields[] | select(.name == "Cloudflare Account API Token") | .value')"
 npx wrangler d1 migrations apply langbangml --remote
 ```
 
@@ -51,8 +54,10 @@ with `INSERT OR REPLACE`.
 ## Deploy Worker
 
 ```bash
-export BW_SESSION=$(~/bin/bw-unlock)
-export CLOUDFLARE_API_TOKEN=$(bw get item "Cloudflare — LangBangML Worker Deploy" | jq -r '.login.password')
+BW_PASSWORD="$(security find-generic-password -a "rahulioson@gmail.com" -s "bitwarden-cli" -w 2>/dev/null)"
+export BW_PASSWORD
+export BW_SESSION="$(bw unlock --passwordenv BW_PASSWORD --raw)"
+export CLOUDFLARE_API_TOKEN="$(bw get item "Cloudflare - LangBang Codex Claude Admin" --session "$BW_SESSION" | jq -r '.fields[] | select(.name == "Cloudflare Account API Token") | .value')"
 npx wrangler deploy
 ```
 
@@ -84,11 +89,45 @@ Authorization: Bearer $LANGBANGML_CONTENT_TOKEN
 
 For local coding sessions, use the helper script. It reads the token from
 `LANGBANGML_CONTENT_TOKEN` or the Bitwarden item
-`Cloudflare — LangBangML Content API`.
+`Cloudflare — LangBangML Content API — New Account`, falling back to the old
+`Cloudflare — LangBangML Content API` item if needed.
 
 ```bash
 scripts/langbangml-content-api.sh GET /v1/admin/content/en-pl-v1/lessons
 ```
+
+## Publish APK Builds
+
+The app now has two debug APK flavors:
+
+- `enPl`: English speakers learning Polish, package `com.sponic.langbangml.enpl`,
+  instance `langbangml-en-pl`.
+- `plEn`: Polish speakers learning English, package `com.sponic.langbangml.plen`,
+  instance `langbangml-pl-en`.
+
+Publish both channels to the new-account R2 bucket:
+
+```bash
+scripts/publish-langbangml-builds.sh
+```
+
+The script builds both flavors, uploads pinned and latest APKs, writes separate
+update manifests, uploads an R2-hosted fallback builds page, deploys the
+`langbang.org` Worker page when the site deploy script is available, and verifies
+that the live builds page references the just-published latest and pinned URLs:
+
+- `langbang/builds/en-pl/langbangml-en-pl-latest.apk`
+- `langbang/builds/en-pl/latest.json`
+- `langbang/builds/pl-en/langbangml-pl-en-latest.apk`
+- `langbang/builds/pl-en/latest.json`
+- `langbang/builds/index.html`
+
+`https://langbang.org/builds` currently serves the public builds page through
+the existing `langbang-placeholder` site Worker route while the downloadable
+APKs and manifests come from this new Cloudflare account's R2 bucket.
+
+Use `--no-site-deploy` only when you deliberately want to publish R2 artifacts
+without touching the `langbang.org` Worker page.
 
 Add a noun:
 

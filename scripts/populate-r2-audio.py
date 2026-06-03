@@ -19,7 +19,7 @@ def main() -> int:
     print(
         "populate-r2-audio.py is disabled for LangBangML. "
         "Use scripts/populate-langbangml-pl-en-audio.py or POST to "
-        "https://langbangml-api.alpacapps.workers.dev/v1/audio/manifest.",
+        "https://langbangml-api.langbangml.workers.dev/v1/audio/manifest.",
         file=sys.stderr,
     )
     return 1

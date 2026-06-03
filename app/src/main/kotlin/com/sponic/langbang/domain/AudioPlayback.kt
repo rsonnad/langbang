@@ -1,7 +1,6 @@
 package com.sponic.langbang.domain
 
 import com.sponic.langbang.LangbangApplication
-import com.sponic.langbang.integrations.AzureTtsClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -55,7 +54,8 @@ suspend fun LangbangApplication.awaitAudioPlayback(file: File) {
 fun LangbangApplication.playPolishTapped(scope: CoroutineScope, text: String) {
     if (text.isBlank()) return
     scope.launch {
-        val file = ensureCachedAudio(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+        val target = targetAudioVoice()
+        val file = ensureCachedAudio(text, target.locale, target.voice)
             ?: return@launch
         audioPlayer.play(file)
     }

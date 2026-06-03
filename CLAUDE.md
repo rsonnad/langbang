@@ -1,268 +1,58 @@
-# LangBang — Project Directives
+# LangBangML — Project Directives
 
-Personal-use Android tablet app for learning Polish. Kotlin + Jetpack Compose,
-min SDK 33, target SDK 36, arm64-v8a only. Source code lives at
-[github.com/rsonnad/langbang](https://github.com/rsonnad/langbang).
+LangBangML is the Cloudflare-backed LangBang fork at:
 
-**Releases live on Cloudflare R2, not on GitHub Releases.** Every build is
-published to the `alpacapps` R2 bucket under `langbang/`:
-
-- Pinned: `https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev/langbang/langbang-v{N}-arm64.apk`
-- Latest: `https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev/langbang/langbang-latest.apk`
-
-For pinned APKs and app-visible version labels, `{N}` is **only** the integer
-`buildNumber` / APK `versionCode`. Use `v245`, not `v0.1.8.245`. The full
-`<versionName>.<buildNumber>` string is Android manifest metadata only.
-
-**Release builds publish immediately after a successful build.** Run
-**`./scripts/publish-r2.sh`** for release work as soon as
-`./gradlew :app:assembleDebug` is green — the script builds, uploads both keys,
-verifies the public URLs return 200, and patches the version label on the
-landing page. Do not create GitHub Releases for this project.
-
-**Interactive tablet iteration uses the build timer only for user request
-churn.** During live UI/debug sessions, do not rebuild while the user is still
-sending rapid feature or UX follow-ups. Start or restart a 60-second idle timer
-after the last user-requested source change; the only required user-facing
-status line is exactly `build timer running....`. Do not announce timer
-invalidations. If the user has not made a feature/UX/source-change request in
-the last 60 seconds and the remaining work is the agent's own verification or
-fix iteration, build immediately without another timer. When a build starts, say
-exactly `building apk...` and keep the update terse. Then run one clean
-`./gradlew :app:assembleDebug`; if it succeeds and the tablet is connected,
-install that APK to the tablet immediately. This tablet-install loop is not an
-R2 release unless the user explicitly asks to publish or release.
-
-## Shared infrastructure (alpacapps)
-
-LangBang reuses three pieces of the alpacapps platform. Full credentials and
-runbooks live in the alpacapps repo at
-`/Users/rahulio/Documents/CodingProjects/genalpaca-admin/docs/CREDENTIALS.md`
-([github.com/rsonnad/alpacapps](https://github.com/rsonnad/alpacapps)) — this
-file just records that langbang is a tenant.
-
-> **Always use the existing recipes, don't invent new ones.**
-> When accessing any alpacapps-shared service (Supabase, R2, Cloudflare,
-> SignWell, Telnyx, Oracle, etc.), copy the canonical recipe from
-> `genalpaca-admin/docs/CREDENTIALS.md` verbatim — the inline
-> `$(bw-read ...)` form is load-bearing (see Recipes section below for the
-> langbang-specific subset). Local gotchas and any working recipes
-> discovered during a session belong in [`memory/service-access.md`](memory/service-access.md).
-> If a recipe fails, fix the BW item or the recipe at its source — don't
-> work around it inline.
-
-### 1. Supabase — `aphrrfprbixmhissnjfn` project, `langbang` schema
-
-- **URL:** `https://aphrrfprbixmhissnjfn.supabase.co`
-- **Schema:** `langbang` (isolated from alpacapps `public`). Created by
-  `genalpaca-admin/supabase/migrations/20260520_langbang_schema.sql`.
-- **Client wiring:** `app/src/main/kotlin/com/sponic/langbang/data/SupabaseClient.kt`
-  installs `Postgrest { defaultSchema = "langbang" }`.
-- **Keys:** `SUPABASE_URL` + `SUPABASE_ANON_KEY` flow via `local.properties` →
-  `BuildConfig`. Anon key is already public in
-  `genalpaca-admin/shared/supabase.js` — RLS does the gating.
-- **Admin access:** `bw-read "Supabase — AlpacApps Project" "Management API Token"`
-  (in DevOps-alpacapps vault). For SQL: POST to
-  `https://api.supabase.com/v1/projects/aphrrfprbixmhissnjfn/database/query`.
-- **Required setup step:** in Supabase Studio → Project Settings → API →
-  Exposed schemas, add `langbang` alongside `public, graphql_public`.
-  PostgREST won't route requests otherwise.
-
-### 2. Cloudflare R2 — `alpacapps` bucket
-
-- **Bucket:** `alpacapps` (shared with alpacapps proper)
-- **S3 endpoint:** `https://9cd3a280a54ce2a5b382602f0247b577.r2.cloudflarestorage.com`
-- **Public read URL:** `https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev/<key>`
-- **Path convention:** put langbang objects under `langbang/` (e.g.
-  `langbang/audio/<sha1>.mp3`, `langbang/builds/app-<ver>.apk`) so they don't
-  collide with alpacapps' `housephotos/`, `lease-documents/`, etc.
-- **Credentials:** `bw-read "Cloudflare R2 — Object Storage" "Access Key ID"`
-  / `"Secret Access Key"` (DevOps-shared vault). The Cloudflare DNS token
-  does NOT have R2 write perms — always use the S3 keys.
-- **Free tier headroom:** 10 GB storage, 10M reads/mo, 1M writes/mo, zero
-  egress. App backups currently SFTP to ALPUCA — R2 is available as an
-  alternative or mirror.
-
-### 3. GitHub Pages — alpacaplayhouse.com
-
-- **Live page:** `https://alpacaplayhouse.com/rahulio/pages/langbang/` (after
-  the alpacapps repo is pushed) — source at
-  `genalpaca-admin/rahulio/pages/langbang/index.html`. Links to GitHub
-  Releases for APK downloads.
-- **Manifest entry:** `genalpaca-admin/rahulio/pages/pages-manifest.json`
-  (section: "Projects").
-- **Deploy mechanism:** Cloudflare Pages auto-deploys on push to `main` of
-  the alpacapps repo. No build step.
-- **Custom domain CNAME:** `alpacaplayhouse.com` (set in
-  `genalpaca-admin/CNAME`).
-
-## Build & version
-
-- **Version source:** `version.properties` at repo root. `app/build.gradle.kts`
-  bumps `buildNumber` on every assemble/bundle/install; `versionName` is
-  manually bumped on releases.
-- **Current displayed version:** `v<buildNumber>` only (e.g. `v245`). The main
-  header, Settings header, update banner, R2 pinned filename, and page label all
-  use this short build tag.
-- **Pinned release tag:** `v<buildNumber>` only (e.g. `v245`). Do not create
-  tags like `v0.1.8.245`; the semantic prefix is Android manifest metadata, not
-  an app-visible or publish tag.
-- **APK output:** `app/build/outputs/apk/debug/app-arm64-v8a-debug.apk` (~60 MB,
-  Speech SDK native libs dominate).
-- **Install over Tailscale:** `~/bin/adb-tab` connects to the Tab A9+; then
-  `adb -s <ip:port> install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk`.
-
-## Secrets summary (`local.properties`)
-
-```
-AZURE_SPEECH_KEY=<bw item 3d26dda5-fea1-4362-b30c-b44f001e860c>
-AZURE_SPEECH_REGION=eastus
-GEMINI_API_KEY=<bw item c4b16931-335b-457a-9910-b416006d3b8c>
-SUPABASE_URL=https://aphrrfprbixmhissnjfn.supabase.co
-SUPABASE_ANON_KEY=<public, mirrors genalpaca-admin/shared/supabase.js>
+```text
+/Users/rahulio/Documents/CodingProjects/LangBangML
 ```
 
-All five flow through `buildConfigField` declarations in
-`app/build.gradle.kts` and are read as `BuildConfig.<NAME>` at runtime.
+It is separate from the original bundled-asset Android app in
+`/Users/rahulio/Documents/CodingProjects/langbang`.
 
-## Recipes — easy access
+## Cloudflare
 
-All BW commands assume `export BW_SESSION=$(~/bin/bw-unlock)` has been run
-this shell. `bw-read` resolves the named item; recipes below are
-copy-paste verbatim.
+LangBangML uses the new LangBang Cloudflare account:
 
-### Supabase — run SQL against the langbang schema
+- Worker: `https://langbangml-api.langbangml.workers.dev`
+- D1 database: `langbangml`
+- R2 bucket: `langbangml`
+- Public R2 base: `https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev`
+- Main R2 prefix: `langbang/`
+
+Do not publish LangBangML artifacts to the old `alpacapps` R2 bucket. The old
+account values may remain only in migration evidence or cleanup prompts.
+
+## Build And Publish
+
+The app has two debug APK flavors:
+
+- `enPl`: package `com.sponic.langbangml.enpl`, instance `langbangml-en-pl`
+- `plEn`: package `com.sponic.langbangml.plen`, instance `langbangml-pl-en`
+
+Use the flavor-aware publisher:
 
 ```bash
-TOKEN=$(bw-read "Supabase — AlpacApps Project" "Management API Token")
-curl -s -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"query":"SELECT * FROM langbang.<table> LIMIT 5;"}' \
-  "https://api.supabase.com/v1/projects/aphrrfprbixmhissnjfn/database/query"
+scripts/publish-langbangml-builds.sh
 ```
 
-### Supabase — deploy an Edge Function
+The legacy `scripts/publish-r2.sh` is intentionally disabled in this fork.
 
-```bash
-export BW_SESSION=$(~/bin/bw-unlock)
-export SUPABASE_ACCESS_TOKEN=$(bw-read "Supabase — AlpacApps Project" "Management API Token")
-cd /Users/rahulio/Documents/CodingProjects/genalpaca-admin
-supabase functions deploy <name> --no-verify-jwt --project-ref aphrrfprbixmhissnjfn
-```
+For local tablet iteration, build the changed flavor and install it on the
+Samsung tablet when `100.103.110.7:5555` is connected.
 
-The `SUPABASE_ACCESS_TOKEN` env var is load-bearing — without it the CLI
-returns `unexpected deploy status 401: Unauthorized`. Full rotation recipe
-(when this PAT also goes stale) and gotchas are in
-[`memory/service-access.md`](memory/service-access.md).
+## Backend Helpers
 
-### Supabase — add a langbang migration
+- Content API helper: `scripts/langbangml-content-api.sh`
+- Worker source: `cloudflare/langbangml/src/index.js`
+- Worker config: `cloudflare/langbangml/wrangler.toml`
+- Migration evidence: `docs/cloudflare-migration/`
+- Cleanup prompts: `docs/prompts/`
 
-Migrations live in the alpacapps repo, not here. From any directory:
+Admin tokens and new Cloudflare operational credentials belong in Bitwarden
+collection `devops-langbang`.
 
-```bash
-F=/Users/rahulio/Documents/CodingProjects/genalpaca-admin/supabase/migrations/$(date +%Y%m%d)_langbang_<name>.sql
-cat > "$F" <<'SQL'
--- langbang: <one-line purpose>
-CREATE TABLE IF NOT EXISTS langbang.<table> (...);
-SQL
-```
+## Cleanup Boundary
 
-Apply it the same way as any other SQL (recipe above), or via the
-Supabase CLI from the alpacapps repo: `cd genalpaca-admin && supabase db push`.
-
-### Supabase — call from Kotlin
-
-```kotlin
-import com.sponic.langbang.data.SupabaseClientHolder
-import io.github.jan.supabase.postgrest.postgrest
-
-suspend fun fetchPhrases(): List<Phrase> =
-    SupabaseClientHolder.client.postgrest
-        .from("phrases")          // resolves to langbang.phrases
-        .select()
-        .decodeList<Phrase>()
-```
-
-`@Serializable data class Phrase(val id: Long, val pl: String, val en: String)`
-— schema is implicit from `defaultSchema = "langbang"`.
-
-### R2 — upload a file (S3 API)
-
-```bash
-AWS_ACCESS_KEY_ID="$(bw-read "Cloudflare R2 — Object Storage" "Access Key ID")" \
-AWS_SECRET_ACCESS_KEY="$(bw-read "Cloudflare R2 — Object Storage" "Secret Access Key")" \
-aws s3 cp ./local-file.mp3 s3://alpacapps/langbang/audio/local-file.mp3 \
-  --endpoint-url https://9cd3a280a54ce2a5b382602f0247b577.r2.cloudflarestorage.com
-```
-
-Public URL after upload:
-`https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev/langbang/audio/local-file.mp3`
-
-### R2 — list and delete
-
-```bash
-# Same env-var prefix as the upload recipe above.
-EP="--endpoint-url https://9cd3a280a54ce2a5b382602f0247b577.r2.cloudflarestorage.com"
-aws s3 ls s3://alpacapps/langbang/ $EP                 # list
-aws s3 rm s3://alpacapps/langbang/audio/foo.mp3 $EP   # delete one
-```
-
-### R2 — fetch from the Android app
-
-Public objects need no auth — plain HTTP GET works:
-
-```kotlin
-val url = "https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev/langbang/audio/$sha1.mp3"
-URL(url).openStream().use { it.copyTo(FileOutputStream(localFile)) }
-```
-
-For writes from the app, prefer a Supabase Edge Function that wraps R2
-(see `genalpaca-admin/supabase/functions/_shared/r2-upload.ts`) — keeps
-the S3 secret off the device.
-
-### GitHub Pages — update the langbang landing page
-
-```bash
-cd /Users/rahulio/Documents/CodingProjects/genalpaca-admin
-$EDITOR rahulio/pages/langbang/index.html
-# Bump the modifiedAt for this entry in rahulio/pages/pages-manifest.json
-git add rahulio/pages/langbang/ rahulio/pages/pages-manifest.json
-git commit -m "langbang page: <what changed>"
-git push                                  # Cloudflare Pages auto-deploys
-```
-
-Live URL: `https://alpacaplayhouse.com/rahulio/pages/langbang/` (typically
-~30s after push).
-
-### GitHub Pages — host an asset (screenshot, etc.)
-
-```bash
-cp ~/some-screenshot.png \
-   /Users/rahulio/Documents/CodingProjects/genalpaca-admin/rahulio/pages/langbang/screenshot.png
-# Reference in index.html as <img src="screenshot.png">
-```
-
-For large binaries (APKs, audio packs), use R2 or GitHub Releases —
-don't commit them to the alpacapps repo.
-
-### Releases — publish a new APK
-
-```bash
-cd /Users/rahulio/Documents/CodingProjects/langbang
-./gradlew :app:assembleDebug
-APK=app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
-VER=$(awk -F= '/versionName/{n=$2}/buildNumber/{b=$2}END{print n"."b}' version.properties)
-gh release create "v$VER" "$APK" --title "v$VER" --notes "See CHANGELOG"
-```
-
-The landing page's "Latest release" link auto-points at
-`github.com/rsonnad/langbang/releases/latest`.
-
-## Project Identity Check
-
-This is **langbang**. If the user mentions **alpacapps**, **finleg**,
-**portsie**, or **sponic** and the request doesn't match this project,
-warn before acting:
-> "You mentioned **{keyword}** but this session is in **langbang**. Did
-> you mean to run this in the other project?"
+Do not delete Cloudflare resources unless the user explicitly asks for cleanup.
+Before any old-account cleanup, follow
+`docs/prompts/02-cleanup-old-langbang-cloudflare-account.md`.

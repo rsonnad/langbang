@@ -70,7 +70,9 @@ import com.sponic.langbang.ui.common.StudyQueuePlayer
 import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.ensureCachedAudio
 import com.sponic.langbang.domain.playAudioAndAwait
-import com.sponic.langbang.integrations.AzureTtsClient
+import com.sponic.langbang.domain.sourceAudioVoice
+import com.sponic.langbang.domain.targetAudioVoice
+import com.sponic.langbang.domain.targetSlowVoice
 import com.sponic.langbang.ui.common.CompactLessonListCard
 import com.sponic.langbang.ui.common.CompactLessonListDefaults
 import com.sponic.langbang.ui.common.DelayedEnglishTranslation
@@ -264,13 +266,13 @@ private fun PhraseDetail(
             .map { it.polishWordForPhraseAudio() }
             .filter { it.isNotEmpty() }
             .distinct()
-            .forEach { w -> app.ensureCachedAudio(w, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F) }
+            .forEach { w -> app.ensureCachedAudio(w, app.targetAudioVoice().locale, app.targetAudioVoice().voice) }
     }
 
     fun startPlayback(items: List<SentenceExample>, quiz: Boolean) {
         if (items.isEmpty()) return
         player.stop()
-        val slowPlVoice = app.audioPrefs.slowPlVoice()
+        val slowPlVoice = app.targetSlowVoice()
         val slow = slowFirst
         player.start(
             total = items.size,
@@ -279,33 +281,33 @@ private fun PhraseDetail(
             },
             prefetchItem = { i ->
                 val s = items[i]
-                app.ensureCachedAudio(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-                app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-                if (slow) app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                app.ensureCachedAudio(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
+                if (slow) app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, slowPlVoice)
             },
         ) { i ->
             val s = items[i]
             val pos = "${i + 1}/${items.size}"
             if (quiz) {
                 publishNV(s, "en", pos, plHidden = true, quiz = true)
-                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 publishNV(s, "pause", pos, plHidden = true, quiz = true)
                 reveal(1500L)
                 if (slow) {
                     publishNV(s, "pl-slow", pos, plHidden = false, quiz = true)
-                    say(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                    say(s.pl, app.targetAudioVoice().locale, slowPlVoice)
                 }
                 publishNV(s, "pl", pos, plHidden = false, quiz = true)
-                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             } else {
                 publishNV(s, "en", pos)
-                say(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
+                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 if (slow) {
                     publishNV(s, "pl-slow", pos)
-                    say(s.pl, AzureTtsClient.LOCALE_PL, slowPlVoice)
+                    say(s.pl, app.targetAudioVoice().locale, slowPlVoice)
                 }
                 publishNV(s, "pl", pos)
-                say(s.pl, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+                say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             }
         }
     }
@@ -318,8 +320,8 @@ private fun PhraseDetail(
             // A list word-tap is a quick lookup: one normal-rate pronunciation, played
             // straight from cache once the group warm-up above has reached it. (The
             // deliberate slow→normal study pass still lives in the Now Voicing word taps.)
-            app.ensureCachedAudio(word, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-            playAndAwait(app, word, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
+            app.ensureCachedAudio(word, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
+            playAndAwait(app, word, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
         }
     }
 
@@ -453,15 +455,12 @@ private fun PhraseDetail(
                         // Inline one-off playback stays local; queue playback drives
                         // Now Voicing so tapping a row doesn't jump the user around.
                         scope.launch {
-                            val slowPlVoice = app.audioPrefs.slowPlVoice()
+                            val slowPlVoice = app.targetSlowVoice()
                             if (slowFirst) {
-                                app.ensureCachedAudio(s.pl, AzureTtsClient.LOCALE_PL,
-                                    slowPlVoice)
-                                playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL,
-                                    slowPlVoice)
+                                app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, slowPlVoice)
+                                playAndAwait(app, s.pl, app.targetAudioVoice().locale, slowPlVoice)
                             }
-                            playAndAwait(app, s.pl, AzureTtsClient.LOCALE_PL,
-                                AzureTtsClient.PL_PL_F)
+                            playAndAwait(app, s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                         }
                     }
                 )

@@ -96,13 +96,44 @@ android {
         buildConfigField(
             "String",
             "LANGBANGML_API_BASE",
-            "\"${localProps.getProperty("LANGBANGML_API_BASE", "https://langbangml-api.alpacapps.workers.dev")}\""
+            "\"${localProps.getProperty("LANGBANGML_API_BASE", "https://langbangml-api.langbangml.workers.dev")}\""
         )
         buildConfigField(
             "String",
             "LANGBANGML_INSTANCE_ID",
             "\"${localProps.getProperty("LANGBANGML_INSTANCE_ID", "langbangml-en-pl")}\""
         )
+        buildConfigField(
+            "String",
+            "LANGBANGML_UPDATE_MANIFEST_URL",
+            "\"${localProps.getProperty("LANGBANGML_UPDATE_MANIFEST_URL", "https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev/langbang/builds/en-pl/latest.json")}\""
+        )
+    }
+
+    flavorDimensions += "direction"
+    productFlavors {
+        create("enPl") {
+            dimension = "direction"
+            applicationIdSuffix = ".enpl"
+            resValue("string", "app_name", "LangBang EN-PL")
+            buildConfigField("String", "LANGBANGML_INSTANCE_ID", "\"langbangml-en-pl\"")
+            buildConfigField(
+                "String",
+                "LANGBANGML_UPDATE_MANIFEST_URL",
+                "\"https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev/langbang/builds/en-pl/latest.json\""
+            )
+        }
+        create("plEn") {
+            dimension = "direction"
+            applicationIdSuffix = ".plen"
+            resValue("string", "app_name", "LangBang PL-EN")
+            buildConfigField("String", "LANGBANGML_INSTANCE_ID", "\"langbangml-pl-en\"")
+            buildConfigField(
+                "String",
+                "LANGBANGML_UPDATE_MANIFEST_URL",
+                "\"https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev/langbang/builds/pl-en/latest.json\""
+            )
+        }
     }
 
     buildFeatures {

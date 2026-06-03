@@ -5,7 +5,6 @@ import com.sponic.langbang.data.model.AdjectiveEntry
 import com.sponic.langbang.data.model.NounEntry
 import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.data.model.VerbEntry
-import com.sponic.langbang.data.model.audioPronoun
 import com.sponic.langbang.integrations.AzureTtsClient
 
 data class PrefetchProgress(
@@ -51,42 +50,44 @@ class PrefetchService(
     /** Synthesise TTS for every form of a newly-added verb so playback works immediately. */
     suspend fun prefetchVerb(verb: VerbEntry) {
         verb.forms.forEach { (k, form) ->
-            val text = "${audioPronoun(k)} $form".trim()
+            val text = "${repo.targetSubjectFor(k)} $form".trim()
             if (text.isEmpty()) return@forEach
-            ensurePl(text)
+            ensureTarget(text)
         }
         verb.past_forms?.forEach { (k, form) ->
-            val text = "${audioPronoun(k)} $form".trim()
+            val text = "${repo.targetSubjectFor(k)} $form".trim()
             if (text.isEmpty()) return@forEach
-            ensurePl(text)
+            ensureTarget(text)
         }
     }
 
     /** Synthesise TTS for every form of a newly-added adjective. */
     suspend fun prefetchAdjective(adj: AdjectiveEntry) {
-        (adj.nom.values + adj.acc.values).forEach { form -> ensurePl(form) }
+        (adj.nom.values + adj.acc.values).forEach { form -> ensureTarget(form) }
     }
 
     /** Synthesise TTS for every form of a newly-added noun. */
     suspend fun prefetchNoun(noun: NounEntry) {
-        (noun.nom.values + noun.acc.values + noun.gen.values).forEach { form -> ensurePl(form) }
+        (noun.nom.values + noun.acc.values + noun.gen.values).forEach { form -> ensureTarget(form) }
     }
 
-    /** Synthesise both sides of each generated example sentence (EN cue + PL target + slow PL). */
+    /** Synthesise both sides of each generated example sentence (source cue + target + slow target). */
     suspend fun prefetchSentences(sentences: List<SentenceExample>) {
+        val source = repo.sourceAudioVoice()
         sentences.forEach { s ->
-            ensureAudio(s.en, AzureTtsClient.LOCALE_EN, AzureTtsClient.EN_US_F)
-            ensurePl(s.pl)
+            ensureAudio(s.en, source.locale, source.voice)
+            ensureTarget(s.pl)
         }
     }
 
-    private suspend fun ensurePl(text: String) {
+    private suspend fun ensureTarget(text: String) {
         if (text.isEmpty()) return
-        ensureAudio(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F)
-        // Only the two slow variants playback can select — the legacy -50% is intentionally
-        // NOT pre-cached (nothing plays it, R2 never serves it). See [audioManifest].
-        ensureAudio(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F_SLOW_V2)
-        ensureAudio(text, AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F_SLOW_ART)
+        val target = repo.targetAudioVoice()
+        val slowVoices = repo.targetSlowVoices().ifEmpty {
+            listOf("${target.voice}|slow60v1", "${target.voice}|slowart1")
+        }
+        ensureAudio(text, target.locale, target.voice)
+        slowVoices.forEach { ensureAudio(text, target.locale, it) }
     }
 
     private suspend fun ensureAudio(text: String, locale: String, voice: String) {

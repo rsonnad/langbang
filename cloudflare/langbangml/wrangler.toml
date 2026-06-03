@@ -1,18 +1,20 @@
 name = "langbangml-api"
 main = "src/index.js"
 compatibility_date = "2024-12-01"
-account_id = "9cd3a280a54ce2a5b382602f0247b577"
+account_id = "df99afea5ab9636a19adbdead37fc133"
+workers_dev = true
+preview_urls = false
 
 [vars]
-PUBLIC_R2_BASE = "https://pub-5a7344c4dab2467eb917ff4b897e066d.r2.dev"
+PUBLIC_R2_BASE = "https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev"
 AUDIO_PREFIX = "langbang/audio"
 AZURE_SPEECH_REGION = "eastus"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "langbangml"
-database_id = "0c56de2d-285a-4f72-b629-29b508eb8348"
+database_id = "d259445e-d263-4ae2-a391-f0d176492265"
 
 [[r2_buckets]]
 binding = "BUCKET"
-bucket_name = "alpacapps"
+bucket_name = "langbangml"

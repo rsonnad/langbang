@@ -32,6 +32,16 @@ class AudioPrefsStore(context: Context) {
         SlowStyle.ARTICULATE -> AzureTtsClient.PL_PL_F_SLOW_ART
     }
 
+    fun slowTargetVoice(configuredVoices: List<String>, fallbackVoice: String): String {
+        val suffix = when (_slowStyle.value) {
+            SlowStyle.STRETCH -> AzureTtsClient.SLOW_SUFFIX_V2
+            SlowStyle.ARTICULATE -> AzureTtsClient.SLOW_SUFFIX_V3
+        }
+        return configuredVoices.firstOrNull { it.endsWith(suffix) }
+            ?: configuredVoices.firstOrNull()
+            ?: fallbackVoice
+    }
+
     private fun loadSlowStyle(): SlowStyle {
         val raw = prefs.getString(KEY_SLOW_STYLE, null) ?: return SlowStyle.STRETCH
         return runCatching { SlowStyle.valueOf(raw) }.getOrDefault(SlowStyle.STRETCH)

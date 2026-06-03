@@ -16,7 +16,7 @@ import time
 import urllib.error
 import urllib.request
 
-API_BASE = "https://langbangml-api.alpacapps.workers.dev"
+API_BASE = "https://langbangml-api.langbangml.workers.dev"
 INSTANCE_ID = "langbangml-pl-en"
 BATCH_SIZE = 30
 USER_AGENT = "curl/8.4.0"

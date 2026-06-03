@@ -2,6 +2,7 @@ package com.sponic.langbang.data
 
 import android.content.Context
 import com.sponic.langbang.cloud.CloudConfigStore
+import com.sponic.langbang.cloud.CloudLanguagePair
 import com.sponic.langbang.data.model.AdjectiveEntry
 import com.sponic.langbang.data.model.AdjectiveLesson
 import com.sponic.langbang.data.model.AdverbEntry
@@ -269,6 +270,9 @@ class LessonRepository(
         cachedLesson6Base = null
         cachedPron = null
     }
+
+    fun cloudLanguagePair(): CloudLanguagePair? =
+        cloudConfig?.state?.value?.bootstrap?.languagePair
 
     private inline fun <reified T> cloudLesson(id: String): T? {
         val payload = cloudConfig?.state?.value?.bootstrap?.content?.lessons

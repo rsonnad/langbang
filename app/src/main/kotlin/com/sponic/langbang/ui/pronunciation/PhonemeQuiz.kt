@@ -56,7 +56,7 @@ import com.sponic.langbang.data.model.TokenPair
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
-import com.sponic.langbang.integrations.AzureTtsClient
+import com.sponic.langbang.domain.targetAudioVoice
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
@@ -404,7 +404,7 @@ private fun ExampleRow(app: LangbangApplication, ex: ExampleWord) {
 }
 
 private fun exampleFile(app: LangbangApplication, ex: ExampleWord): File =
-    app.audioCache.fileFor(AzureTtsClient.LOCALE_PL, AzureTtsClient.PL_PL_F, ex.pl)
+    app.targetAudioVoice().let { app.audioCache.fileFor(it.locale, it.voice, ex.pl) }
 
 /**
  * Suspends until [file] finishes playing, or returns immediately if the file is missing
