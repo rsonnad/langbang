@@ -1,5 +1,6 @@
 package com.sponic.langbang.cloud
 
+import com.sponic.langbang.data.model.TokenPair
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
@@ -80,6 +81,25 @@ data class CloudAudioConfig(
     val manifestEndpoint: String,
     val publicR2Base: String,
     val audioPrefix: String
+)
+
+@Serializable
+data class CloudPhraseCompletionRequest(
+    val sourceText: String = "",
+    val targetText: String = "",
+    val literalText: String = "",
+    val sourceLanguage: String,
+    val targetLanguage: String
+)
+
+@Serializable
+data class CloudPhraseCompletionResponse(
+    val consistent: Boolean = true,
+    val issue: String = "",
+    val source: String = "",
+    val target: String = "",
+    val literal: String? = null,
+    val words: List<TokenPair> = emptyList()
 )
 
 data class CloudSyncState(

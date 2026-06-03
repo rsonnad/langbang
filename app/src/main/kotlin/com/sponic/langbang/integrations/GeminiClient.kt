@@ -20,7 +20,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Calls Google Gemini's REST `generateContent` endpoint to translate an English verb to its
+ * Calls the LangBangML backend Gemini proxy to translate an English verb to its
  * Polish infinitive and produce all six present-tense forms. We ask Gemini to return JSON
  * only so parsing is a single decode.
  */
@@ -31,6 +31,7 @@ class GeminiClient(
     companion object {
         const val TENSE_PRESENT = "present"
         const val TENSE_PAST = "past"
+        private const val DEFAULT_MODEL = "gemini-3.5-flash"
 
         /**
          * Path key for the server-side sentence bundle tree in R2
@@ -82,18 +83,10 @@ class GeminiClient(
         const val NOUN_WIPE_VERSION = 2
     }
 
-    private val key = BuildConfig.GEMINI_API_KEY
-    private val endpoint =
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
     private val json = LbJson.lenient
 
     suspend fun translateVerb(englishInfinitive: String): Result<VerbEntry> =
         withContext(Dispatchers.IO) {
-            if (key.isBlank()) {
-                return@withContext Result.failure(
-                    IllegalStateException("GEMINI_API_KEY not set in local.properties")
-                )
-            }
             try {
                 val raw = postPrompt(buildPrompt(englishInfinitive))
                 Result.success(parseResponse(raw, englishInfinitive))
@@ -117,11 +110,6 @@ class GeminiClient(
         tense: String = TENSE_PRESENT
     ): Result<List<SentenceExample>> =
         withContext(Dispatchers.IO) {
-            if (key.isBlank()) {
-                return@withContext Result.failure(
-                    IllegalStateException("GEMINI_API_KEY not set in local.properties")
-                )
-            }
             if (tense == TENSE_PAST && verb.past_forms.isNullOrEmpty()) {
                 return@withContext Result.failure(
                     IllegalStateException("Verb ${verb.lemma} has no past_forms")
@@ -140,11 +128,6 @@ class GeminiClient(
      */
     suspend fun translateAdjective(englishAdjective: String): Result<AdjectiveEntry> =
         withContext(Dispatchers.IO) {
-            if (key.isBlank()) {
-                return@withContext Result.failure(
-                    IllegalStateException("GEMINI_API_KEY not set in local.properties")
-                )
-            }
             try {
                 val raw = postPrompt(buildAdjectivePrompt(englishAdjective))
                 Result.success(parseAdjectiveResponse(raw, englishAdjective))
@@ -160,11 +143,6 @@ class GeminiClient(
      */
     suspend fun generateAdjectiveSentences(adjective: AdjectiveEntry): Result<List<SentenceExample>> =
         withContext(Dispatchers.IO) {
-            if (key.isBlank()) {
-                return@withContext Result.failure(
-                    IllegalStateException("GEMINI_API_KEY not set in local.properties")
-                )
-            }
             try {
                 val raw = postPrompt(buildAdjectiveSentencePrompt(adjective))
                 Result.success(parseSentenceResponse(raw))
@@ -173,30 +151,32 @@ class GeminiClient(
             }
         }
 
-    private fun postPrompt(prompt: String): String {
-        val conn = URL("$endpoint?key=$key").openConnection() as HttpURLConnection
+    private fun postPrompt(prompt: String, model: String = DEFAULT_MODEL): String {
+        val endpoint = "${BuildConfig.LANGBANGML_API_BASE.trimEnd('/')}/v1/gemini/generate"
+        val conn = URL(endpoint).openConnection() as HttpURLConnection
         conn.requestMethod = "POST"
         conn.doOutput = true
         conn.connectTimeout = 15000
-        conn.readTimeout = 30000
+        conn.readTimeout = 45000
         conn.setRequestProperty("Content-Type", "application/json")
+        conn.setRequestProperty("Accept", "application/json")
 
         conn.outputStream.use {
-            it.write(buildRequestBody(prompt).toByteArray(Charsets.UTF_8))
+            it.write(buildServerRequestBody(prompt, model).toByteArray(Charsets.UTF_8))
         }
 
         if (conn.responseCode !in 200..299) {
             val err = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-            throw RuntimeException("Gemini ${conn.responseCode}: $err")
+            throw RuntimeException("LangBangML Gemini ${conn.responseCode}: $err")
         }
         val raw = conn.inputStream.bufferedReader().use { it.readText() }
         recordUsageFromResponse(raw)
         return raw
     }
 
-    // Gemini returns usageMetadata.{promptTokenCount, totalTokenCount, …} on every
+    // Gemini returns usageMetadata.{promptTokenCount, totalTokenCount, ...} on every
     // successful call. We derive output = total - prompt so thinking tokens
-    // (which 2.5-flash bills as output) are included automatically. Wrapped in
+    // are included automatically. Wrapped in
     // try/catch so a malformed usage block never breaks an otherwise good response.
     private fun recordUsageFromResponse(raw: String) {
         val tracker = usage ?: return
@@ -223,17 +203,25 @@ class GeminiClient(
         "byliście, byli). Use lowercase Polish with correct diacritics. The lemma must be " +
         "the standard imperfective infinitive when one exists."
 
-    private fun buildRequestBody(prompt: String): String {
-        val escaped = prompt
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
+    private fun buildServerRequestBody(prompt: String, model: String): String {
+        val escapedPrompt = prompt.jsonValue()
+        val escapedModel = model.jsonValue()
         return """
             {
-              "contents":[{"parts":[{"text":"$escaped"}]}],
-              "generationConfig":{"temperature":0.1,"responseMimeType":"application/json"}
+              "model":$escapedModel,
+              "prompt":$escapedPrompt
             }
         """.trimIndent()
+    }
+
+    private fun geminiText(raw: String): String {
+        val root = json.parseToJsonElement(raw).jsonObject
+        val candidates = root["candidates"] as? JsonArray ?: error("Gemini: candidates missing")
+        val first = candidates.firstOrNull()?.jsonObject ?: error("Gemini: empty candidates")
+        val parts = first["content"]?.jsonObject?.get("parts") as? JsonArray
+            ?: error("Gemini: parts missing")
+        return parts.firstOrNull()?.jsonObject?.get("text")?.jsonPrimitive?.content
+            ?: error("Gemini: text missing")
     }
 
     private fun buildSentencePrompt(
@@ -333,13 +321,7 @@ class GeminiClient(
     }
 
     private fun parseSentenceResponse(raw: String): List<SentenceExample> {
-        val root = json.parseToJsonElement(raw).jsonObject
-        val candidates = root["candidates"] as? JsonArray ?: error("Gemini: candidates missing")
-        val first = candidates.firstOrNull()?.jsonObject ?: error("Gemini: empty candidates")
-        val parts = first["content"]?.jsonObject?.get("parts") as? JsonArray
-            ?: error("Gemini: parts missing")
-        val text = parts.firstOrNull()?.jsonObject?.get("text")?.jsonPrimitive?.content
-            ?: error("Gemini: text missing")
+        val text = geminiText(raw)
         val arr = json.parseToJsonElement(text.trim()).jsonArray
         val sentences = arr.mapNotNull { el ->
             val obj = el.jsonObject
@@ -541,11 +523,6 @@ class GeminiClient(
 
     suspend fun translateAdverb(englishAdverb: String): Result<AdverbEntry> =
         withContext(Dispatchers.IO) {
-            if (key.isBlank()) {
-                return@withContext Result.failure(
-                    IllegalStateException("GEMINI_API_KEY not set in local.properties")
-                )
-            }
             try {
                 val raw = postPrompt(buildAdverbPrompt(englishAdverb))
                 Result.success(parseAdverbResponse(raw, englishAdverb))
@@ -556,11 +533,6 @@ class GeminiClient(
 
     suspend fun generateAdverbSentences(adverb: AdverbEntry): Result<List<SentenceExample>> =
         withContext(Dispatchers.IO) {
-            if (key.isBlank()) {
-                return@withContext Result.failure(
-                    IllegalStateException("GEMINI_API_KEY not set in local.properties")
-                )
-            }
             try {
                 val raw = postPrompt(buildAdverbSentencePrompt(adverb))
                 Result.success(parseSentenceResponse(raw))
@@ -653,11 +625,6 @@ class GeminiClient(
      */
     suspend fun translateNoun(englishNoun: String): Result<NounEntry> =
         withContext(Dispatchers.IO) {
-            if (key.isBlank()) {
-                return@withContext Result.failure(
-                    IllegalStateException("GEMINI_API_KEY not set in local.properties")
-                )
-            }
             try {
                 val raw = postPrompt(buildNounPrompt(englishNoun))
                 Result.success(parseNounResponse(raw, englishNoun))
@@ -672,11 +639,6 @@ class GeminiClient(
      */
     suspend fun generateNounSentences(noun: NounEntry): Result<List<SentenceExample>> =
         withContext(Dispatchers.IO) {
-            if (key.isBlank()) {
-                return@withContext Result.failure(
-                    IllegalStateException("GEMINI_API_KEY not set in local.properties")
-                )
-            }
             try {
                 val raw = postPrompt(buildNounSentencePrompt(noun))
                 Result.success(parseSentenceResponse(raw))
@@ -795,4 +757,7 @@ class GeminiClient(
         require(noun.gen.size == 2) { "Gemini returned ${noun.gen.size} gen forms, expected 2 (sg, pl)" }
         return noun
     }
+
+    private fun String.jsonValue(): String =
+        "\"" + replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
 }

@@ -29,8 +29,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * `langbang/sentences/v{N}/...`; this service reads the manifest, downloads any
  * missing or stale bundles in parallel, and writes them into the local
  * per-type sentence stores via [LessonRepository]'s save methods. Replaces the
- * minutes-long on-device Gemini regen for canonical content — user-added words
- * still go through [GeminiClient] directly because they aren't in the manifest.
+ * minutes-long on-device Gemini regen for canonical content. User-added words
+ * still go through [GeminiClient], which now proxies Gemini through the backend.
  *
  * Progress is exposed as a [StateFlow] so the always-visible banner and the
  * Settings card render the same live state.

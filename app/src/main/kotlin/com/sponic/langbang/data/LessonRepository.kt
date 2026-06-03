@@ -246,6 +246,14 @@ class LessonRepository(
         userPhrases.add(group)
     }
 
+    fun addUserPhraseSentence(groupId: String, sentence: SentenceExample): PhraseGroup? {
+        val group = lesson5().groups.firstOrNull { it.id.equals(groupId, ignoreCase = true) }
+            ?: return null
+        val updated = group.copy(sentences = group.sentences + sentence)
+        userPhrases.add(updated)
+        return updated
+    }
+
     fun deleteUserPhraseGroup(id: String) {
         userPhrases.remove(id)
     }

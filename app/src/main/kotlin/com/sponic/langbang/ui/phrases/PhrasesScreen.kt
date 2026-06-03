@@ -26,6 +26,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Quiz
@@ -33,20 +35,20 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,16 +67,17 @@ import com.sponic.langbang.data.model.PhraseGroup
 import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
-import com.sponic.langbang.domain.PlaybackController
+import com.sponic.langbang.domain.R2AudioDownloader
 import com.sponic.langbang.ui.common.StudyQueuePlayer
-import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.ensureCachedAudio
 import com.sponic.langbang.domain.playAudioAndAwait
 import com.sponic.langbang.domain.sourceAudioVoice
+import com.sponic.langbang.domain.sourceLanguageLabel
 import com.sponic.langbang.domain.targetAudioVoice
+import com.sponic.langbang.domain.targetLanguageLabel
+import com.sponic.langbang.domain.targetSlowVoices
 import com.sponic.langbang.domain.targetSlowVoice
-import com.sponic.langbang.ui.common.CompactLessonListCard
-import com.sponic.langbang.ui.common.CompactLessonListDefaults
+import com.sponic.langbang.integrations.AzureTtsClient
 import com.sponic.langbang.ui.common.DelayedEnglishTranslation
 import com.sponic.langbang.ui.common.LbButton
 import com.sponic.langbang.ui.common.LbChip
@@ -84,8 +87,6 @@ import com.sponic.langbang.ui.common.StarToggle
 import com.sponic.langbang.ui.common.SubtleCheckbox
 import com.sponic.langbang.ui.common.WordAlignedPolish
 import com.sponic.langbang.ui.theme.LbShapes
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -102,16 +103,93 @@ fun PhrasesScreen(
     app: LangbangApplication,
     nowVoicing: @Composable () -> Unit = {}
 ) {
-    val data = remember { app.lessonRepo.lesson5() }
-    var selected by remember { mutableStateOf(data.groups.firstOrNull()) }
+    val scope = rememberCoroutineScope()
+    val cloudState by app.cloudConfig.state.collectAsState()
+    var refreshKey by remember { mutableIntStateOf(0) }
+    val data = remember(refreshKey, cloudState.bootstrap?.syncedAt) { app.lessonRepo.lesson5() }
+    var selectedId by remember { mutableStateOf<String?>(null) }
+    val selected = data.groups.firstOrNull { it.id == selectedId } ?: data.groups.firstOrNull()
     val starred by app.starredPhrases.starred.collectAsState()
+    val pendingAudio = remember { mutableStateListOf<SentenceExample>() }
+    var showAddGroup by remember { mutableStateOf(false) }
+    var generating by remember { mutableStateOf(false) }
+    var generationStatus by remember { mutableStateOf<String?>(null) }
+    var generationError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(data.groups.map { it.id }) {
+        if (selectedId == null || data.groups.none { it.id == selectedId }) {
+            selectedId = data.groups.firstOrNull()?.id
+        }
+    }
+
+    fun reload(selectGroupId: String? = null) {
+        refreshKey += 1
+        if (selectGroupId != null) selectedId = selectGroupId
+    }
+
+    fun generatePendingAudio() {
+        if (generating || pendingAudio.isEmpty()) return
+        scope.launch {
+            generating = true
+            generationError = null
+            generationStatus = "Preparing ${pendingAudio.size} new phrases"
+            val phrases = audioPhrasesFor(app, pendingAudio)
+            val result = app.r2Audio.downloadPhrases(phrases) { done, total, current ->
+                generationStatus = if (total == 0) {
+                    "Audio already cached"
+                } else {
+                    val name = current.takeIf { it.isNotBlank() } ?: "audio"
+                    "Generating $done/$total · $name"
+                }
+            }
+            result.fold(
+                onSuccess = { summary ->
+                    if (summary.failed == 0) {
+                        pendingAudio.clear()
+                        generationStatus = "Generated ${summary.fetched} · cached ${summary.alreadyCached}"
+                    } else {
+                        generationError = "Generated with ${summary.failed} audio failures"
+                        generationStatus = null
+                    }
+                },
+                onFailure = { t ->
+                    generationError = t.message ?: t.javaClass.simpleName
+                    generationStatus = null
+                }
+            )
+            generating = false
+        }
+    }
+
+    if (showAddGroup) {
+        AddPhraseGroupDialog(
+            onDismiss = { showAddGroup = false },
+            onCreate = { title, subtitle ->
+                val group = PhraseGroup(
+                    id = slugPhraseId(title),
+                    title = title,
+                    subtitle = subtitle,
+                    sentences = emptyList()
+                )
+                app.lessonRepo.addUserPhraseGroup(group)
+                showAddGroup = false
+                reload(group.id)
+            }
+        )
+    }
 
     Row(modifier = Modifier.fillMaxSize()) {
         PhraseGroupList(
             groups = data.groups,
             selected = selected,
             starred = starred,
-            onSelect = { selected = it },
+            pendingCount = pendingAudio.size,
+            generating = generating,
+            generationStatus = generationStatus,
+            generationError = generationError,
+            onAddGroup = { showAddGroup = true },
+            onGeneratePending = ::generatePendingAudio,
+            onSelect = { selectedId = it.id },
             modifier = Modifier
                 .width(360.dp)
                 .fillMaxHeight()
@@ -125,7 +203,11 @@ fun PhrasesScreen(
                         app = app,
                         group = group,
                         groups = data.groups,
-                        onSelectGroup = { selected = it }
+                        onSelectGroup = { selectedId = it.id },
+                        onPhraseAdded = { sentence ->
+                            pendingAudio.add(sentence)
+                            reload(group.id)
+                        }
                     )
                 } ?: Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
@@ -143,6 +225,12 @@ private fun PhraseGroupList(
     groups: List<PhraseGroup>,
     selected: PhraseGroup?,
     starred: Set<String>,
+    pendingCount: Int,
+    generating: Boolean,
+    generationStatus: String?,
+    generationError: String?,
+    onAddGroup: () -> Unit,
+    onGeneratePending: () -> Unit,
     onSelect: (PhraseGroup) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -154,7 +242,24 @@ private fun PhraseGroupList(
         item(key = "phrase-rail-head") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    SectionLabel("Phrase groups", modifier = Modifier.weight(1f))
+                    SectionLabel("Phrase groups")
+                    Spacer(Modifier.width(8.dp))
+                    HeaderIconButton(
+                        icon = Icons.Default.Add,
+                        contentDescription = "Add phrase group",
+                        onClick = onAddGroup
+                    )
+                    if (pendingCount > 0) {
+                        Spacer(Modifier.width(6.dp))
+                        LbButton.Primary(
+                            label = if (generating) "Gen..." else "Gen New",
+                            icon = Icons.Default.CloudDownload,
+                            count = pendingCount,
+                            enabled = !generating,
+                            onClick = onGeneratePending
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
                     LbChip(
                         label = groups.size.toString(),
                         selected = false,
@@ -162,6 +267,12 @@ private fun PhraseGroupList(
                         enabled = false,
                         showCheck = false
                     )
+                }
+                generationStatus?.let {
+                    Text(it, fontSize = 12.sp, color = LbColors.TextMuted)
+                }
+                generationError?.let {
+                    Text(it, fontSize = 12.sp, color = LbColors.Stop, fontWeight = FontWeight.Bold)
                 }
                 Surface(
                     color = LbColors.SurfaceTint,
@@ -237,7 +348,8 @@ private fun PhraseDetail(
     app: LangbangApplication,
     group: PhraseGroup,
     groups: List<PhraseGroup>,
-    onSelectGroup: (PhraseGroup) -> Unit
+    onSelectGroup: (PhraseGroup) -> Unit,
+    onPhraseAdded: (SentenceExample) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val player = remember(group) { StudyQueuePlayer(app, scope) }
@@ -248,6 +360,9 @@ private fun PhraseDetail(
     // not just the current group. Sticky within this composition.
     var starredOnly by remember { mutableStateOf(false) }
     var slowFirst by remember { mutableStateOf(app.practicePrefs.slowFirst()) }
+    var showAddPhrase by remember(group.id) { mutableStateOf(false) }
+    var addPhraseBusy by remember(group.id) { mutableStateOf(false) }
+    var addPhraseError by remember(group.id) { mutableStateOf<String?>(null) }
     val setSlowFirst: (Boolean) -> Unit = { enabled ->
         slowFirst = enabled
         app.practicePrefs.setSlowFirst(enabled)
@@ -255,6 +370,50 @@ private fun PhraseDetail(
     // Stop playback when this group's detail leaves composition.
     DisposableEffect(group) {
         onDispose { player.stop() }
+    }
+
+    if (showAddPhrase) {
+        AddPhraseDialog(
+            sourceLabel = app.sourceLanguageLabel(),
+            targetLabel = app.targetLanguageLabel(),
+            busy = addPhraseBusy,
+            error = addPhraseError,
+            onDismiss = {
+                if (!addPhraseBusy) {
+                    showAddPhrase = false
+                    addPhraseError = null
+                }
+            },
+            onCreate = { sourceText, targetText, literal ->
+                if (!addPhraseBusy) {
+                    scope.launch {
+                        addPhraseBusy = true
+                        addPhraseError = null
+                        app.cloudBackend.completePhrase(
+                            sourceText = sourceText,
+                            targetText = targetText,
+                            literalText = literal,
+                            sourceLanguage = app.sourceLanguageLabel(),
+                            targetLanguage = app.targetLanguageLabel()
+                        ).fold(
+                            onSuccess = { sentence ->
+                                val updated = app.lessonRepo.addUserPhraseSentence(group.id, sentence)
+                                if (updated != null) {
+                                    showAddPhrase = false
+                                    onPhraseAdded(sentence)
+                                } else {
+                                    addPhraseError = "Phrase group is no longer available."
+                                }
+                            },
+                            onFailure = { t ->
+                                addPhraseError = t.message ?: t.javaClass.simpleName
+                            }
+                        )
+                        addPhraseBusy = false
+                    }
+                }
+            }
+        )
     }
 
     // Warm each tappable word's (normal-voice) audio in the background the moment the
@@ -439,6 +598,12 @@ private fun PhraseDetail(
                         )
                     }
                 }
+                HeaderIconButton(
+                    icon = Icons.Default.Add,
+                    contentDescription = "Add phrase",
+                    enabled = !playing,
+                    onClick = { showAddPhrase = true }
+                )
             }
         }
 
@@ -467,6 +632,135 @@ private fun PhraseDetail(
             }
         }
     }
+}
+
+@Composable
+private fun HeaderIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    Surface(
+        color = Color.White.copy(alpha = if (enabled) 1f else 0.45f),
+        shape = LbShapes.Button,
+        border = BorderStroke(1.dp, LbColors.Line.copy(alpha = if (enabled) 1f else 0.45f)),
+        modifier = Modifier
+            .size(30.dp)
+            .clip(LbShapes.Button)
+            .clickable(enabled = enabled, onClick = onClick)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                icon,
+                contentDescription = contentDescription,
+                tint = if (enabled) LbColors.Primary else LbColors.TextMuted,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun AddPhraseGroupDialog(
+    onDismiss: () -> Unit,
+    onCreate: (String, String) -> Unit
+) {
+    var title by remember { mutableStateOf("") }
+    var subtitle by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("New phrase group") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Group name") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = subtitle,
+                    onValueChange = { subtitle = it },
+                    label = { Text("Subtitle") },
+                    minLines = 2
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = title.trim().isNotEmpty(),
+                onClick = { onCreate(title.trim(), subtitle.trim()) }
+            ) {
+                Text("Create")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun AddPhraseDialog(
+    sourceLabel: String,
+    targetLabel: String,
+    busy: Boolean,
+    error: String?,
+    onDismiss: () -> Unit,
+    onCreate: (String, String, String) -> Unit
+) {
+    var source by remember { mutableStateOf("") }
+    var target by remember { mutableStateOf("") }
+    var literal by remember { mutableStateOf("") }
+    val hasAnyField = source.trim().isNotEmpty() ||
+        target.trim().isNotEmpty() ||
+        literal.trim().isNotEmpty()
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("New phrase") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = source,
+                    onValueChange = { source = it },
+                    label = { Text("$sourceLabel cue") },
+                    minLines = 2
+                )
+                OutlinedTextField(
+                    value = target,
+                    onValueChange = { target = it },
+                    label = { Text("$targetLabel answer") },
+                    minLines = 2
+                )
+                OutlinedTextField(
+                    value = literal,
+                    onValueChange = { literal = it },
+                    label = { Text("Literal gloss") },
+                    minLines = 2
+                )
+                error?.let {
+                    Text(
+                        text = it,
+                        color = LbColors.Stop,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = hasAnyField && !busy,
+                onClick = { onCreate(source.trim(), target.trim(), literal.trim()) }
+            ) {
+                Text(if (busy) "Checking..." else "Add")
+            }
+        },
+        dismissButton = {
+            TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable
@@ -584,6 +878,43 @@ private fun phraseGroupTag(group: PhraseGroup): String {
         "travel" in text || "city" in text || "shop" in text -> "Around town"
         else -> "Practice"
     }
+}
+
+private fun audioPhrasesFor(
+    app: LangbangApplication,
+    sentences: List<SentenceExample>
+): List<R2AudioDownloader.Phrase> {
+    val source = app.sourceAudioVoice()
+    val target = app.targetAudioVoice()
+    val slowVoices = app.lessonRepo.targetSlowVoices().ifEmpty {
+        listOf(
+            "${target.voice}${AzureTtsClient.SLOW_SUFFIX_V2}",
+            "${target.voice}${AzureTtsClient.SLOW_SUFFIX_V3}"
+        )
+    }
+    return buildList {
+        sentences.forEach { sentence ->
+            if (sentence.en.isNotBlank()) {
+                add(R2AudioDownloader.Phrase(sentence.en, source.voice, source.locale))
+            }
+            if (sentence.pl.isNotBlank()) {
+                add(R2AudioDownloader.Phrase(sentence.pl, target.voice, target.locale))
+                slowVoices.forEach { slowVoice ->
+                    add(R2AudioDownloader.Phrase(sentence.pl, slowVoice, target.locale))
+                }
+            }
+        }
+    }.distinctBy { "${it.locale}|${it.voice}|${it.text}" }
+}
+
+private fun slugPhraseId(title: String): String {
+    val base = java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{Mn}+"), "")
+        .lowercase()
+        .replace(Regex("[^a-z0-9]+"), "-")
+        .trim('-')
+        .ifBlank { "phrase-group" }
+    return "$base-${System.currentTimeMillis().toString(36)}"
 }
 
 private const val PHRASE_WORD_EDGE_PUNCTUATION = ".,;:!?()[]{}\"'"

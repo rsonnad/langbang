@@ -51,59 +51,18 @@ class R2AudioDownloader(
                 return@withContext Result.failure(IOException("Offline — download skipped."))
             }
             val phrases = buildManifestPhrases()
-            val missing = phrases.filter { p ->
-                !cache.has(cache.fileFor(p.locale, p.voice, p.text))
+            downloadMissing(phrases, onProgress)
+        }
+
+    suspend fun downloadPhrases(
+        phrases: List<Phrase>,
+        onProgress: suspend (Int, Int, String) -> Unit
+    ): Result<DownloadSummary> =
+        withContext(Dispatchers.IO) {
+            if (!network.isOnline()) {
+                return@withContext Result.failure(IOException("Offline — download skipped."))
             }
-            if (missing.isEmpty()) {
-                return@withContext Result.success(
-                    DownloadSummary(totalWanted = phrases.size, fetched = 0, alreadyCached = phrases.size)
-                )
-            }
-            var fetched = 0
-            var failed = 0
-            var done = 0
-            val total = missing.size
-            for (batch in missing.chunked(BATCH_SIZE)) {
-                val manifest = try {
-                    fetchManifest(batch)
-                } catch (_: Throwable) {
-                    // Whole batch unreachable — count its phrases as failed, keep going.
-                    failed += batch.size
-                    done += batch.size
-                    onProgress(done, total, "")
-                    continue
-                }
-                for (m in manifest) {
-                    done++
-                    onProgress(done, total, m.text)
-                    val file = cache.fileFor(m.locale, m.voice, m.text)
-                    if (cache.has(file)) { fetched++; continue }
-                    if (m.url.isEmpty()) { failed++; continue }
-                    try {
-                        val conn = URL(m.url).openConnection() as HttpURLConnection
-                        conn.requestMethod = "GET"
-                        conn.connectTimeout = 15000
-                        conn.readTimeout = 30000
-                        if (conn.responseCode !in 200..299) { failed++; continue }
-                        file.parentFile?.mkdirs()
-                        conn.inputStream.use { input ->
-                            file.outputStream().use { out -> input.copyTo(out) }
-                        }
-                        fetched++
-                    } catch (_: Throwable) {
-                        failed++
-                    }
-                }
-            }
-            onProgress(total, total, "")
-            Result.success(
-                DownloadSummary(
-                    totalWanted = phrases.size,
-                    fetched = fetched,
-                    alreadyCached = phrases.size - missing.size,
-                    failed = failed
-                )
-            )
+            downloadMissing(phrases.distinctBy { "${it.locale}|${it.voice}|${it.text}" }, onProgress)
         }
 
     private fun fetchManifest(phrases: List<Phrase>): List<ManifestEntry> {
@@ -130,6 +89,65 @@ class R2AudioDownloader(
         val raw = conn.inputStream.bufferedReader().use { it.readText() }
         val resp = json.decodeFromString(ManifestResponse.serializer(), raw)
         return resp.manifest
+    }
+
+    private suspend fun downloadMissing(
+        phrases: List<Phrase>,
+        onProgress: suspend (Int, Int, String) -> Unit
+    ): Result<DownloadSummary> {
+        val missing = phrases.filter { p ->
+            !cache.has(cache.fileFor(p.locale, p.voice, p.text))
+        }
+        if (missing.isEmpty()) {
+            return Result.success(
+                DownloadSummary(totalWanted = phrases.size, fetched = 0, alreadyCached = phrases.size)
+            )
+        }
+        var fetched = 0
+        var failed = 0
+        var done = 0
+        val total = missing.size
+        for (batch in missing.chunked(BATCH_SIZE)) {
+            val manifest = try {
+                fetchManifest(batch)
+            } catch (_: Throwable) {
+                // Whole batch unreachable — count its phrases as failed, keep going.
+                failed += batch.size
+                done += batch.size
+                onProgress(done, total, "")
+                continue
+            }
+            for (m in manifest) {
+                done++
+                onProgress(done, total, m.text)
+                val file = cache.fileFor(m.locale, m.voice, m.text)
+                if (cache.has(file)) { fetched++; continue }
+                if (m.url.isEmpty()) { failed++; continue }
+                try {
+                    val conn = URL(m.url).openConnection() as HttpURLConnection
+                    conn.requestMethod = "GET"
+                    conn.connectTimeout = 15000
+                    conn.readTimeout = 30000
+                    if (conn.responseCode !in 200..299) { failed++; continue }
+                    file.parentFile?.mkdirs()
+                    conn.inputStream.use { input ->
+                        file.outputStream().use { out -> input.copyTo(out) }
+                    }
+                    fetched++
+                } catch (_: Throwable) {
+                    failed++
+                }
+            }
+        }
+        onProgress(total, total, "")
+        return Result.success(
+            DownloadSummary(
+                totalWanted = phrases.size,
+                fetched = fetched,
+                alreadyCached = phrases.size - missing.size,
+                failed = failed
+            )
+        )
     }
 
     @Serializable

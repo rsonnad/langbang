@@ -3,6 +3,9 @@ const SLOW_60_SUFFIX = "|slow60v1";
 const SLOW_ART_SUFFIX = "|slowart1";
 const DEFAULT_AUDIO_WARM_LIMIT = 40;
 const MAX_AUDIO_WARM_LIMIT = 80;
+const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+const MAX_GEMINI_PROMPT_CHARS = 20000;
+const MAX_PHRASE_FIELD_CHARS = 600;
 
 export default {
   async fetch(request, env) {
@@ -19,6 +22,12 @@ export default {
       }
       if (request.method === "GET" && path === "/v1/instances") {
         return listInstances(env);
+      }
+      if (request.method === "POST" && path === "/v1/gemini/generate") {
+        return geminiGenerate(request, env);
+      }
+      if (request.method === "POST" && path === "/v1/phrases/complete") {
+        return completePhrase(request, env);
       }
       const adminAudioWarmMatch = path.match(/^\/v1\/admin\/content\/([^/]+)\/audio\/warm-missing$/);
       if (request.method === "POST" && adminAudioWarmMatch) {
@@ -149,6 +158,175 @@ async function bootstrap(env, instanceId) {
 
 async function labelsFor(env, locale) {
   return json({ locale, labels: await labelMap(env, locale) });
+}
+
+async function geminiGenerate(request, env) {
+  const body = await request.json();
+  const prompt = boundedString(body.prompt, "prompt", MAX_GEMINI_PROMPT_CHARS);
+  if (!prompt.trim()) throw new HttpError(400, "prompt is required");
+  const model = normalizeGeminiModel(body.model || DEFAULT_GEMINI_MODEL);
+  const raw = await geminiGenerateRaw(env, prompt, model);
+  return new Response(raw, {
+    status: 200,
+    headers: { "Content-Type": "application/json; charset=utf-8", ...corsHeaders() },
+  });
+}
+
+async function completePhrase(request, env) {
+  const body = await request.json();
+  const sourceText = boundedString(body.sourceText, "sourceText", MAX_PHRASE_FIELD_CHARS, true);
+  const targetText = boundedString(body.targetText, "targetText", MAX_PHRASE_FIELD_CHARS, true);
+  const literalText = boundedString(body.literalText, "literalText", MAX_PHRASE_FIELD_CHARS, true);
+  if (!sourceText.trim() && !targetText.trim() && !literalText.trim()) {
+    throw new HttpError(400, "enter at least one phrase field");
+  }
+  const sourceLanguage = boundedString(body.sourceLanguage || "source language", "sourceLanguage", 80);
+  const targetLanguage = boundedString(body.targetLanguage || "target language", "targetLanguage", 80);
+  const text = await geminiGenerateText(
+    env,
+    buildPhraseCompletionPrompt({ sourceText, targetText, literalText, sourceLanguage, targetLanguage }),
+    DEFAULT_GEMINI_MODEL,
+  );
+  return json(normalizePhraseCompletion(parseGeminiJsonText(text)));
+}
+
+async function geminiGenerateText(env, prompt, model = DEFAULT_GEMINI_MODEL) {
+  return geminiTextFromRaw(await geminiGenerateRaw(env, prompt, model));
+}
+
+async function geminiGenerateRaw(env, prompt, model = DEFAULT_GEMINI_MODEL) {
+  const key = env.GEMINI_API_KEY;
+  if (!key) throw new HttpError(503, "GEMINI_API_KEY is not configured");
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.1, responseMimeType: "application/json" },
+      }),
+    },
+  );
+  const raw = await response.text();
+  if (!response.ok) {
+    throw new HttpError(502, `Gemini HTTP ${response.status}`, { body: raw.slice(0, 500) });
+  }
+  return raw;
+}
+
+function geminiTextFromRaw(raw) {
+  const root = JSON.parse(raw);
+  const text = root?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (typeof text !== "string" || !text.trim()) {
+    throw new HttpError(502, "Gemini response text missing");
+  }
+  return text;
+}
+
+function buildPhraseCompletionPrompt({ sourceText, targetText, literalText, sourceLanguage, targetLanguage }) {
+  return "Complete and validate one LangBang phrase entry. " +
+    `The source cue language is ${sourceLanguage}. The target answer language is ${targetLanguage}. ` +
+    "The app stores the source cue in a JSON field named \"source\" and the target answer " +
+    "in a JSON field named \"target\". User-provided fields may be blank. " +
+    `source=${JSON.stringify(sourceText)}, target=${JSON.stringify(targetText)}, ` +
+    `literal=${JSON.stringify(literalText)}. ` +
+    "Fill any missing source, target, and literal fields. If the user provided more than " +
+    "one field, verify that the provided values describe the same phrase. If they conflict " +
+    "semantically, grammatically, or the literal gloss does not match the target word order, " +
+    "return consistent:false and explain the problem in issue. Do not silently accept " +
+    "contradictory fields. Minor punctuation, capitalization, or literal-gloss precision " +
+    "fixes are allowed when consistent remains true. " +
+    "The literal field must be a word-for-word gloss of the target answer, preserving target " +
+    "word order and using hyphens for multi-word glosses. Also return words: one object per " +
+    "whitespace-separated target token, in target order. Because the Android model uses " +
+    "historical field names, put each target token in the word object's \"pl\" property and " +
+    "put its source-language gloss in the \"en\" property, even when the target is not Polish. " +
+    "When the target token is a noun, pronoun, or adjective in Polish, include gender " +
+    "(m/f/n) and caseKey (nom/acc/gen/dat/inst/loc/voc); omit those keys otherwise. " +
+    "Return ONLY one JSON object, no markdown, with this exact shape: " +
+    "{\"consistent\":true,\"issue\":\"\",\"source\":\"...\",\"target\":\"...\"," +
+    "\"literal\":\"...\",\"words\":[{\"pl\":\"target-token\",\"en\":\"source-gloss\"}]}.";
+}
+
+function parseGeminiJsonText(text) {
+  const trimmed = String(text || "").trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  return JSON.parse(trimmed);
+}
+
+function normalizePhraseCompletion(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpError(502, "Gemini returned an invalid phrase object");
+  }
+  const issue = cleanString(value.issue);
+  if (value.consistent === false) {
+    return {
+      consistent: false,
+      issue: issue || "The filled phrase fields are inconsistent.",
+      source: "",
+      target: "",
+      literal: null,
+      words: [],
+    };
+  }
+  const source = cleanString(value.source);
+  const target = cleanString(value.target);
+  if (!source || !target) {
+    throw new HttpError(502, "Gemini returned an incomplete phrase", {
+      hasSource: Boolean(source),
+      hasTarget: Boolean(target),
+    });
+  }
+  const literal = cleanString(value.literal);
+  return {
+    consistent: true,
+    issue,
+    source,
+    target,
+    literal: literal || null,
+    words: Array.isArray(value.words) ? value.words.map(normalizeTokenPair).filter(Boolean) : [],
+  };
+}
+
+function normalizeTokenPair(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const pl = cleanString(value.pl);
+  if (!pl) return null;
+  const out = { pl, en: cleanString(value.en) };
+  for (const key of ["gender", "caseKey", "caseLabel", "numberLabel", "variableKind"]) {
+    const cleaned = cleanString(value[key]);
+    if (cleaned) out[key] = key === "gender" || key === "caseKey" || key === "variableKind"
+      ? cleaned.toLowerCase()
+      : cleaned;
+  }
+  for (const key of ["variableStart", "variableEnd"]) {
+    const parsed = Number(value[key]);
+    if (Number.isFinite(parsed)) out[key] = Math.trunc(parsed);
+  }
+  return out;
+}
+
+function normalizeGeminiModel(value) {
+  const model = String(value || DEFAULT_GEMINI_MODEL).trim() || DEFAULT_GEMINI_MODEL;
+  if (!/^gemini-[A-Za-z0-9._-]+$/.test(model)) {
+    throw new HttpError(400, "unsupported Gemini model");
+  }
+  return model;
+}
+
+function boundedString(value, label, limit, optional = false) {
+  if ((value === undefined || value === null) && optional) return "";
+  const text = String(value ?? "");
+  if (!optional && !text.trim()) throw new HttpError(400, `${label} is required`);
+  if (text.length > limit) throw new HttpError(400, `${label} is too long`, { limit });
+  return text;
+}
+
+function cleanString(value) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 async function labelMap(env, locale) {
