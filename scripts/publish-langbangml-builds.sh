@@ -14,6 +14,10 @@ for arg in "$@"; do
   esac
 done
 
+if [ "${LANGBANGML_SKIP_WORKTREE_AUDIT:-0}" != "1" ]; then
+  scripts/check-worktree-integrity.sh
+fi
+
 PUBLIC_BASE="https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev"
 API_BASE="https://langbangml-api.langbangml.workers.dev"
 SITE_BUILDS_URL="https://langbang.org/builds"
