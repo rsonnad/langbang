@@ -215,7 +215,7 @@ private fun DrawScope.drawSyllableShadeBands(
     val guidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFF65717D.toInt()
         textAlign = Paint.Align.CENTER
-        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
     }
     ranges.forEach { range ->
         if (range.start >= range.end) return@forEach
