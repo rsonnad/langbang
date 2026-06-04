@@ -6,6 +6,16 @@ LangBangML is the Cloudflare-backed LangBang fork at:
 /Users/rahulio/Documents/CodingProjects/LangBangML
 ```
 
+## Source Of Truth
+
+Use this checkout for all new LangBang work. When the user says "LangBang",
+interpret that as LangBangML unless they explicitly say "legacy LangBang",
+"old bundled app", or `/Users/rahulio/Documents/CodingProjects/langbang`.
+
+Do not route content, phrases, audio, builds, releases, Cloudflare, or tablet
+work through the older bundled-asset repo. If a task starts in that repo, switch
+back here before acting.
+
 It is separate from the original bundled-asset Android app in
 `/Users/rahulio/Documents/CodingProjects/langbang`.
 
@@ -35,10 +45,21 @@ Use the flavor-aware publisher:
 scripts/publish-langbangml-builds.sh
 ```
 
+The publisher runs the worktree integrity gate before building or publishing.
+
 The legacy `scripts/publish-r2.sh` is intentionally disabled in this fork.
 
 For local tablet iteration, build the changed flavor and install it on the
 Samsung tablet when `100.103.110.7:5555` is connected.
+
+Before any tablet-facing build/install, run the worktree integrity gate:
+
+```bash
+scripts/check-worktree-integrity.sh --allow-current-dirty
+```
+
+Reconcile dirty or ahead changes in other LangBangML worktrees before installing
+over the tablets. See `docs/process/tablet-build-integrity.md`.
 
 ## Backend Helpers
 
