@@ -635,7 +635,7 @@ internal class VerbsTabState(
             publishParked = { i -> publishConjugation(cues[i], i, cues.size, mode, "pause", plHidden = quiz) },
             prefetchItem = { i ->
                 val cue = cues[i]
-                if (quiz) app.ensureCachedAudio(cue.englishGloss, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                app.ensureCachedAudio(cue.englishGloss, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 app.ensureCachedAudio(cue.combined, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                 if (slowFirst && !quiz) app.ensureCachedAudio(cue.combined, app.targetAudioVoice().locale, slowPlVoice)
             },
@@ -655,9 +655,13 @@ internal class VerbsTabState(
                     say(cue.combined, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                 }
                 else -> {
+                    publishConjugation(cue, i, total, mode, "en", plHidden = false)
+                    say(cue.englishGloss, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                     if (slowFirst) {
                         publishConjugation(cue, i, total, mode, "pl-slow", plHidden = false)
                         say(cue.combined, app.targetAudioVoice().locale, slowPlVoice)
+                        publishConjugation(cue, i, total, mode, "en", plHidden = false)
+                        say(cue.englishGloss, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                     }
                     publishConjugation(cue, i, total, mode, "pl", plHidden = false)
                     say(cue.combined, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
