@@ -2,14 +2,24 @@ package com.sponic.langbang.ui.common
 
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.TextUnit
 
 private data class VariableRange(val start: Int, val end: Int)
+
+private data class ShadeRange(val start: Int, val end: Int, val shadeIndex: Int)
 
 @Composable
 fun VariablePolishText(
@@ -51,25 +61,22 @@ fun VariablePolishText(
         )
         return
     }
+    val shadeRanges = remember(text, syllableShades) {
+        if (syllableShades == null) emptyList() else syllableShadeRanges(text)
+    }
+    var textLayout by remember(text, shadeRanges) { mutableStateOf<TextLayoutResult?>(null) }
+    val textModifier = if (syllableShades != null && shadeRanges.isNotEmpty()) {
+        modifier.drawBehind {
+            textLayout?.let { layout ->
+                drawSyllableShadeBands(layout, shadeRanges, syllableShades)
+            }
+        }
+    } else {
+        modifier
+    }
     Text(
         text = buildAnnotatedString {
             append(text)
-            if (syllableShades != null) {
-                var offset = 0
-                var shadeIndex = 0
-                for (piece in polishSyllables(text)) {
-                    val start = offset
-                    offset += piece.length
-                    // Only shade chunks that actually contain a letter, so leading/
-                    // trailing punctuation never starts an orphan band or flips the
-                    // alternation.
-                    if (piece.any { it.isLetter() }) {
-                        val shade = if (shadeIndex % 2 == 0) syllableShades.first else syllableShades.second
-                        addStyle(SpanStyle(background = shade), start, offset)
-                        shadeIndex++
-                    }
-                }
-            }
             if (range != null) {
                 addStyle(SpanStyle(color = variableColor), range.start, range.end)
             }
@@ -79,7 +86,8 @@ fun VariablePolishText(
         maxLines = maxLines,
         softWrap = softWrap,
         color = fixedColor,
-        modifier = modifier
+        onTextLayout = { textLayout = it },
+        modifier = textModifier
     )
 }
 
@@ -149,5 +157,64 @@ private fun defaultEndingStart(word: String): Int {
         word.length - 1
     } else {
         0
+    }
+}
+
+private fun syllableShadeRanges(text: String): List<ShadeRange> {
+    var offset = 0
+    var shadeIndex = 0
+    val ranges = mutableListOf<ShadeRange>()
+    for (piece in polishSyllables(text)) {
+        val start = offset
+        offset += piece.length
+        // Only shade chunks that actually contain a letter, so leading/trailing
+        // punctuation never starts an orphan band or flips the alternation.
+        if (piece.any { it.isLetter() }) {
+            ranges += ShadeRange(start, offset, shadeIndex)
+            shadeIndex++
+        }
+    }
+    return ranges
+}
+
+private fun DrawScope.drawSyllableShadeBands(
+    layout: TextLayoutResult,
+    ranges: List<ShadeRange>,
+    shades: Pair<Color, Color>
+) {
+    val horizontalPad = 3.dp.toPx()
+    val verticalInset = 4.dp.toPx()
+    val gap = 1.dp.toPx()
+    val corner = 4.dp.toPx()
+    ranges.forEach { range ->
+        if (range.start >= range.end) return@forEach
+        val firstLine = layout.getLineForOffset(range.start)
+        val lastLine = layout.getLineForOffset((range.end - 1).coerceAtLeast(range.start))
+        for (line in firstLine..lastLine) {
+            val segmentStart = if (line == firstLine) range.start else layout.getLineStart(line)
+            val segmentEnd = if (line == lastLine) {
+                range.end
+            } else {
+                layout.getLineEnd(line, visibleEnd = true)
+            }
+            if (segmentStart >= segmentEnd) continue
+
+            val firstBox = layout.getBoundingBox(segmentStart)
+            val lastBox = layout.getBoundingBox(segmentEnd - 1)
+            val left = minOf(firstBox.left, lastBox.left) - horizontalPad + gap
+            val right = maxOf(firstBox.right, lastBox.right) + horizontalPad - gap
+            val lineTop = layout.getLineTop(line)
+            val lineBottom = layout.getLineBottom(line)
+            val top = (lineTop + verticalInset).coerceAtLeast(0f)
+            val bottom = (lineBottom - verticalInset).coerceAtMost(size.height)
+            if (right > left && bottom > top) {
+                drawRoundRect(
+                    color = if (range.shadeIndex % 2 == 0) shades.first else shades.second,
+                    topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                    size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(corner, corner)
+                )
+            }
+        }
     }
 }

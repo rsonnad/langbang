@@ -52,8 +52,8 @@ object GrammarVisuals {
      * read the chunk boundaries without competing with the text itself.
      */
     object SyllableShading {
-        val ShadeA = Color(0xFFEFF1F4)
-        val ShadeB = Color(0xFFDFE4EA)
+        val ShadeA = Color(0xFFE6E9EE)
+        val ShadeB = Color(0xFFC8D0DA)
     }
 
     object Selector {
