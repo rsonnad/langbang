@@ -25,7 +25,13 @@ import androidx.compose.ui.unit.TextUnit
 
 private data class VariableRange(val start: Int, val end: Int)
 
-private data class ShadeRange(val start: Int, val end: Int, val shadeIndex: Int, val guide: String)
+private data class ShadeRange(
+    val start: Int,
+    val end: Int,
+    val shadeIndex: Int,
+    val guide: String,
+    val accented: Boolean = false
+)
 
 @Composable
 fun VariablePolishText(
@@ -199,7 +205,11 @@ private fun syllableShadeRanges(text: String): List<ShadeRange> {
             shadeIndex++
         }
     }
-    return ranges
+    if (ranges.size < 2) return ranges
+    val accentedIndex = ranges.size - 2
+    return ranges.mapIndexed { index, range ->
+        if (index == accentedIndex) range.copy(accented = true) else range
+    }
 }
 
 private fun DrawScope.drawSyllableShadeBands(
@@ -244,6 +254,16 @@ private fun DrawScope.drawSyllableShadeBands(
                     topLeft = androidx.compose.ui.geometry.Offset(left, top),
                     size = androidx.compose.ui.geometry.Size(right - left, bottom - top)
                 )
+                if (range.accented) {
+                    val underlineInset = 3.dp.toPx()
+                    val underlineY = bottom - 4.dp.toPx()
+                    drawLine(
+                        color = Color(0xFF4F5B66).copy(alpha = 0.72f),
+                        start = androidx.compose.ui.geometry.Offset(left + underlineInset, underlineY),
+                        end = androidx.compose.ui.geometry.Offset(right - underlineInset, underlineY),
+                        strokeWidth = 1.5.dp.toPx()
+                    )
+                }
                 val guide = range.guide
                 if (guide.isNotBlank()) {
                     val baseTextSize = 10.sp.toPx()
