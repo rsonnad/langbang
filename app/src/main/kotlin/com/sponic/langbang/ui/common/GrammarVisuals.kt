@@ -45,6 +45,17 @@ object GrammarVisuals {
         val FilterLabel = Color(0xFF7D8994)
     }
 
+    /**
+     * Two slightly different neutral greys painted behind alternating syllables of a
+     * target Polish word so the learner can see where one syllable ends and the next
+     * begins. Kept subtle on the white Now Voicing surface — just enough contrast to
+     * read the chunk boundaries without competing with the text itself.
+     */
+    object SyllableShading {
+        val ShadeA = Color(0xFFEFF1F4)
+        val ShadeB = Color(0xFFDFE4EA)
+    }
+
     object Selector {
         val CaseBand = Color(0xFFE9F1FF)
         val NumberBand = Color(0xFFE4F8F3)
