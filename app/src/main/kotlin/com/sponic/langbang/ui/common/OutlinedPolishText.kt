@@ -7,7 +7,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.TextUnit
 
 private data class VariableRange(val start: Int, val end: Int)
@@ -25,7 +24,13 @@ fun VariablePolishText(
     variableEnd: Int? = null,
     fallbackWholeWord: Boolean = false,
     maxLines: Int = Int.MAX_VALUE,
-    softWrap: Boolean = true
+    softWrap: Boolean = true,
+    /**
+     * When non-null, paint alternating syllable backgrounds (first/second of the pair)
+     * behind the word so the learner can see the syllable boundaries. Null (default)
+     * leaves every existing caller untouched.
+     */
+    syllableShades: Pair<Color, Color>? = null
 ) {
     val range = inferVariableRange(
         text = text,
@@ -34,7 +39,7 @@ fun VariablePolishText(
         variableEnd = variableEnd,
         fallbackWholeWord = fallbackWholeWord
     )
-    if (range == null) {
+    if (range == null && syllableShades == null) {
         Text(
             text = text,
             fontSize = fontSize,
@@ -48,11 +53,26 @@ fun VariablePolishText(
     }
     Text(
         text = buildAnnotatedString {
-            append(text.substring(0, range.start))
-            withStyle(SpanStyle(color = variableColor)) {
-                append(text.substring(range.start, range.end))
+            append(text)
+            if (syllableShades != null) {
+                var offset = 0
+                var shadeIndex = 0
+                for (piece in polishSyllables(text)) {
+                    val start = offset
+                    offset += piece.length
+                    // Only shade chunks that actually contain a letter, so leading/
+                    // trailing punctuation never starts an orphan band or flips the
+                    // alternation.
+                    if (piece.any { it.isLetter() }) {
+                        val shade = if (shadeIndex % 2 == 0) syllableShades.first else syllableShades.second
+                        addStyle(SpanStyle(background = shade), start, offset)
+                        shadeIndex++
+                    }
+                }
             }
-            append(text.substring(range.end))
+            if (range != null) {
+                addStyle(SpanStyle(color = variableColor), range.start, range.end)
+            }
         },
         fontSize = fontSize,
         fontWeight = fontWeight,

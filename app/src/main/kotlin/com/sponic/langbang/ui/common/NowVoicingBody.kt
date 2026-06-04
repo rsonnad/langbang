@@ -18,10 +18,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sponic.langbang.BuildConfig
 import com.sponic.langbang.domain.NowVoicing
 
 /**
@@ -205,6 +207,10 @@ fun NowVoicingBody(
                         }
                     val variableToken = if (plHidden) null else token
                     val variableColor = variableToken?.let { GrammarVisuals.Variable.color(it) }
+                    // Subtle two-tone syllable shading helps the learner chunk the
+                    // target Polish word. Only on the EN→PL build (where Polish is the
+                    // language being learned) and never over the masked dots.
+                    val shades = if (syllableShadingEnabled && !plHidden) SYLLABLE_SHADES else null
                     if (variableToken != null && variableColor != null) {
                         VariablePolishText(
                             text = displayed,
@@ -217,6 +223,19 @@ fun NowVoicingBody(
                             fallbackWholeWord = variableToken.variableStart == null,
                             maxLines = 1,
                             softWrap = false,
+                            syllableShades = shades,
+                            modifier = wordModifier
+                        )
+                    } else if (shades != null) {
+                        VariablePolishText(
+                            text = displayed,
+                            fixedColor = fixedColor,
+                            variableColor = fixedColor,
+                            fontSize = polishFontSize,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            syllableShades = shades,
                             modifier = wordModifier
                         )
                     } else {
@@ -249,6 +268,17 @@ fun NowVoicingBody(
 }
 
 private val NV_WHITESPACE = Regex("\\s+")
+
+/**
+ * Syllable shading is a learning aid for the target language, so it only makes sense
+ * on the EN→PL build where Polish is what the learner is decoding. On the PL→EN build
+ * Polish is the learner's own language, so leave those words plain.
+ */
+private val syllableShadingEnabled: Boolean =
+    BuildConfig.LANGBANGML_INSTANCE_ID != "langbangml-pl-en"
+
+private val SYLLABLE_SHADES: Pair<Color, Color> =
+    GrammarVisuals.SyllableShading.ShadeA to GrammarVisuals.SyllableShading.ShadeB
 
 private fun nowVoicingGrammarReference(pinned: NowVoicing): String? {
     val token = pinned.words?.firstOrNull {
