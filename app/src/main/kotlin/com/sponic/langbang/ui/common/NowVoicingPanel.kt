@@ -68,6 +68,7 @@ fun NowVoicingPanel(
     modifier: Modifier = Modifier,
     isStarred: Boolean = false,
     onToggleStar: () -> Unit = {},
+    syllableShading: Boolean = true,
     idlePlaceholder: String = "Playback is starting..."
 ) {
     val transport by PlaybackController.transport.collectAsState()
@@ -173,6 +174,7 @@ fun NowVoicingPanel(
                     statusText = nowVoicingStatus(pinned, effectiveLive),
                     onPlWordClick = playTappedWord,
                     idlePlaceholder = idlePlaceholder,
+                    syllableShading = syllableShading,
                     modifier = Modifier
                         .weight(1f)
                         .padding(start = 8.dp, end = 16.dp)

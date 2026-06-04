@@ -36,7 +36,7 @@ import com.sponic.langbang.domain.NowVoicing
  * @param live the currently-active NowVoicing (drives active-language bolding +
  *   plHidden masking during quiz reveal). When null, nothing is bolded.
  * @param statusText pre-formatted status line shown above the EN.
-     * @param onPlWordClick invoked when the user taps a Polish token.
+ * @param onPlWordClick invoked when the user taps a Polish token.
  *   Pass {} if the surface doesn't support drill-down.
  * @param idlePlaceholder text shown when pinned is null. Defaults to the header
  *   wording; the sheet overrides with a shorter dash.
@@ -49,6 +49,7 @@ fun NowVoicingBody(
     statusText: String,
     onPlWordClick: (String) -> Unit = {},
     idlePlaceholder: String = "Tap “Play Phrases” to start drilling phrases.",
+    syllableShading: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     if (pinned == null) {
@@ -100,6 +101,7 @@ fun NowVoicingBody(
     val secondaryText = LbColors.TextSecondary
     val mutedText = LbColors.TextMuted
     val accentText = LbColors.Label
+    val showSyllableShading = syllableShadingAvailable && syllableShading
     val statusLines = statusText.lines().filter { it.isNotBlank() }
     val statusLabel = statusLines.firstOrNull().orEmpty()
     val statusDetail = statusLines.drop(1).joinToString(" · ")
@@ -210,7 +212,7 @@ fun NowVoicingBody(
                     // Subtle two-tone syllable shading helps the learner chunk the
                     // target Polish word. Only on the EN→PL build (where Polish is the
                     // language being learned) and never over the masked dots.
-                    val shades = if (syllableShadingEnabled && !plHidden) SYLLABLE_SHADES else null
+                    val shades = if (showSyllableShading && !plHidden) SYLLABLE_SHADES else null
                     if (variableToken != null && variableColor != null) {
                         VariablePolishText(
                             text = displayed,
@@ -270,12 +272,11 @@ fun NowVoicingBody(
 private val NV_WHITESPACE = Regex("\\s+")
 
 /**
- * Syllable shading is a learning aid for the target language, so it only makes sense
- * on the EN→PL build where Polish is what the learner is decoding. On the PL→EN build
- * Polish is the learner's own language, so leave those words plain.
+ * Syllable shading is a learning aid for EN→PL learners, where Polish is the target
+ * language being decoded. Keep every other instance plain.
  */
-private val syllableShadingEnabled: Boolean =
-    BuildConfig.LANGBANGML_INSTANCE_ID != "langbangml-pl-en"
+private val syllableShadingAvailable: Boolean =
+    BuildConfig.LANGBANGML_INSTANCE_ID == "langbangml-en-pl"
 
 private val SYLLABLE_SHADES: Pair<Color, Color> =
     GrammarVisuals.SyllableShading.ShadeA to GrammarVisuals.SyllableShading.ShadeB
