@@ -173,6 +173,17 @@ android {
     sourceSets["main"].kotlin.srcDirs("src/main/kotlin")
 }
 
+val checkTabletRegressions by tasks.registering(Exec::class) {
+    workingDir = rootProject.projectDir
+    commandLine("bash", "scripts/check-tablet-regressions.sh")
+}
+
+tasks.matching {
+    it.name == "preEnPlDebugBuild" || it.name == "prePlEnDebugBuild"
+}.configureEach {
+    dependsOn(checkTabletRegressions)
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.05.00")
     implementation(composeBom)

@@ -70,8 +70,8 @@ fun WordPlayLimitControl(
     limitText: String,
     onLimitTextChange: (String) -> Unit,
     enabled: Boolean = true,
-    leadingLabel: String = "groups of",
-    trailingLabel: String? = null,
+    leadingLabel: String,
+    trailingLabel: String?,
     modifier: Modifier = Modifier
 ) {
     Row(

@@ -16,6 +16,8 @@ done
 
 if [ "${LANGBANGML_SKIP_WORKTREE_AUDIT:-0}" != "1" ]; then
   scripts/check-worktree-integrity.sh
+else
+  scripts/check-tablet-regressions.sh
 fi
 
 PUBLIC_BASE="https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev"

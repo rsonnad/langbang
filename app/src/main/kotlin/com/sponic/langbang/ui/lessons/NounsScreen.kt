@@ -531,7 +531,9 @@ private fun ExamplesControls(state: NounsScreenState, nouns: List<NounEntry>) {
                 )
                 WordPlayLimitControl(
                     limitText = state.playLimitText,
-                    onLimitTextChange = { state.updatePlayLimitText(it) }
+                    onLimitTextChange = { state.updatePlayLimitText(it) },
+                    leadingLabel = "groups of",
+                    trailingLabel = null
                 )
             }
         }

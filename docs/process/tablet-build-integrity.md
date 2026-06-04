@@ -34,6 +34,20 @@ Then reconcile the output:
   are blockers until confirmed unrelated or merged/cherry-picked.
 - A fix that should survive future builds must be committed before another
   worktree installs over the tablets.
+- If this gate fails, do not continue to `adb install`. Fix the branch first.
+
+## Regression Guard
+
+The worktree gate also runs:
+
+```bash
+scripts/check-tablet-regressions.sh
+```
+
+This check encodes accepted tablet-visible behavior that has regressed before,
+including the Verbs/Phrases panel, related phrase playback, by-pronoun Play All,
+and the `with [x] vars` verb play-limit wording. Add to this script when a
+tablet-visible fix becomes part of the accepted product state.
 
 If another worktree contains unrelated long-running work, state that explicitly
 in the implementation notes before installing.

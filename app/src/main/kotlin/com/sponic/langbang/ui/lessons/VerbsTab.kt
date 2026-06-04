@@ -26,12 +26,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -39,7 +35,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -52,7 +47,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -81,7 +75,6 @@ import com.sponic.langbang.integrations.GeminiClient
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
-import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.ensureCachedAudio
 import com.sponic.langbang.domain.englishConjugate
 import com.sponic.langbang.domain.playAudioAndAwait
@@ -103,7 +96,6 @@ import com.sponic.langbang.ui.common.WordPlayLimitControl
 import com.sponic.langbang.ui.common.variableEndForPolishForm
 import com.sponic.langbang.ui.common.variableStartForPolishForm
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -152,6 +144,12 @@ internal class VerbsTabState(
     var randomOrder: Boolean by mutableStateOf(
         app.practicePrefs.wordPlayRandom(PracticePrefsStore.CATEGORY_VERBS)
     )
+        private set
+    var includeAdjectives: Boolean by mutableStateOf(app.practicePrefs.verbPhraseIncludeAdjectives())
+        private set
+    var includeAdverbs: Boolean by mutableStateOf(app.practicePrefs.verbPhraseIncludeAdverbs())
+        private set
+    var includeNouns: Boolean by mutableStateOf(app.practicePrefs.verbPhraseIncludeNouns())
         private set
     var generateProgress: String? by mutableStateOf(null)
         private set
@@ -210,6 +208,21 @@ internal class VerbsTabState(
         app.practicePrefs.setWordPlayRandom(PracticePrefsStore.CATEGORY_VERBS, enabled)
     }
 
+    fun updateIncludeAdjectives(enabled: Boolean) {
+        includeAdjectives = enabled
+        app.practicePrefs.setVerbPhraseIncludeAdjectives(enabled)
+    }
+
+    fun updateIncludeAdverbs(enabled: Boolean) {
+        includeAdverbs = enabled
+        app.practicePrefs.setVerbPhraseIncludeAdverbs(enabled)
+    }
+
+    fun updateIncludeNouns(enabled: Boolean) {
+        includeNouns = enabled
+        app.practicePrefs.setVerbPhraseIncludeNouns(enabled)
+    }
+
     private fun playLimit(): Int =
         playLimitText.toIntOrNull()
             ?.coerceIn(PracticePrefsStore.MIN_WORD_PLAY_LIMIT, PracticePrefsStore.MAX_WORD_PLAY_LIMIT)
@@ -226,7 +239,19 @@ internal class VerbsTabState(
         return if (randomOrder) targets.shuffled() else targets
     }
 
+    private fun resolveByPronounTargets(allVerbs: List<VerbEntry>): List<VerbEntry> {
+        val checked = allVerbs.filter { it.lemma in checkedLemmas }
+        val targets = if (checked.isNotEmpty()) checked else allVerbs
+        return if (randomOrder) targets.shuffled() else targets
+    }
+
     fun targetVerbCount(allVerbs: List<VerbEntry>): Int = resolveTargets(allVerbs).size
+
+    fun byPronounPlayCount(
+        allVerbs: List<VerbEntry>,
+        personKey: String,
+        tense: String
+    ): Int = buildByPronounQueue(allVerbs, personKey, tense).size
 
     fun toggleIncluded(
         key: String,
@@ -458,20 +483,99 @@ internal class VerbsTabState(
         return combined
     }
 
-    fun playAll(allVerbs: List<VerbEntry>, quiz: Boolean = false) {
+    private suspend fun ensurePhraseSentencesFor(target: VerbEntry): List<SentenceExample> {
+        val base = ensureSentencesFor(target)
+        return phraseSentencesFor(target, base)
+    }
+
+    fun phraseSentencesFor(verb: VerbEntry): List<SentenceExample> =
+        phraseSentencesFor(verb, loadCombinedSentences(verb))
+
+    private fun phraseSentencesFor(
+        verb: VerbEntry,
+        base: List<SentenceExample>
+    ): List<SentenceExample> {
+        val allowedForms = allowedFormsFor(verb)
+        if (allowedForms.isEmpty()) return base.distinctBy { it.pl }
+
+        val extras = mutableListOf<SentenceExample>()
+        if (includeAdjectives) {
+            val adjectives = app.lessonRepo.lesson3().adjectives
+            val selected = selectedCategoryLemmas(
+                PracticePrefsStore.CATEGORY_ADJECTIVES,
+                adjectives.map { it.lemma }
+            )
+            extras += adjectives
+                .filter { it.lemma in selected }
+                .flatMap { app.lessonRepo.adjectiveSentencesFor(it.lemma) }
+                .filter { sentenceContainsAllowedForm(it, allowedForms) }
+        }
+        if (includeAdverbs) {
+            val adverbs = app.lessonRepo.lesson4().adverbs
+            val selected = selectedCategoryLemmas(
+                PracticePrefsStore.CATEGORY_ADVERBS,
+                adverbs.map { it.lemma }
+            )
+            extras += adverbs
+                .filter { it.lemma in selected }
+                .flatMap { app.lessonRepo.adverbSentencesFor(it.lemma) }
+                .filter { sentenceContainsAllowedForm(it, allowedForms) }
+        }
+        if (includeNouns) {
+            val nouns = app.lessonRepo.lesson6().nouns
+            val selected = selectedCategoryLemmas(
+                PracticePrefsStore.CATEGORY_NOUNS,
+                nouns.map { it.lemma }
+            )
+            extras += nouns
+                .filter { it.lemma in selected }
+                .flatMap { app.lessonRepo.nounSentencesFor(it.lemma) }
+                .filter { sentenceContainsAllowedForm(it, allowedForms) }
+        }
+        return (base + extras).distinctBy { it.pl }
+    }
+
+    private fun selectedCategoryLemmas(category: String, allLemmas: List<String>): Set<String> {
+        val all = allLemmas.toSet()
+        if (!app.practicePrefs.hasCheckedWordLemmas(category)) return all
+        return app.practicePrefs.checkedWordLemmas(category).intersect(all)
+    }
+
+    private fun allowedFormsFor(verb: VerbEntry): Set<String> {
+        val forms = mutableSetOf<String>()
+        verb.forms.filterKeys { it in includedPresentKeys }.values.forEach {
+            if (it.isNotBlank()) forms += it.lowercase()
+        }
+        verb.past_forms.orEmpty().filterKeys { it in includedPastKeys }.values.forEach {
+            if (it.isNotBlank()) forms += it.lowercase()
+        }
+        return forms
+    }
+
+    private fun sentenceContainsAllowedForm(
+        sentence: SentenceExample,
+        allowedForms: Set<String>
+    ): Boolean = sentence.pl.lowercase()
+        .split(Regex("[^\\p{L}]+"))
+        .any { it.isNotEmpty() && it in allowedForms }
+
+    fun playAll(
+        allVerbs: List<VerbEntry>,
+        quiz: Boolean = false,
+        includeRelatedPhrases: Boolean = false
+    ) {
         if (player.hasQueue) {
             stop()
             return
         }
         val targets = resolveTargets(allVerbs)
-        val v = targets.firstOrNull() ?: return
+        if (targets.isEmpty()) return
         scope.launch {
             val limit = playLimit()
             if (limit <= 0) return@launch
             // Build the queue up-front so rewind/restart can re-enter any item.
             val built: List<SentenceExample> = targets.flatMap { vv ->
-                val all = if (checkedLemmas.isNotEmpty()) ensureSentencesFor(vv)
-                    else if (vv.lemma == v.lemma) sentences
+                val all = if (includeRelatedPhrases) ensurePhraseSentencesFor(vv)
                     else ensureSentencesFor(vv)
                 val filtered = if (quiz) filterByTense(vv, all) else all
                 if (randomOrder || quiz) {
@@ -563,22 +667,18 @@ internal class VerbsTabState(
         startConjugationQueue(cues, mode)
     }
 
-    fun conjugationPlayCount(allVerbs: List<VerbEntry>): Int {
-        val limit = playLimit()
-        if (limit <= 0) return 0
-        return resolveTargets(allVerbs).sumOf { verb ->
-            conjugationCueCount(verb).coerceAtMost(limit)
+    fun playByPronounConjugations(
+        allVerbs: List<VerbEntry>,
+        personKey: String,
+        tense: String
+    ) {
+        if (player.hasQueue) {
+            stop()
+            return
         }
-    }
-
-    private fun conjugationCueCount(verb: VerbEntry): Int {
-        val present = verb.forms.count { (key, form) ->
-            key in includedPresentKeys && form.isNotBlank()
-        }
-        val past = verb.past_forms.orEmpty().count { (key, form) ->
-            key in includedPastKeys && form.isNotBlank()
-        }
-        return present + past
+        val cues = buildByPronounQueue(allVerbs, personKey, tense)
+        if (cues.isEmpty()) return
+        startConjugationQueue(cues, "play")
     }
 
     private fun buildConjugationQueue(targets: List<VerbEntry>): List<ConjugationCue> {
@@ -592,32 +692,10 @@ internal class VerbsTabState(
             included: Set<String>,
             isPast: Boolean
         ) {
-            val targetIsEnglish = app.targetAudioVoice().locale == AzureTtsClient.LOCALE_EN
             PERSON_KEYS.forEach { key ->
                 if (key !in included) return@forEach
                 val form = formMap[key].orEmpty()
-                if (form.isBlank()) return@forEach
-                val pron = if (targetIsEnglish) app.targetSubjectFor(key) else audioPronoun(key)
-                val combined = "$pron $form".trim()
-                val sourceSubject = if (targetIsEnglish) audioPronoun(key) else englishSubjectFor(key)
-                val sourceVerbForm = if (targetIsEnglish) vv.en else englishConjugate(vv.en, key, isPast)
-                val englishGloss = "$sourceSubject $sourceVerbForm".trim()
-                val tokens = listOf(
-                    TokenPair(pron, sourceSubject),
-                    TokenPair(
-                        pl = form,
-                        en = sourceVerbForm,
-                        variableStart = variableStartForPolishForm(vv.lemma, form),
-                        variableEnd = variableEndForPolishForm(vv.lemma, form),
-                        variableKind = "conjugation"
-                    )
-                )
-                out += ConjugationCue(
-                    lemma = vv.lemma,
-                    combined = combined,
-                    englishGloss = englishGloss,
-                    tokens = tokens
-                )
+                conjugationCue(vv, key, form, isPast)?.let { out += it }
             }
         }
         targets.forEach { vv ->
@@ -627,6 +705,53 @@ internal class VerbsTabState(
             cues += if (randomOrder) perVerb.shuffled().take(limit) else perVerb.take(limit)
         }
         return if (randomOrder) cues.shuffled() else cues
+    }
+
+    private fun buildByPronounQueue(
+        allVerbs: List<VerbEntry>,
+        personKey: String,
+        tense: String
+    ): List<ConjugationCue> {
+        val isPast = tense == PronounFilterStore.TENSE_PAST
+        return resolveByPronounTargets(allVerbs).mapNotNull { verb ->
+            val form = if (isPast) {
+                verb.past_forms?.get(personKey).orEmpty()
+            } else {
+                verb.forms[personKey].orEmpty()
+            }
+            conjugationCue(verb, personKey, form, isPast)
+        }
+    }
+
+    private fun conjugationCue(
+        verb: VerbEntry,
+        personKey: String,
+        form: String,
+        isPast: Boolean
+    ): ConjugationCue? {
+        if (form.isBlank()) return null
+        val targetIsEnglish = app.targetAudioVoice().locale == AzureTtsClient.LOCALE_EN
+        val pron = if (targetIsEnglish) app.targetSubjectFor(personKey) else audioPronoun(personKey)
+        val combined = "$pron $form".trim()
+        val sourceSubject = if (targetIsEnglish) audioPronoun(personKey) else englishSubjectFor(personKey)
+        val sourceVerbForm = if (targetIsEnglish) verb.en else englishConjugate(verb.en, personKey, isPast)
+        val englishGloss = "$sourceSubject $sourceVerbForm".trim()
+        val tokens = listOf(
+            TokenPair(pron, sourceSubject),
+            TokenPair(
+                pl = form,
+                en = sourceVerbForm,
+                variableStart = variableStartForPolishForm(verb.lemma, form),
+                variableEnd = variableEndForPolishForm(verb.lemma, form),
+                variableKind = "conjugation"
+            )
+        )
+        return ConjugationCue(
+            lemma = verb.lemma,
+            combined = combined,
+            englishGloss = englishGloss,
+            tokens = tokens
+        )
     }
 
     private fun startConjugationQueue(cues: List<ConjugationCue>, mode: String) {
@@ -731,6 +856,7 @@ private fun personLabel(k: String) = when (k) {
 @Composable
 internal fun VerbsTab(
     app: LangbangApplication,
+    @Suppress("UNUSED_PARAMETER")
     prefetch: PrefetchProgress,
     tab: L2Tab,
     onTabChange: (L2Tab) -> Unit,
@@ -744,6 +870,7 @@ internal fun VerbsTab(
     if (state.selected == null || lesson.verbs.none { it.lemma == state.selected?.lemma }) {
         state.selectVerb(lesson.verbs.firstOrNull())
     }
+    val phraseMode = tab == L2Tab.Phrases
 
     val grouped = remember(lesson) {
         lesson.verbs
@@ -755,7 +882,7 @@ internal fun VerbsTab(
         // Verb list runs flush to the top (nothing above it). The right column stacks:
         // Now Voicing band, then the Verbs/Phrases toggle + mode chips + play controls,
         // then the conjugation paradigm.
-        if (mode == VerbMode.Single) {
+        if (phraseMode || mode == VerbMode.Single) {
             VerbList(
                 grouped = grouped,
                 selected = state.selected,
@@ -782,20 +909,28 @@ internal fun VerbsTab(
                 onModeSelect = { mode = it },
                 state = state,
                 allVerbs = lesson.verbs,
-                showControls = mode == VerbMode.Single && state.selected != null
+                showControls = (phraseMode || mode == VerbMode.Single) && state.selected != null,
+                phraseMode = phraseMode
             )
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                when (mode) {
-                    VerbMode.Single ->
+                when {
+                    phraseMode ->
                         state.selected?.let {
-                            VerbParadigm(
-                                app = app,
+                            VerbPhrasesPanel(
                                 verb = it,
                                 state = state,
                                 allVerbs = lesson.verbs
                             )
                         }
-                    VerbMode.ByPronoun -> ByPronounMode(app, lesson)
+                    mode == VerbMode.Single ->
+                        state.selected?.let {
+                            VerbParadigm(
+                                verb = it,
+                                state = state,
+                                allVerbs = lesson.verbs
+                            )
+                        }
+                    else -> ByPronounMode(lesson, state)
                 }
             }
         }
@@ -811,7 +946,8 @@ private fun TopBar(
     onModeSelect: (VerbMode) -> Unit,
     state: VerbsTabState,
     allVerbs: List<VerbEntry>,
-    showControls: Boolean
+    showControls: Boolean,
+    phraseMode: Boolean
 ) {
     Surface(color = LbColors.SurfaceRaised, modifier = Modifier.fillMaxWidth()) {
         Column {
@@ -830,20 +966,26 @@ private fun TopBar(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     L2TabChips(tab, onTabChange)
-                    VerbMode.values().forEach { m ->
-                        FilterChip(
-                            selected = mode == m,
-                            onClick = { onModeSelect(m) },
-                            label = { Text(m.label, fontSize = 11.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                selectedLabelColor = Color.White
-                            ),
-                            modifier = Modifier.height(30.dp)
-                        )
+                    if (!phraseMode) {
+                        VerbMode.values().forEach { m ->
+                            FilterChip(
+                                selected = mode == m,
+                                onClick = { onModeSelect(m) },
+                                label = { Text(m.label, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = Color.White
+                                ),
+                                modifier = Modifier.height(30.dp)
+                            )
+                        }
                     }
                     if (showControls) {
-                        ExamplesControls(state = state, allVerbs = allVerbs)
+                        if (phraseMode) {
+                            PhraseExamplesControls(state = state, allVerbs = allVerbs)
+                        } else {
+                            ExamplesControls(state = state, allVerbs = allVerbs)
+                        }
                     }
                 }
                 if (showControls) {
@@ -851,7 +993,10 @@ private fun TopBar(
                     VerbPlayButton(
                         playing = state.playing,
                         count = state.targetVerbCount(allVerbs),
-                        onPlay = { state.playAllConjugations(allVerbs) },
+                        onPlay = {
+                            if (phraseMode) state.playAll(allVerbs, includeRelatedPhrases = true)
+                            else state.playAllConjugations(allVerbs)
+                        },
                         onStop = { state.stop() }
                     )
                     if (!state.playing) {
@@ -919,13 +1064,92 @@ private fun ExamplesControls(state: VerbsTabState, allVerbs: List<VerbEntry>) {
 }
 
 @Composable
+private fun PhraseExamplesControls(state: VerbsTabState, allVerbs: List<VerbEntry>) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        SubtleCheckbox(
+            checked = state.slowFirst,
+            onCheckedChange = { state.slowFirst = it },
+            enabled = !state.playing,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text("Slow first", fontSize = 11.sp, color = LbColors.TextSecondary)
+    }
+
+    PhraseCategoryToggle(
+        label = "Adj",
+        checked = state.includeAdjectives,
+        enabled = !state.playing,
+        onCheckedChange = { state.updateIncludeAdjectives(it) }
+    )
+    PhraseCategoryToggle(
+        label = "Adv",
+        checked = state.includeAdverbs,
+        enabled = !state.playing,
+        onCheckedChange = { state.updateIncludeAdverbs(it) }
+    )
+    PhraseCategoryToggle(
+        label = "Nouns",
+        checked = state.includeNouns,
+        enabled = !state.playing,
+        onCheckedChange = { state.updateIncludeNouns(it) }
+    )
+
+    if (!state.playing) {
+        LbButton.Ghost(
+            "Sent. quiz",
+            onClick = {
+                state.playAll(
+                    allVerbs,
+                    quiz = true,
+                    includeRelatedPhrases = true
+                )
+            },
+            icon = Icons.Default.PlayArrow
+        )
+    }
+
+    if (state.busy) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(18.dp), strokeWidth = 2.dp
+        )
+    }
+}
+
+@Composable
+private fun PhraseCategoryToggle(
+    label: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        SubtleCheckbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            label,
+            modifier = Modifier.clickable(enabled = enabled) { onCheckedChange(!checked) },
+            fontSize = 11.sp,
+            color = if (enabled) LbColors.TextSecondary else LbColors.TextMuted
+        )
+    }
+}
+
+@Composable
 private fun VerbPlayButton(
     playing: Boolean,
     count: Int,
     onPlay: () -> Unit,
-    onStop: () -> Unit
+    onStop: () -> Unit,
+    playLabel: String? = null
 ) {
     val bg = if (playing) LbColors.Stop else LbColors.Audio
+    val label = if (playing) "Stop" else playLabel ?: "Play $count"
     Surface(
         color = bg,
         shape = RoundedCornerShape(10.dp),
@@ -947,7 +1171,7 @@ private fun VerbPlayButton(
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                text = if (playing) "Stop" else "Play $count",
+                text = label,
                 color = Color.White,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.ExtraBold,
@@ -1065,7 +1289,6 @@ private fun VerbList(
 
 @Composable
 private fun VerbParadigm(
-    app: LangbangApplication,
     verb: VerbEntry,
     state: VerbsTabState,
     allVerbs: List<VerbEntry>
@@ -1199,25 +1422,87 @@ private fun VerbParadigm(
             )
         }
         Spacer(Modifier.height(8.dp))
-        SentencesList(app, verb, state)
+        SentencesList(verb, state)
+    }
+}
+
+@Composable
+private fun VerbPhrasesPanel(
+    verb: VerbEntry,
+    state: VerbsTabState,
+    allVerbs: List<VerbEntry>
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                verb.lemma,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold,
+                color = LbColors.Primary
+            )
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                Icons.Default.PlayArrow,
+                contentDescription = "Play ${verb.lemma}",
+                tint = LbColors.Primary,
+                modifier = Modifier
+                    .size(28.dp)
+                    .clickable { state.playPolishOnce(verb.lemma) }
+            )
+            Spacer(Modifier.width(12.dp))
+            DelayedEnglishTranslation(
+                text = verb.en,
+                fontSize = 14.sp,
+                color = LbColors.TextSecondary
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                verb.conjugationClass().label,
+                fontSize = 11.sp,
+                color = LbColors.Label,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.weight(1f))
+            SelectionNavButtons(
+                items = allVerbs,
+                selected = verb,
+                onSelect = { state.selectVerb(it) }
+            )
+        }
+        SentencesList(
+            verb = verb,
+            state = state,
+            sentences = state.phraseSentencesFor(verb),
+            emptyMessage = "No prepared verb phrases cached yet."
+        )
     }
 }
 
 @Composable
 private fun SentencesList(
-    app: LangbangApplication,
     verb: VerbEntry,
-    state: VerbsTabState
+    state: VerbsTabState,
+    sentences: List<SentenceExample> = state.sentences,
+    emptyMessage: String = "No prepared examples cached yet."
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (state.sentences.isEmpty()) {
+        if (sentences.isEmpty()) {
             Text(
-                "No examples yet — tap Generate examples above to make 10 short sentences using the checked pronouns.",
+                emptyMessage,
                 fontSize = 12.sp,
                 color = LbColors.TextMuted
             )
         } else {
-            state.sentences.forEachIndexed { i, s ->
+            sentences.forEachIndexed { i, s ->
                 SentenceRow(
                     sentence = s,
                     highlighted = i == state.playingIndex &&
@@ -1268,19 +1553,6 @@ private fun SentenceRow(
             }
         }
     }
-}
-
-/**
- * Ensures the TTS file for [text] exists (synthesising on demand), then plays it and
- * suspends until playback completes. Cancellation stops the player.
- */
-private suspend fun playAndAwait(
-    app: LangbangApplication,
-    text: String,
-    locale: String,
-    voice: String
-) {
-    app.playAudioAndAwait(text, locale, voice)
 }
 
 /** Tense column header ("Present" / "Past") with an inline "all" checkbox for that tense. */
@@ -1367,10 +1639,10 @@ private fun ConjRow(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ByPronounMode(app: LangbangApplication, lesson: Lesson) {
-    val scope = rememberCoroutineScope()
+private fun ByPronounMode(lesson: Lesson, state: VerbsTabState) {
     var personKey by remember { mutableStateOf("1sg") }
     var tense by remember { mutableStateOf(PronounFilterStore.TENSE_PRESENT) }
+    val allLemmas = remember(lesson) { lesson.verbs.map { it.lemma } }
 
     Column(Modifier.fillMaxSize()) {
         Surface(color = LbColors.SurfaceRaised, modifier = Modifier.fillMaxWidth()) {
@@ -1398,7 +1670,40 @@ private fun ByPronounMode(app: LangbangApplication, lesson: Lesson) {
                         }
                     }
                     Spacer(Modifier.width(8.dp))
-                    TenseToggleGroup(tense = tense, onTenseChange = { tense = it })
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            SubtleCheckbox(
+                                checked = state.slowFirst,
+                                onCheckedChange = { state.slowFirst = it },
+                                enabled = !state.playing,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "Slow first",
+                                fontSize = 11.sp,
+                                color = LbColors.TextSecondary,
+                                maxLines = 1
+                            )
+                        }
+                        VerbPlayButton(
+                            playing = state.playing,
+                            count = state.byPronounPlayCount(lesson.verbs, personKey, tense),
+                            onPlay = {
+                                state.playByPronounConjugations(
+                                    lesson.verbs,
+                                    personKey,
+                                    tense
+                                )
+                            },
+                            onStop = { state.stop() },
+                            playLabel = "Play All"
+                        )
+                        TenseToggleGroup(tense = tense, onTenseChange = { tense = it })
+                    }
                 }
             }
         }
@@ -1412,15 +1717,43 @@ private fun ByPronounMode(app: LangbangApplication, lesson: Lesson) {
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
+            item(key = "by-pronoun-master-$personKey-$tense") {
+                val allChecked = allLemmas.isNotEmpty() &&
+                    state.checkedLemmas.containsAll(allLemmas)
+                WordListPlaybackHeader(
+                    allChecked = allChecked,
+                    onAllCheckedChange = { state.setVerbsChecked(allLemmas, it) },
+                    random = state.randomOrder,
+                    onRandomChange = { state.updateRandomOrder(it) },
+                    enabled = !state.playing,
+                    allLabel = "all verbs"
+                )
+            }
             grouped.forEach { (cls, verbs) ->
                 item(key = "h-${cls.name}-$personKey-$tense") {
-                    Text(
-                        cls.label,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = LbColors.Label,
-                        modifier = Modifier.padding(top = 4.dp, bottom = 1.dp)
-                    )
+                    val classLemmas = verbs.map { it.lemma }
+                    val classChecked = classLemmas.isNotEmpty() &&
+                        state.checkedLemmas.containsAll(classLemmas)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp, bottom = 1.dp)
+                    ) {
+                        SubtleCheckbox(
+                            checked = classChecked,
+                            onCheckedChange = { state.setVerbsChecked(classLemmas, it) },
+                            enabled = !state.playing,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            cls.label,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = LbColors.Label
+                        )
+                    }
                 }
                 itemsIndexed(verbs, key = { _, v -> "p-${v.lemma}-$personKey-$tense" }) { index, v ->
                     val form = if (tense == PronounFilterStore.TENSE_PAST) {
@@ -1428,75 +1761,91 @@ private fun ByPronounMode(app: LangbangApplication, lesson: Lesson) {
                     } else {
                         v.forms[personKey].orEmpty()
                     }
-                    CompactLessonListCard(
-                        selected = false,
-                        onClick = { playConjugation(app, scope, personKey, form) },
-                        modifier = Modifier.fillMaxWidth(),
-                        alternate = index % 2 == 1,
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 3.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
+                        SubtleCheckbox(
+                            checked = v.lemma in state.checkedLemmas,
+                            onCheckedChange = { state.toggleVerbChecked(v.lemma, it) },
+                            enabled = !state.playing,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        CompactLessonListCard(
+                            selected = state.playingLemma == v.lemma,
+                            onClick = { state.playConjugationOnce(personKey, form) },
+                            modifier = Modifier.weight(1f),
+                            alternate = index % 2 == 1,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 3.dp)
                         ) {
-                            if (form.isNotEmpty()) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = "Play",
-                                    tint = LbColors.Primary, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                            } else {
-                                Spacer(Modifier.width(26.dp))
-                            }
                             Row(
-                                Modifier.width(250.dp),
+                                Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    v.lemma,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = LbColors.Primary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                DelayedEnglishTranslation(
-                                    text = v.en,
-                                    fontSize = 10.sp,
-                                    color = LbColors.TextMuted,
-                                    maxLines = 1,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                            Spacer(Modifier.width(10.dp))
-                            if (form.isEmpty()) {
-                                Text(
-                                    "—",
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = LbColors.TextMuted.copy(alpha = 0.5f),
-                                    modifier = Modifier.weight(1f)
-                                )
-                            } else {
+                                if (form.isNotEmpty()) {
+                                    Icon(
+                                        Icons.Default.PlayArrow,
+                                        contentDescription = "Play",
+                                        tint = LbColors.Primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                } else {
+                                    Spacer(Modifier.width(26.dp))
+                                }
                                 Row(
+                                    Modifier.width(250.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
                                 ) {
                                     Text(
-                                        audioPronoun(personKey),
+                                        v.lemma,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = LbColors.Primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    DelayedEnglishTranslation(
+                                        text = v.en,
+                                        fontSize = 10.sp,
+                                        color = LbColors.TextMuted,
+                                        maxLines = 1,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                if (form.isEmpty()) {
+                                    Text(
+                                        "-",
                                         fontSize = 18.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = LbColors.TextPrimary
+                                        color = LbColors.TextMuted.copy(alpha = 0.5f),
+                                        modifier = Modifier.weight(1f)
                                     )
-                                    Spacer(Modifier.width(4.dp))
-                                    VariablePolishText(
-                                        text = form,
-                                        fixedColor = LbColors.TextPrimary,
-                                        variableColor = GrammarVisuals.Variable.Conjugation,
-                                        fontSize = 18.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        baseText = v.lemma,
-                                        fallbackWholeWord = true
-                                    )
+                                } else {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            audioPronoun(personKey),
+                                            fontSize = 18.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = LbColors.TextPrimary
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        VariablePolishText(
+                                            text = form,
+                                            fixedColor = LbColors.TextPrimary,
+                                            variableColor = GrammarVisuals.Variable.Conjugation,
+                                            fontSize = 18.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            baseText = v.lemma,
+                                            fallbackWholeWord = true
+                                        )
+                                    }
                                 }
                             }
                         }
