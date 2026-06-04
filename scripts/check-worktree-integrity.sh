@@ -76,4 +76,6 @@ if [[ "$missing_worktree" -eq 1 ]]; then
   exit 1
 fi
 
+scripts/check-tablet-regressions.sh
+
 echo "Worktree audit passed."

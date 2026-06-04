@@ -53,9 +53,33 @@ class PracticePrefsStore(context: Context) {
         prefs.edit().putBoolean(wordPlayRandomKey(category), enabled).apply()
     }
 
+    fun verbPhraseIncludeAdjectives(): Boolean =
+        prefs.getBoolean(KEY_VERB_PHRASE_INCLUDE_ADJECTIVES, true)
+
+    fun setVerbPhraseIncludeAdjectives(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_VERB_PHRASE_INCLUDE_ADJECTIVES, enabled).apply()
+    }
+
+    fun verbPhraseIncludeAdverbs(): Boolean =
+        prefs.getBoolean(KEY_VERB_PHRASE_INCLUDE_ADVERBS, true)
+
+    fun setVerbPhraseIncludeAdverbs(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_VERB_PHRASE_INCLUDE_ADVERBS, enabled).apply()
+    }
+
+    fun verbPhraseIncludeNouns(): Boolean =
+        prefs.getBoolean(KEY_VERB_PHRASE_INCLUDE_NOUNS, true)
+
+    fun setVerbPhraseIncludeNouns(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_VERB_PHRASE_INCLUDE_NOUNS, enabled).apply()
+    }
+
     companion object {
         private const val KEY_SLOW_FIRST = "slow-first"
         private const val KEY_CHECKED_VERBS = "checked-verbs"
+        private const val KEY_VERB_PHRASE_INCLUDE_ADJECTIVES = "verb-phrase-include-adjectives"
+        private const val KEY_VERB_PHRASE_INCLUDE_ADVERBS = "verb-phrase-include-adverbs"
+        private const val KEY_VERB_PHRASE_INCLUDE_NOUNS = "verb-phrase-include-nouns"
         const val CATEGORY_VERBS = "verbs"
         const val CATEGORY_ADJECTIVES = "adjectives"
         const val CATEGORY_ADVERBS = "adverbs"

@@ -436,7 +436,9 @@ private fun AdvExamplesControls(
                     LbButton.Audio("Play", onClick = { state.playAll(adverbs, quiz = false) }, count = playCount)
                     WordPlayLimitControl(
                         limitText = state.playLimitText,
-                        onLimitTextChange = { state.updatePlayLimitText(it) }
+                        onLimitTextChange = { state.updatePlayLimitText(it) },
+                        leadingLabel = "groups of",
+                        trailingLabel = null
                     )
                 }
             }
