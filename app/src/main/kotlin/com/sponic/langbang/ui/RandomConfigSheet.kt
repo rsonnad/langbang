@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sponic.langbang.BuildConfig
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.data.IncludeMode
 import com.sponic.langbang.data.RandomConfig
@@ -69,6 +70,7 @@ internal fun RandomConfigSheet(
     initialMustContain: String = initial.mustContainWord,
     randomPlayer: RandomPlayerState,
     onCancel: () -> Unit,
+    onSyllableShadingChange: (Boolean) -> Unit = {},
     onPlay: (RandomConfig) -> Unit,
 ) {
     var mustContain by remember { mutableStateOf(initialMustContain) }
@@ -77,6 +79,7 @@ internal fun RandomConfigSheet(
     var preps by remember { mutableStateOf(initial.prepositions.toUiPrepositions()) }
     var adjMode by remember { mutableStateOf(initial.adjectiveMode) }
     var advMode by remember { mutableStateOf(initial.adverbMode) }
+    var syllableShading by remember { mutableStateOf(initial.syllableShading) }
     var filtersExpanded by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -92,7 +95,8 @@ internal fun RandomConfigSheet(
         tenses = tenses,
         prepositions = preps,
         adjectiveMode = adjMode,
-        adverbMode = advMode
+        adverbMode = advMode,
+        syllableShading = syllableShading
     )
     LaunchedEffect(config) {
         preflight = computePreflight(app, config)
@@ -184,7 +188,8 @@ internal fun RandomConfigSheet(
                         isStarred = nowVoicing?.pl?.let { it in starredPhrases } == true,
                         onToggleStar = {
                             nowVoicing?.pl?.let { app.starredPhrases.toggle(it) }
-                        }
+                        },
+                        syllableShading = config.syllableShading
                     )
                 }
 
@@ -244,6 +249,19 @@ internal fun RandomConfigSheet(
                                             tenses = if (VerbSentenceStore.TENSE_PAST in tenses)
                                                 tenses - VerbSentenceStore.TENSE_PAST
                                             else tenses + VerbSentenceStore.TENSE_PAST
+                                        }
+                                    )
+                                }
+                            }
+                            if (syllableShadingAvailable) {
+                                InlineRow("Syllables") {
+                                    ToggleChip(
+                                        label = "Show",
+                                        selected = syllableShading,
+                                        onToggle = {
+                                            val next = !syllableShading
+                                            syllableShading = next
+                                            onSyllableShadingChange(next)
                                         }
                                     )
                                 }
@@ -392,6 +410,9 @@ private fun personChipLabel(key: String): String = when (key) {
     "3pl" -> "oni/one"
     else -> key
 }
+
+private val syllableShadingAvailable: Boolean =
+    BuildConfig.LANGBANGML_INSTANCE_ID == "langbangml-en-pl"
 
 // ── Preflight (#9 + #10) ─────────────────────────────────────────────────────
 

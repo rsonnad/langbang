@@ -168,10 +168,15 @@ fun LangbangApp(app: LangbangApplication) {
     // initial values. Updates persist immediately so other readers (VerbsTab quiz
     // delay, RandomPlayer collect) see the latest values.
     var liveConfig by remember { mutableStateOf(app.randomConfig.load()) }
-    val updateConfig: (RandomConfig) -> Unit = remember {
+    val saveConfig: (RandomConfig) -> Unit = remember {
         { c ->
             liveConfig = c
             app.randomConfig.save(c)
+        }
+    }
+    val updateConfig: (RandomConfig) -> Unit = remember {
+        { c ->
+            saveConfig(c)
             randomPlayer.reconfigure(c)
         }
     }
@@ -314,7 +319,8 @@ fun LangbangApp(app: LangbangApplication) {
                     pinned = pinnedVoicing,
                     live = nowVoicing,
                     isStarred = pinnedVoicing?.pl?.let { it in starredPhrases } == true,
-                    onToggleStar = { pinnedVoicing?.pl?.let { app.starredPhrases.toggle(it) } }
+                    onToggleStar = { pinnedVoicing?.pl?.let { app.starredPhrases.toggle(it) } },
+                    syllableShading = liveConfig.syllableShading
                 )
             }
             if (nowVoicing != null || playbackTransport != null || randomPlayer.playing || randomPlayer.paused) {
@@ -363,6 +369,9 @@ fun LangbangApp(app: LangbangApplication) {
                 randomPlayer = randomPlayer,
                 onCancel = {
                     showConfigSheet = false
+                },
+                onSyllableShadingChange = { enabled ->
+                    saveConfig(liveConfig.copy(syllableShading = enabled))
                 },
                 onPlay = { config ->
                     updateConfig(config)

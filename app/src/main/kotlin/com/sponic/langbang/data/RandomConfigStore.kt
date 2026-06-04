@@ -23,7 +23,8 @@ class RandomConfigStore(context: Context) {
         adjectiveMode = readMode(KEY_ADJ_MODE, IncludeMode.YES),
         adverbMode = readMode(KEY_ADV_MODE, IncludeMode.OFF),
         playMode = readPlayMode(KEY_PLAY_MODE, PlayMode.PHRASES),
-        quizDelaySeconds = prefs.getFloat(KEY_QUIZ_DELAY, 1.5f)
+        quizDelaySeconds = prefs.getFloat(KEY_QUIZ_DELAY, 1.5f),
+        syllableShading = prefs.getBoolean(KEY_SYLLABLE_SHADING, true)
     )
 
     fun save(config: RandomConfig) {
@@ -36,6 +37,7 @@ class RandomConfigStore(context: Context) {
             .putString(KEY_ADV_MODE, config.adverbMode.name)
             .putString(KEY_PLAY_MODE, config.playMode.name)
             .putFloat(KEY_QUIZ_DELAY, config.quizDelaySeconds)
+            .putBoolean(KEY_SYLLABLE_SHADING, config.syllableShading)
             .apply()
     }
 
@@ -69,6 +71,7 @@ class RandomConfigStore(context: Context) {
         private const val KEY_ADV_MODE = "adv-mode"
         private const val KEY_PLAY_MODE = "play-mode"
         private const val KEY_QUIZ_DELAY = "quiz-delay-seconds"
+        private const val KEY_SYLLABLE_SHADING = "syllable-shading"
         const val PREPOSITION_NONE = "__none__"
         val DEFAULT_PERSONS = setOf("1sg", "2sg", "3sg")
         val DEFAULT_TENSES = setOf("present")
@@ -118,6 +121,8 @@ data class RandomConfig(
     val playMode: PlayMode = PlayMode.PHRASES,
     /** Seconds the quiz pauses between English audio → reveal Polish, and reveal → speak. */
     val quizDelaySeconds: Float = 1.5f,
+    /** Whether to shade target Polish words by syllable in Now Voicing. */
+    val syllableShading: Boolean = true,
 ) {
     companion object {
         /** Top-5 most common Polish prepositions for the chip row. */
