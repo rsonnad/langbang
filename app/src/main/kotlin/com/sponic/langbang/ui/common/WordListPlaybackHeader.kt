@@ -70,6 +70,8 @@ fun WordPlayLimitControl(
     limitText: String,
     onLimitTextChange: (String) -> Unit,
     enabled: Boolean = true,
+    leadingLabel: String = "groups of",
+    trailingLabel: String? = null,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -77,7 +79,7 @@ fun WordPlayLimitControl(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            "groups of",
+            leadingLabel,
             fontSize = 11.sp,
             color = if (enabled) LbColors.TextSecondary else LbColors.TextMuted
         )
@@ -87,6 +89,14 @@ fun WordPlayLimitControl(
             onValueChange = onLimitTextChange,
             enabled = enabled
         )
+        trailingLabel?.let {
+            Spacer(Modifier.width(4.dp))
+            Text(
+                it,
+                fontSize = 11.sp,
+                color = if (enabled) LbColors.TextSecondary else LbColors.TextMuted
+            )
+        }
     }
 }
 

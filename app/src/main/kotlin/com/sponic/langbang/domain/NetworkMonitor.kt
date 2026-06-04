@@ -26,20 +26,37 @@ class NetworkMonitor(context: Context) {
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
         cm?.registerNetworkCallback(request, object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) { _online.value = probeOnline() }
-            override fun onLost(network: Network) { _online.value = probeOnline() }
+            override fun onAvailable(network: Network) { refreshOnline() }
+            override fun onLost(network: Network) { refreshOnline() }
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                _online.value = probeOnline()
+                refreshOnline()
             }
         })
     }
 
-    fun isOnline(): Boolean = _online.value
+    fun isOnline(): Boolean {
+        refreshOnline()
+        return _online.value
+    }
 
+    private fun refreshOnline() {
+        _online.value = probeOnline()
+    }
+
+    @Suppress("DEPRECATION")
     private fun probeOnline(): Boolean {
-        val net = cm?.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(net) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        val manager = cm ?: return false
+        val active = manager.activeNetwork
+        if (active != null && manager.getNetworkCapabilities(active).hasValidatedInternet()) {
+            return true
+        }
+        return manager.allNetworks.any { network ->
+            manager.getNetworkCapabilities(network).hasValidatedInternet()
+        }
     }
 }
+
+private fun NetworkCapabilities?.hasValidatedInternet(): Boolean =
+    this != null &&
+        hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+        hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
