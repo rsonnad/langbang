@@ -226,6 +226,8 @@ internal class VerbsTabState(
         return if (randomOrder) targets.shuffled() else targets
     }
 
+    fun targetVerbCount(allVerbs: List<VerbEntry>): Int = resolveTargets(allVerbs).size
+
     fun toggleIncluded(
         key: String,
         included: Boolean,
@@ -848,7 +850,7 @@ private fun TopBar(
                     Spacer(Modifier.width(8.dp))
                     VerbPlayButton(
                         playing = state.playing,
-                        count = state.conjugationPlayCount(allVerbs),
+                        count = state.targetVerbCount(allVerbs),
                         onPlay = { state.playAllConjugations(allVerbs) },
                         onStop = { state.stop() }
                     )
@@ -856,7 +858,9 @@ private fun TopBar(
                         Spacer(Modifier.width(8.dp))
                         WordPlayLimitControl(
                             limitText = state.playLimitText,
-                            onLimitTextChange = { state.updatePlayLimitText(it) }
+                            onLimitTextChange = { state.updatePlayLimitText(it) },
+                            leadingLabel = "with",
+                            trailingLabel = "vars"
                         )
                     }
                 }
