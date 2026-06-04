@@ -29,6 +29,7 @@ require_absent_fixed() {
 }
 
 verbs="app/src/main/kotlin/com/sponic/langbang/ui/lessons/VerbsTab.kt"
+lesson_screen="app/src/main/kotlin/com/sponic/langbang/ui/lessons/LessonScreen.kt"
 prefs="app/src/main/kotlin/com/sponic/langbang/data/PracticePrefsStore.kt"
 word_header="app/src/main/kotlin/com/sponic/langbang/ui/common/WordListPlaybackHeader.kt"
 now_body="app/src/main/kotlin/com/sponic/langbang/ui/common/NowVoicingBody.kt"
@@ -45,6 +46,9 @@ require_fixed "$verbs" "leadingLabel = \"with\"" "verb play limit leading label"
 require_fixed "$verbs" "trailingLabel = \"vars\"" "verb play limit trailing label"
 require_fixed "$verbs" "playByPronounConjugations(" "by-pronoun Play All"
 require_fixed "$verbs" "byPronounPlayCount(" "by-pronoun play count"
+require_fixed "$lesson_screen" "VerbsTab(app, prefetch, tab, { tab = it }, nowVoicing)" "Lesson Verbs/Phrases routed through VerbsTab"
+require_absent_fixed "$lesson_screen" "L2Tab.Phrases -> PhrasesPane" "legacy lesson phrase pane route"
+require_absent_fixed "$lesson_screen" "private fun PhrasesPane" "legacy lesson phrase pane implementation"
 
 require_fixed "$prefs" "verbPhraseIncludeAdjectives()" "verb phrase adjective preference"
 require_fixed "$prefs" "verbPhraseIncludeAdverbs()" "verb phrase adverb preference"
