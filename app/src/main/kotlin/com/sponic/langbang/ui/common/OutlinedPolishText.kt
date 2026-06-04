@@ -220,8 +220,9 @@ private fun DrawScope.drawSyllableShadeBands(
 ) {
     val horizontalPad = 3.dp.toPx()
     val verticalInset = 4.dp.toPx()
+    val bottomExtension = 3.dp.toPx()
     val gap = 1.dp.toPx()
-    val labelGap = 2.dp.toPx()
+    val labelGap = 5.dp.toPx()
     val guidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFF65717D.toInt()
         textAlign = Paint.Align.CENTER
@@ -247,7 +248,7 @@ private fun DrawScope.drawSyllableShadeBands(
             val lineTop = layout.getLineTop(line) + textTopOffset
             val lineBottom = layout.getLineBottom(line) + textTopOffset
             val top = (lineTop + verticalInset).coerceAtLeast(0f)
-            val bottom = (lineBottom - verticalInset).coerceAtMost(size.height)
+            val bottom = (lineBottom - verticalInset + bottomExtension).coerceAtMost(size.height)
             if (right > left && bottom > top) {
                 drawRect(
                     color = if (range.shadeIndex % 2 == 0) shades.first else shades.second,
