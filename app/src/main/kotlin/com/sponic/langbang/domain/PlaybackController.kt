@@ -77,6 +77,8 @@ object PlaybackController {
     }
 
     fun pauseResume() {
-        transport.value?.pauseResume?.invoke()
+        val t = transport.value ?: return
+        t.pauseResume?.invoke()
+        paused.value = t.isPaused()
     }
 }

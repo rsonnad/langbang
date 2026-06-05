@@ -135,6 +135,18 @@ fun PracticeQuiz(
             misses = missCount,
             total = queue.size,
             onRetry = {
+                app.analytics.track(
+                    name = "practice_retried",
+                    feature = "quizzes",
+                    action = "retry",
+                    screen = "quizzes",
+                    properties = mapOf(
+                        "title" to (title ?: scope.title),
+                        "correct" to correctCount.toString(),
+                        "misses" to missCount.toString(),
+                        "total" to queue.size.toString()
+                    )
+                )
                 app.audioPlayer.stop()
                 PlaybackController.unregister()
                 NowVoicingBus.clear()
@@ -237,6 +249,17 @@ fun PracticeQuiz(
         filtersExpanded = false
         revealed = true
         missedRevealed = false
+        app.analytics.track(
+            name = "practice_answer_revealed",
+            feature = "quizzes",
+            action = "reveal",
+            screen = "quizzes",
+            properties = mapOf(
+                "title" to (title ?: scope.title),
+                "stage" to stage.name,
+                "index" to index.toString()
+            )
+        )
         playAnswer(current)
     }
 
@@ -244,10 +267,33 @@ fun PracticeQuiz(
         filtersExpanded = false
         revealed = true
         missedRevealed = true
+        app.analytics.track(
+            name = "practice_answer_marked_missed_before_reveal",
+            feature = "quizzes",
+            action = "answer",
+            screen = "quizzes",
+            properties = mapOf(
+                "title" to (title ?: scope.title),
+                "stage" to stage.name,
+                "index" to index.toString()
+            )
+        )
         playAnswer(current)
     }
 
     fun advanceMissedCurrent() {
+        app.analytics.track(
+            name = "practice_answer",
+            feature = "quizzes",
+            action = "answer",
+            screen = "quizzes",
+            properties = mapOf(
+                "title" to (title ?: scope.title),
+                "stage" to stage.name,
+                "correct" to "false",
+                "index" to index.toString()
+            )
+        )
         resetCardState()
         missCount += 1
         val stageChanged = record(false)
@@ -272,6 +318,18 @@ fun PracticeQuiz(
         }
         resetCardState()
         correctCount += 1
+        app.analytics.track(
+            name = "practice_answer",
+            feature = "quizzes",
+            action = "answer",
+            screen = "quizzes",
+            properties = mapOf(
+                "title" to (title ?: scope.title),
+                "stage" to stage.name,
+                "correct" to "true",
+                "index" to index.toString()
+            )
+        )
         val stageChanged = record(true)
         if (stageChanged) return
         if (expansion.isNotEmpty()) {
@@ -318,6 +376,13 @@ fun PracticeQuiz(
                 CompactHeaderButton(
                     label = null,
                     onClick = {
+                        app.analytics.track(
+                            name = "practice_retried",
+                            feature = "quizzes",
+                            action = "retry",
+                            screen = "quizzes",
+                            properties = mapOf("title" to (title ?: scope.title))
+                        )
                         resetCardState()
                         recent = emptyList()
                         runId += 1
@@ -342,6 +407,13 @@ fun PracticeQuiz(
                 PracticeScopeControls(
                     scope = scope,
                     onChange = {
+                        app.analytics.track(
+                            name = "practice_scope_changed",
+                            feature = "quizzes",
+                            action = "configure",
+                            screen = "quizzes",
+                            properties = mapOf("title" to (title ?: scope.title))
+                        )
                         resetCardState()
                         scope = it
                         recent = emptyList()

@@ -205,6 +205,7 @@ fun PhrasesScreen(
                 app.lessonRepo.addUserPhraseGroup(group)
                 showAddGroup = false
                 reload(group.id)
+                scope.launch { app.phraseSync.pushLocalAfterEdit() }
             }
         )
     }
@@ -462,6 +463,7 @@ private fun PhraseDetail(
                                 if (updated != null) {
                                     showAddPhrase = false
                                     onPhraseAdded(sentence)
+                                    app.phraseSync.pushLocalAfterEdit()
                                 } else {
                                     addPhraseError = "Phrase group is no longer available."
                                 }
@@ -675,7 +677,10 @@ private fun PhraseDetail(
                     sentence = s,
                     isCurrent = i == playingIndex,
                     isStarred = s.pl in starred,
-                    onToggleStar = { app.starredPhrases.toggle(s.pl) },
+                    onToggleStar = {
+                        app.starredPhrases.toggle(s.pl)
+                        scope.launch { app.phraseSync.pushLocalAfterEdit() }
+                    },
                     onWordClick = ::playSingleWord,
                     onPlay = {
                         // Inline one-off playback stays local; queue playback drives

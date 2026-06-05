@@ -43,13 +43,15 @@ data class BackupState(
 )
 
 /**
- * SFTP-pushes a zip of the audio cache + SharedPreferences to ALPUCA. The first time the
- * service runs, it generates a 2048-bit RSA SSH keypair under filesDir/ssh; the public key
- * is shown in the Settings screen for the user to paste into ALPUCA's authorized_keys.
+ * SFTP-pushes a zip of the audio cache, user-created JSON data, and SharedPreferences to
+ * ALPUCA. The first time the service runs, it generates a 2048-bit RSA SSH keypair under
+ * filesDir/ssh; the public key is shown in the Settings screen for the user to paste into
+ * ALPUCA's authorized_keys.
  *
- * Restore path: copy the zip back to another device's filesDir, unzip into the matching
- * subdirectories. Restore-side UI is deliberately out of scope for v1 — recovery is
- * "reinstall app, copy zip, unzip manually," which is fine for a personal tool.
+ * Restore path is still manual: copy the root JSON files and audio/ into the new device's
+ * filesDir, and copy shared_prefs/ into the app data shared_prefs directory. Restore-side UI
+ * is deliberately out of scope for v1, but the archive now contains the custom study data
+ * needed to recover phrases, words, generated examples, settings, and stars.
  */
 class BackupService(
     private val context: Context,
@@ -126,10 +128,13 @@ class BackupService(
         val outDir = File(context.cacheDir, "backups").also { it.mkdirs() }
         val out = File(outDir, "langbang-$tsLabel.zip")
 
-        val sources = listOf(
-            File(context.filesDir, "audio") to "audio",
-            File(context.applicationInfo.dataDir, "shared_prefs") to "shared_prefs",
-        )
+        val sources = buildList {
+            add(File(context.filesDir, "audio") to "audio")
+            add(File(context.applicationInfo.dataDir, "shared_prefs") to "shared_prefs")
+            userDataFileNames.forEach { name ->
+                add(File(context.filesDir, name) to name)
+            }
+        }
 
         val manifest = """
             {
@@ -150,12 +155,29 @@ class BackupService(
             zos.write(manifest.toByteArray(Charsets.UTF_8))
             zos.closeEntry()
 
-            for ((srcDir, prefix) in sources) {
-                if (!srcDir.exists() || !srcDir.isDirectory) continue
-                addDirToZip(srcDir, prefix, zos)
+            for ((src, prefix) in sources) {
+                if (!src.exists()) continue
+                if (src.isDirectory) {
+                    addDirToZip(src, prefix, zos)
+                } else if (src.isFile && src.canRead()) {
+                    addFileToZip(src, prefix, zos)
+                }
             }
         }
         return out
+    }
+
+    private fun addFileToZip(file: File, entryName: String, zos: ZipOutputStream) {
+        val buf = ByteArray(64 * 1024)
+        zos.putNextEntry(ZipEntry(entryName))
+        FileInputStream(file).use { input ->
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                zos.write(buf, 0, n)
+            }
+        }
+        zos.closeEntry()
     }
 
     private fun addDirToZip(dir: File, prefix: String, zos: ZipOutputStream) {
@@ -299,6 +321,18 @@ class BackupService(
         private const val DEFAULT_HOST = "alpuca"
         private const val DEFAULT_PORT = 22
         private const val DEFAULT_REMOTE_DIR = "RVAULT/backups/langbang"
+
+        private val userDataFileNames = listOf(
+            "user-verbs.json",
+            "user-adjectives.json",
+            "user-adverbs.json",
+            "user-nouns.json",
+            "user-phrases.json",
+            "verb-sentences.json",
+            "adjective-sentences.json",
+            "adverb-sentences.json",
+            "noun-sentences.json",
+        )
     }
 }
 

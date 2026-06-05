@@ -8,6 +8,8 @@ import android.net.NetworkRequest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
  * Tracks whether the device currently has a validated internet connection so that callers
@@ -42,6 +44,25 @@ class NetworkMonitor(context: Context) {
     private fun refreshOnline() {
         _online.value = probeOnline()
     }
+
+    @Suppress("DEPRECATION")
+    fun validatedInternetNetworks(): List<Network> {
+        val manager = cm ?: return emptyList()
+        val active = manager.activeNetwork
+        val networks = buildList {
+            if (active != null) add(active)
+            addAll(manager.allNetworks)
+        }.distinct()
+        return networks
+            .filter { network -> manager.getNetworkCapabilities(network).hasValidatedInternet() }
+            .sortedBy { network ->
+                val caps = manager.getNetworkCapabilities(network)
+                caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+            }
+    }
+
+    fun openConnection(url: URL, network: Network): HttpURLConnection =
+        network.openConnection(url) as HttpURLConnection
 
     @Suppress("DEPRECATION")
     private fun probeOnline(): Boolean {

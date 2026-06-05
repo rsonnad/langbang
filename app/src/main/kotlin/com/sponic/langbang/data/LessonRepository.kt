@@ -95,12 +95,12 @@ class LessonRepository(
         tense: String = VerbSentenceStore.TENSE_PRESENT
     ): List<SentenceExample> {
         val cached = verbSentences.get(lemma, tense)
-        if (cached.isNotEmpty()) return cached.map(::scrubPluralMarkers)
+        if (cached.isNotEmpty()) return cached.map(::scrubSentenceExample)
         // Past-tense fallback: read from the bundled pregen asset if it exists. Lets a
         // fresh install have past-tense content (text + audio) without the user tapping
         // Generate — the asset is shipped with the APK and audio sits in R2.
         if (tense == VerbSentenceStore.TENSE_PAST) {
-            return pastPregen()[lemma.lowercase()].orEmpty().map(::scrubPluralMarkers)
+            return pastPregen()[lemma.lowercase()].orEmpty().map(::scrubSentenceExample)
         }
         return emptyList()
     }
@@ -132,7 +132,7 @@ class LessonRepository(
         sentences: List<SentenceExample>,
         tense: String = VerbSentenceStore.TENSE_PRESENT
     ) {
-        verbSentences.put(lemma, tense, sentences)
+        verbSentences.put(lemma, tense, sentences.map(::scrubSentenceExample))
     }
 
     /** Drop every cached Gemini sentence — verbs, adjectives, adverbs, nouns. */
@@ -168,10 +168,10 @@ class LessonRepository(
     }
 
     fun adjectiveSentencesFor(lemma: String): List<SentenceExample> =
-        adjectiveSentences.get(lemma).map(::scrubPluralMarkers)
+        adjectiveSentences.get(lemma).map(::scrubSentenceExample)
 
     fun saveAdjectiveSentences(lemma: String, sentences: List<SentenceExample>) {
-        adjectiveSentences.put(lemma, sentences)
+        adjectiveSentences.put(lemma, sentences.map(::scrubSentenceExample))
     }
 
     /** Lesson 4 — common adverbs, with user-added adverbs merged in. */
@@ -191,10 +191,10 @@ class LessonRepository(
     }
 
     fun adverbSentencesFor(lemma: String): List<SentenceExample> =
-        adverbSentences.get(lemma).map(::scrubPluralMarkers)
+        adverbSentences.get(lemma).map(::scrubSentenceExample)
 
     fun saveAdverbSentences(lemma: String, sentences: List<SentenceExample>) {
-        adverbSentences.put(lemma, sentences)
+        adverbSentences.put(lemma, sentences.map(::scrubSentenceExample))
     }
 
     /** Lesson 6 — core nouns in nom + acc + gen (sg/pl), with user-added nouns merged in. */
@@ -214,10 +214,10 @@ class LessonRepository(
     }
 
     fun nounSentencesFor(lemma: String): List<SentenceExample> =
-        nounSentences.get(lemma).map(::scrubPluralMarkers)
+        nounSentences.get(lemma).map(::scrubSentenceExample)
 
     fun saveNounSentences(lemma: String, sentences: List<SentenceExample>) {
-        nounSentences.put(lemma, sentences)
+        nounSentences.put(lemma, sentences.map(::scrubSentenceExample))
     }
 
     /**
@@ -234,7 +234,7 @@ class LessonRepository(
         val added = userPhrases.load()
         val scrubbedBase = base.copy(
             groups = base.groups.map { g ->
-                g.copy(sentences = g.sentences.map(::scrubPluralMarkers))
+                g.copy(sentences = g.sentences.map(::scrubSentenceExample))
             }
         )
         if (added.isEmpty()) return scrubbedBase
@@ -244,6 +244,13 @@ class LessonRepository(
 
     fun addUserPhraseGroup(group: PhraseGroup) {
         userPhrases.add(group)
+    }
+
+    fun userPhraseGroups(): List<PhraseGroup> =
+        userPhrases.load()
+
+    fun replaceUserPhraseGroups(groups: List<PhraseGroup>) {
+        userPhrases.replaceAll(groups)
     }
 
     fun addUserPhraseSentence(groupId: String, sentence: SentenceExample): PhraseGroup? {
@@ -259,15 +266,21 @@ class LessonRepository(
     }
 
     /**
-     * Rewrites legacy Gemini outputs that annotated 2pl subjects as "You (plural)" — the
-     * prompt now requires "Y'all" but old cached sentences (and any straggler that
-     * slips past) need cleaning at read time. Stray bare "(plural)" markers are stripped
-     * too. Cheap enough to run on every read; no need to persist back.
+     * Rewrites legacy Gemini outputs that annotated 2pl English subjects as
+     * "You (plural)" and fixes generated rows where Gemini copied the English
+     * pronoun "Y'all" into the Polish sentence. English keeps the app's 2pl
+     * convention; Polish gets the actual pronoun "Wy".
      */
-    private fun scrubPluralMarkers(s: SentenceExample): SentenceExample = s.copy(
-        en = scrubPluralText(s.en),
+    private fun scrubSentenceExample(s: SentenceExample): SentenceExample = s.copy(
+        pl = scrubPolishTargetText(s.pl),
+        en = normalizeEnglishTranslation(scrubPluralText(s.en)),
         literal = s.literal?.let(::scrubPluralText),
-        words = s.words?.map { it.copy(en = scrubPluralText(it.en)) }
+        words = s.words?.map { token ->
+            token.copy(
+                pl = scrubPolishTargetText(token.pl),
+                en = scrubPluralText(token.en)
+            )
+        }
     )
 
     fun clearCloudBackedBaseCache() {
@@ -297,6 +310,7 @@ class LessonRepository(
     companion object {
         private val PLURAL_YOU_REGEX = Regex("\\b(Y|y)ou\\s*\\(plural\\)")
         private val PAREN_PLURAL_REGEX = Regex("\\s*\\(plural\\)\\s*", RegexOption.IGNORE_CASE)
+        private val ENGLISH_YALL_IN_POLISH_REGEX = Regex("\\by['’]all\\b", RegexOption.IGNORE_CASE)
         private val WHITESPACE_REGEX = Regex("\\s+")
 
         private fun scrubPluralText(text: String): String {
@@ -306,6 +320,13 @@ class LessonRepository(
             }
             t = PAREN_PLURAL_REGEX.replace(t, " ")
             return WHITESPACE_REGEX.replace(t, " ").trim()
+        }
+
+        private fun scrubPolishTargetText(text: String): String {
+            if (!text.contains("all", ignoreCase = true)) return text
+            return ENGLISH_YALL_IN_POLISH_REGEX.replace(text) { match ->
+                if (match.range.first == 0) "Wy" else "wy"
+            }
         }
     }
 }

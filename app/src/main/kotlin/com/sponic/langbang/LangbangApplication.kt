@@ -8,8 +8,13 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.sponic.langbang.BuildConfig
+import com.sponic.langbang.analytics.ProductAnalytics
+import com.sponic.langbang.analytics.ProductAnalyticsClient
+import com.sponic.langbang.analytics.ProductAnalyticsProfile
+import com.sponic.langbang.cloud.AuthStore
 import com.sponic.langbang.cloud.CloudBackendClient
 import com.sponic.langbang.cloud.CloudConfigStore
+import com.sponic.langbang.cloud.PhraseSyncService
 import com.sponic.langbang.data.AccountPrefsStore
 import com.sponic.langbang.data.AudioPrefsStore
 import com.sponic.langbang.data.LessonRepository
@@ -33,13 +38,19 @@ import com.sponic.langbang.integrations.GeminiClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 class LangbangApplication : Application() {
 
     lateinit var cloudConfig: CloudConfigStore
         private set
     lateinit var cloudBackend: CloudBackendClient
+        private set
+    lateinit var authStore: AuthStore
+        private set
+    lateinit var phraseSync: PhraseSyncService
         private set
     lateinit var lessonRepo: LessonRepository
         private set
@@ -79,6 +90,8 @@ class LangbangApplication : Application() {
         private set
     lateinit var updateChecker: UpdateChecker
         private set
+    lateinit var analytics: ProductAnalytics
+        private set
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -87,19 +100,27 @@ class LangbangApplication : Application() {
         AdbWifiKeeper.enableIfGranted(this, "app start")
         cloudConfig = CloudConfigStore(this, BuildConfig.LANGBANGML_INSTANCE_ID)
         cloudBackend = CloudBackendClient(apiBase = BuildConfig.LANGBANGML_API_BASE)
+        authStore = AuthStore(this)
+        analytics = ProductAnalytics(
+            context = this,
+            cloudConfig = cloudConfig,
+            client = ProductAnalyticsClient(apiBase = BuildConfig.LANGBANGML_API_BASE),
+            scope = appScope
+        )
         lessonRepo = LessonRepository(this, cloudConfig)
         migrateSentenceCachesIfNeeded()
-        sentenceRegen = SentenceRegenService(lessonRepo)
+        network = NetworkMonitor(this)
+        sentenceRegen = SentenceRegenService(lessonRepo, network)
         pronounFilter = PronounFilterStore(this)
         randomConfig = RandomConfigStore(this)
         practicePrefs = PracticePrefsStore(this)
         accountPrefs = AccountPrefsStore(this)
         starredPhrases = StarredPhrasesStore(this)
+        phraseSync = PhraseSyncService(cloudBackend, authStore, lessonRepo, starredPhrases, cloudConfig)
         audioPrefs = AudioPrefsStore(this)
         audioCache = AudioCache(this)
         audioPlayer = AudioPlayer()
         usage = UsageTracker(this)
-        network = NetworkMonitor(this)
         tts = AzureTtsClient(usage, network)
         pron = AzurePronunciationClient(this, usage, network)
         gemini = GeminiClient(usage)
@@ -124,10 +145,40 @@ class LangbangApplication : Application() {
         // No-ops when every bundle is already cached locally; surfaces progress
         // through the always-visible banner in LangbangApp when work is needed.
         sentenceRegen.startIfNeeded()
+        bindAuthProfileToAnalytics()
+        analytics.trackSessionStart()
         syncCloudConfig()
+        if (authStore.state.value.signedIn) {
+            syncUserPhrases()
+        }
+    }
+
+    private fun bindAuthProfileToAnalytics() {
+        appScope.launch {
+            authStore.state.collect { state ->
+                val user = state.user
+                analytics.setProfile(
+                    if (state.signedIn && user != null) {
+                        ProductAnalyticsProfile(
+                            profileId = user.id,
+                            provider = "langbang",
+                            providerSubject = user.id,
+                            email = user.email,
+                            displayName = user.displayName,
+                            locale = Locale.getDefault().toLanguageTag(),
+                            signupState = "signed_in",
+                            properties = mapOf("emailVerified" to user.emailVerified.toString())
+                        )
+                    } else {
+                        null
+                    }
+                )
+            }
+        }
     }
 
     fun syncCloudConfig() {
+        analytics.track(name = "cloud_sync_requested", feature = "cloud", action = "sync")
         cloudConfig.markSyncing()
         appScope.launch {
             cloudBackend.fetchInstances()
@@ -136,18 +187,69 @@ class LangbangApplication : Application() {
                 onSuccess = { bootstrap ->
                     cloudConfig.saveBootstrap(bootstrap)
                     lessonRepo.clearCloudBackedBaseCache()
+                    analytics.track(
+                        name = "cloud_sync_succeeded",
+                        feature = "cloud",
+                        action = "sync",
+                        properties = mapOf(
+                            "contentVersionId" to (bootstrap.content.versionId ?: ""),
+                            "instanceId" to bootstrap.instance.id
+                        )
+                    )
                 },
                 onFailure = { t ->
                     cloudConfig.saveError(t.message ?: t.javaClass.simpleName)
+                    analytics.track(
+                        name = "cloud_sync_failed",
+                        feature = "cloud",
+                        action = "sync",
+                        properties = mapOf("error" to (t.message ?: t.javaClass.simpleName))
+                    )
                 }
             )
         }
     }
 
     fun selectCloudInstance(instanceId: String) {
+        analytics.track(
+            name = "instance_selected",
+            feature = "cloud",
+            action = "select",
+            properties = mapOf("instanceId" to instanceId)
+        )
         cloudConfig.setSelectedInstance(instanceId)
         lessonRepo.clearCloudBackedBaseCache()
         syncCloudConfig()
+        if (authStore.state.value.signedIn) {
+            syncUserPhrases()
+        }
+    }
+
+    fun syncUserPhrases() {
+        analytics.track(name = "phrase_sync_requested", feature = "profile", action = "sync")
+        appScope.launch {
+            phraseSync.syncNow().fold(
+                onSuccess = {
+                    analytics.track(
+                        name = "phrase_sync_succeeded",
+                        feature = "profile",
+                        action = "sync",
+                        properties = mapOf(
+                            "groupCount" to it.groups.size.toString(),
+                            "starCount" to it.starredPhrases.size.toString()
+                        )
+                    )
+                },
+                onFailure = { t ->
+                    analytics.track(
+                        name = "phrase_sync_failed",
+                        feature = "profile",
+                        action = "sync",
+                        properties = mapOf("error" to (t.message ?: t.javaClass.simpleName))
+                    )
+                }
+            )
+        }
     }
 
     /**

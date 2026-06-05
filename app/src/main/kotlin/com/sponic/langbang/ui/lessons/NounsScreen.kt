@@ -28,7 +28,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -511,13 +510,14 @@ private fun ExamplesControls(state: NounsScreenState, nouns: List<NounEntry>) {
                     )
                 }
             }
-            val isRegenerate = state.sentences.isNotEmpty()
-            LbButton.Ghost(
-                label = if (state.busy) "Generating" else if (isRegenerate) "Refresh examples" else "Generate examples",
-                icon = if (isRegenerate) Icons.Default.Refresh else Icons.Default.Add,
-                enabled = !state.busy && !state.playing,
-                onClick = { state.generate() }
-            )
+            if (state.busy || state.sentences.isEmpty()) {
+                LbButton.Ghost(
+                    label = if (state.busy) "Generating" else "Generate examples",
+                    icon = Icons.Default.Add,
+                    enabled = !state.busy && !state.playing,
+                    onClick = { state.generate() }
+                )
+            }
             Spacer(Modifier.weight(1f))
             if (state.playing) {
                 LbButton.Stop("Stop", onClick = { state.stop() }, icon = Icons.Default.Stop)

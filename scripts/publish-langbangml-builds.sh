@@ -6,13 +6,24 @@ cd "$REPO_ROOT"
 
 SKIP_BUILD=0
 NO_SITE_DEPLOY=0
+ONLY_CHANNEL=""
 for arg in "$@"; do
   case "$arg" in
     --skip-build) SKIP_BUILD=1 ;;
     --no-site-deploy) NO_SITE_DEPLOY=1 ;;
+    --only=*) ONLY_CHANNEL="${arg#--only=}" ;;
+    --only)
+      echo "--only requires a value: en-pl or pl-en" >&2
+      exit 2
+      ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
   esac
 done
+
+case "$ONLY_CHANNEL" in
+  ""|"en-pl"|"pl-en") ;;
+  *) echo "--only must be en-pl or pl-en" >&2; exit 2 ;;
+esac
 
 if [ "${LANGBANGML_SKIP_WORKTREE_AUDIT:-0}" != "1" ]; then
   scripts/check-worktree-integrity.sh
@@ -23,7 +34,7 @@ fi
 PUBLIC_BASE="https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev"
 API_BASE="https://langbangml-api.langbangml.workers.dev"
 SITE_BUILDS_URL="https://langbang.org/builds"
-SITE_DEPLOY_SCRIPT="/Users/rahulio/Documents/CodingProjects/langbang/scripts/deploy-langbang-org-site.sh"
+SITE_DEPLOY_SCRIPT="$REPO_ROOT/scripts/deploy-langbang-org-site.sh"
 BUCKET="langbangml"
 R2_ITEM="Cloudflare R2 - LangBang S3 Admin"
 
@@ -61,22 +72,31 @@ field() {
 }
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
-  ./gradlew --no-configuration-cache :app:assembleEnPlDebug :app:assemblePlEnDebug -q
+  case "$ONLY_CHANNEL" in
+    en-pl) ./gradlew --no-configuration-cache :app:assembleEnPlDebug -q ;;
+    pl-en) ./gradlew --no-configuration-cache :app:assemblePlEnDebug -q ;;
+    *) ./gradlew --no-configuration-cache :app:assembleEnPlDebug :app:assemblePlEnDebug -q ;;
+  esac
 fi
 
 AAPT2="$(find_aapt2)"
 [ -n "$AAPT2" ] || { echo "aapt2 not found in Android SDK build-tools" >&2; exit 1; }
 
-BW_PASSWORD="$(security find-generic-password -a "rahulioson@gmail.com" -s "bitwarden-cli" -w 2>/dev/null || true)"
-[ -n "$BW_PASSWORD" ] || { echo "could not read Bitwarden CLI password from Keychain" >&2; exit 1; }
-export BW_PASSWORD
-BW_SESSION="$(bw unlock --passwordenv BW_PASSWORD --raw)"
-export BW_SESSION
-BW_ITEM="$(bw get item "$R2_ITEM" --session "$BW_SESSION")"
+if [ -z "${BW_SESSION:-}" ] || ! bw status --session "$BW_SESSION" </dev/null 2>/dev/null | jq -e '.status == "unlocked"' >/dev/null; then
+  BW_PASSWORD="$(security find-generic-password -a "rahulioson@gmail.com" -s "bitwarden-cli" -w 2>/dev/null || true)"
+  [ -n "$BW_PASSWORD" ] || { echo "could not read Bitwarden CLI password from Keychain" >&2; exit 1; }
+  export BW_PASSWORD
+  BW_SESSION="$(/opt/homebrew/bin/bw unlock --passwordenv BW_PASSWORD --raw </dev/null)"
+  unset BW_PASSWORD
+  export BW_SESSION
+fi
+BW_ITEM="$(bw get item "$R2_ITEM" --session "$BW_SESSION" </dev/null)"
 
 export AWS_ACCESS_KEY_ID="$(field "Access Key ID")"
 export AWS_SECRET_ACCESS_KEY="$(field "Secret Access Key")"
 export AWS_DEFAULT_REGION=auto
+export AWS_CLI_FILE_TRANSFER_MAX_CONCURRENCY="${AWS_CLI_FILE_TRANSFER_MAX_CONCURRENCY:-1}"
+export AWS_CLI_FILE_TRANSFER_MULTIPART_THRESHOLD="${AWS_CLI_FILE_TRANSFER_MULTIPART_THRESHOLD:-128MB}"
 ENDPOINT="$(field "R2 Endpoint")"
 ACCOUNT_ID="$(field "Account ID")"
 [ -z "$ENDPOINT" ] && ENDPOINT="https://${ACCOUNT_ID}.r2.cloudflarestorage.com"
@@ -171,8 +191,12 @@ publish_channel() {
   PAGE_ROWS+=("${display_name}|v${version_code}|${full_version}|${latest_url}|${pinned_url}|${PUBLIC_BASE}/${manifest_key}")
 }
 
-publish_channel "enPl" "en-pl" "langbangml-en-pl" "English speakers learning Polish"
-publish_channel "plEn" "pl-en" "langbangml-pl-en" "Polish speakers learning English"
+if [ -z "$ONLY_CHANNEL" ] || [ "$ONLY_CHANNEL" = "en-pl" ]; then
+  publish_channel "enPl" "en-pl" "langbangml-en-pl" "English speakers learning Polish"
+fi
+if [ -z "$ONLY_CHANNEL" ] || [ "$ONLY_CHANNEL" = "pl-en" ]; then
+  publish_channel "plEn" "pl-en" "langbangml-pl-en" "Polish speakers learning English"
+fi
 
 page_tmp="$(mktemp -t langbangml-builds.XXXXXX.html)"
 tmp_files+=("$page_tmp")
@@ -196,7 +220,7 @@ tmp_files+=("$page_tmp")
 </head>
 <body><main>
   <h1>LangBangML builds</h1>
-  <p>Two APK channels from the new Cloudflare account. Each channel has its own latest APK, pinned APK, and update manifest.</p>
+  <p>APK channel downloads from the new Cloudflare account. Each published channel has its own latest APK, pinned APK, and update manifest.</p>
   <nav class="tabs"><a href="#en-pl">English to Polish</a><a href="#pl-en">Polish to English</a></nav>
 HTML
   for row in "${PAGE_ROWS[@]}"; do

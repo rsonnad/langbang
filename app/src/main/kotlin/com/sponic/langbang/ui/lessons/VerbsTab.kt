@@ -1426,9 +1426,6 @@ internal class VerbsTabState(
      *     Plain study mode, no quizzing.
      *   - [mode] == "conjQuiz": speak EN ("I am") + hide PL text, 2s pause, reveal PL,
      *     2s pause, speak PL. User has to recall the conjugated form before reveal.
-     *   - [mode] == "recall": speak PL with PL text hidden + EN hidden, 2s pause,
-     *     reveal both, 2s pause. User has to identify "which verb + which person" from
-     *     hearing the form alone.
      */
     fun playAllConjugations(allVerbs: List<VerbEntry>, mode: String = "play") {
         if (player.hasQueue) {
@@ -1516,7 +1513,7 @@ internal class VerbsTabState(
             playingLemma = cue.lemma
             val total = cues.size
             when (mode) {
-                "conjQuiz", "recall" -> {
+                "conjQuiz" -> {
                     publishConjugation(cue, i, total, mode, "en", plHidden = true)
                     say(cue.englishGloss, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                     publishConjugation(cue, i, total, mode, "pause", plHidden = true)
@@ -1704,7 +1701,6 @@ private fun TopBar(
                         )
                         if (!state.playing) {
                             LbButton.Ghost("Conj quiz", onClick = { state.playAllConjugations(allVerbs, mode = "conjQuiz") })
-                            LbButton.Ghost("Recall quiz", onClick = { state.playAllConjugations(allVerbs, mode = "recall") })
                         }
                     }
                 }

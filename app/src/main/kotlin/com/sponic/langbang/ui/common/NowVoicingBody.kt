@@ -92,6 +92,10 @@ fun NowVoicingBody(
     }
     val plTokens = tokenPair.first
     val glossTokens = tokenPair.second
+    val delayedEnglishVisible = rememberDelayedTranslationVisible(
+        key = "${pinned.pl}\n${pinned.en}\n${pinned.literal.orEmpty()}"
+    )
+    val showEnglish = enActive || delayedEnglishVisible
     val englishText = pinned.en
     val grammarReference = remember(pinned.words) { nowVoicingGrammarReference(pinned) }
     val primaryText = LbColors.TextPrimary
@@ -139,7 +143,11 @@ fun NowVoicingBody(
                 text = englishText,
                 fontSize = 16.sp,
                 fontWeight = if (enActive) FontWeight.Bold else FontWeight.SemiBold,
-                color = if (enActive) primaryText else secondaryText,
+                color = when {
+                    !showEnglish -> Color.Transparent
+                    enActive -> primaryText
+                    else -> secondaryText
+                },
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .weight(1f)
@@ -248,7 +256,7 @@ fun NowVoicingBody(
                             modifier = wordModifier
                         )
                     }
-                    if (!plHidden && gloss.isNotEmpty()) {
+                    if (showEnglish && !plHidden && gloss.isNotEmpty()) {
                         Text(
                             gloss,
                             fontSize = glossFontSize,
