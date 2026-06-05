@@ -32,10 +32,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +51,7 @@ import com.sponic.langbang.data.VerbSentenceStore
 import com.sponic.langbang.data.model.VerbEntry
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
+import com.sponic.langbang.ui.lessons.VerbsTabState
 
 /**
  * Tab-root for the new tap-to-answer quiz section. Lists the available drill modes
@@ -100,6 +103,10 @@ fun QuizzesScreen(
                         tenses = setOf(VerbSentenceStore.TENSE_PRESENT)
                     ),
                     title = "Helper + infinitive",
+                    onExit = returnToHub
+                )
+                QuizMode.SentenceAudio -> SentenceAudioQuiz(
+                    app = app,
                     onExit = returnToHub
                 )
                 is QuizMode.PerVerbPick -> PerVerbPicker(app = app,
@@ -157,6 +164,7 @@ private sealed interface QuizMode {
     data object Hub : QuizMode
     data object Practice : QuizMode
     data object HelperInfinitives : QuizMode
+    data object SentenceAudio : QuizMode
     data object PerVerbPick : QuizMode
     data object CrossVerbPick : QuizMode
     data class PerVerb(val verb: VerbEntry, val tense: String) : QuizMode {
@@ -188,6 +196,11 @@ private fun Hub(onPick: (QuizMode) -> Unit) {
             title = "Helper + infinitive",
             subtitle = "Common want/need/can/could/should patterns with everyday infinitives.",
             mode = QuizMode.HelperInfinitives
+        ),
+        QuizCardSpec(
+            title = "Sentence audio",
+            subtitle = "Hear English, recall Polish, then reveal and play the sentence.",
+            mode = QuizMode.SentenceAudio
         ),
         QuizCardSpec(
             title = "One verb",
@@ -301,6 +314,80 @@ private fun QuizCard(
     }
 }
 
+@Composable
+private fun SentenceAudioQuiz(
+    app: LangbangApplication,
+    onExit: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val lesson = remember { app.lessonRepo.lesson2() }
+    val state = remember { VerbsTabState(app, scope) }
+    LaunchedEffect(lesson.verbs) {
+        if (state.selected == null) state.selectVerb(lesson.verbs.firstOrNull())
+    }
+    DisposableEffect(Unit) {
+        onDispose { state.stop() }
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Sentence audio",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = LbColors.Primary,
+                modifier = Modifier.weight(1f)
+            )
+            Button(
+                onClick = {
+                    state.stop()
+                    onExit()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = LbColors.Stop),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                Text("End quiz", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+            }
+        }
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(
+                    onClick = {
+                        state.playAll(
+                            lesson.verbs,
+                            quiz = true,
+                            includeWordTypeVariations = state.wordTypeVariationsEnabled()
+                        )
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (state.playing) LbColors.Stop else LbColors.Audio
+                    )
+                ) {
+                    Text(if (state.playing) "Stop" else "Play sentence quiz")
+                }
+                Text(
+                    "Uses checked verbs, pronouns, and word-type options from Verbs.",
+                    fontSize = 12.sp,
+                    color = LbColors.TextSecondary
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PerVerbPicker(
@@ -315,7 +402,7 @@ private fun PerVerbPicker(
             Text("Pick a verb", fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
                 color = LbColors.Primary, modifier = Modifier.weight(1f))
             OutlinedButton(onClick = onBack, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                Text("Back", fontSize = 12.sp)
+                Text("Back to quizzes", fontSize = 12.sp)
             }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -354,7 +441,7 @@ private fun CrossVerbPicker(onPick: (String, String) -> Unit, onBack: () -> Unit
             Text("Pick a person", fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
                 color = LbColors.Primary, modifier = Modifier.weight(1f))
             OutlinedButton(onClick = onBack, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                Text("Back", fontSize = 12.sp)
+                Text("Back to quizzes", fontSize = 12.sp)
             }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

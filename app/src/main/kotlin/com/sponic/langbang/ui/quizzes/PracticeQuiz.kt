@@ -304,7 +304,9 @@ fun PracticeQuiz(
                     title ?: scope.title,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = LbColors.Primary
+                    color = LbColors.Primary,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f)
                 )
                 Text(
                     if (scope.auto) stage.label else "Manual",
@@ -321,14 +323,12 @@ fun PracticeQuiz(
                         runId += 1
                     }
                 )
-                CompactHeaderButton(
-                    label = "Exit",
+                EndQuizHeaderButton(
                     onClick = {
                         stopPracticeAudio()
                         onExit()
                     }
                 )
-                Spacer(Modifier.weight(1f))
                 if (answerVoiceBadgeVisible) {
                     PracticeVoicingBadge()
                     Spacer(Modifier.width(8.dp))
@@ -436,6 +436,21 @@ private fun PracticeActionBar(
                 onClick = onMissedIt
             )
         }
+    }
+}
+
+@Composable
+private fun EndQuizHeaderButton(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .height(28.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(LbColors.Stop)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 11.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text("End quiz", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
     }
 }
 
@@ -852,7 +867,7 @@ private fun EmptyPractice(
             color = LbColors.TextSecondary
         )
         PracticeScopeControls(scope = scope, onChange = onScopeChange)
-        OutlinedButton(onClick = onExit) { Text("Back") }
+        OutlinedButton(onClick = onExit) { Text("Back to quizzes") }
     }
 }
 
