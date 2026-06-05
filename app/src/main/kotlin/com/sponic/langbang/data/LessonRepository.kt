@@ -246,6 +246,13 @@ class LessonRepository(
         userPhrases.add(group)
     }
 
+    fun userPhraseGroups(): List<PhraseGroup> =
+        userPhrases.load()
+
+    fun replaceUserPhraseGroups(groups: List<PhraseGroup>) {
+        userPhrases.replaceAll(groups)
+    }
+
     fun addUserPhraseSentence(groupId: String, sentence: SentenceExample): PhraseGroup? {
         val group = lesson5().groups.firstOrNull { it.id.equals(groupId, ignoreCase = true) }
             ?: return null

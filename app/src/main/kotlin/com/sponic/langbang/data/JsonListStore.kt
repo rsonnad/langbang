@@ -36,6 +36,15 @@ class JsonListStore<T>(
         file.writeText(LbJson.pretty.encodeToString(listSerializer, current))
     }
 
+    fun replaceAll(entries: List<T>) {
+        val deduped = entries.fold(mutableListOf<T>()) { acc, entry ->
+            acc.removeAll { keyOf(it).equals(keyOf(entry), ignoreCase = true) }
+            acc.add(entry)
+            acc
+        }
+        file.writeText(LbJson.pretty.encodeToString(listSerializer, deduped))
+    }
+
     fun remove(key: String) {
         val current = load().filterNot { keyOf(it).equals(key, ignoreCase = true) }
         file.writeText(LbJson.pretty.encodeToString(listSerializer, current))

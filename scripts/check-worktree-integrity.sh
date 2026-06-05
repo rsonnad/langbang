@@ -17,6 +17,8 @@ dirty_other=0
 dirty_current=0
 branch_gap=0
 missing_worktree=0
+allow_preserved_wip="${LANGBANGML_ALLOW_PRESERVED_WIP:-0}"
+preserved_wip_prefix="WIP preserve LangBangML worktree"
 
 while IFS= read -r worktree; do
   [[ -n "$worktree" ]] || continue
@@ -48,9 +50,16 @@ while IFS= read -r worktree; do
   if [[ "$worktree" != "$current_root" && -n "$branch" ]]; then
     missing="$(git -C "$current_root" log --oneline --max-count=8 "HEAD..$branch" 2>/dev/null || true)"
     if [[ -n "$missing" ]]; then
-      branch_gap=1
       echo "  commits on $branch not in current branch:"
       echo "$missing" | sed 's/^/    /'
+      if [[ "$allow_preserved_wip" == "1" ]] && \
+        git -C "$current_root" log --format=%s "HEAD..$branch" | grep -Evq "^${preserved_wip_prefix}"; then
+        branch_gap=1
+      elif [[ "$allow_preserved_wip" == "1" ]]; then
+        echo "  preserved WIP branch gap allowed by LANGBANGML_ALLOW_PRESERVED_WIP=1"
+      else
+        branch_gap=1
+      fi
     fi
   fi
   echo

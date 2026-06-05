@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -58,11 +59,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sponic.langbang.BuildConfig
 import com.sponic.langbang.LangbangApplication
+import com.sponic.langbang.cloud.CloudAuthResponse
+import com.sponic.langbang.cloud.GoogleSignInHelper
 import com.sponic.langbang.data.model.PhraseGroup
 import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.domain.NowVoicing
@@ -110,7 +115,7 @@ fun PhrasesScreen(
     var selectedId by remember { mutableStateOf<String?>(null) }
     val selected = data.groups.firstOrNull { it.id == selectedId } ?: data.groups.firstOrNull()
     val starred by app.starredPhrases.starred.collectAsState()
-    val account by app.accountPrefs.state.collectAsState()
+    val auth by app.authStore.state.collectAsState()
     val pendingAudio = remember { mutableStateListOf<SentenceExample>() }
     var showAccountGateForGroup by remember { mutableStateOf(false) }
     var showAddGroup by remember { mutableStateOf(false) }
@@ -130,7 +135,7 @@ fun PhrasesScreen(
     }
 
     fun requestAddGroup() {
-        if (account.customItemGateSatisfied) {
+        if (auth.customItemGateSatisfied) {
             showAddGroup = true
         } else {
             showAccountGateForGroup = true
@@ -173,19 +178,9 @@ fun PhrasesScreen(
 
     if (showAccountGateForGroup) {
         AccountGateDialog(
+            app = app,
             onDismiss = { showAccountGateForGroup = false },
-            onEmail = { email ->
-                app.accountPrefs.signInWithEmail(email)
-                showAccountGateForGroup = false
-                showAddGroup = true
-            },
-            onGoogle = {
-                app.accountPrefs.signInWithGooglePlaceholder()
-                showAccountGateForGroup = false
-                showAddGroup = true
-            },
-            onSkip = {
-                app.accountPrefs.skipSignIn()
+            onReady = {
                 showAccountGateForGroup = false
                 showAddGroup = true
             }
@@ -205,6 +200,7 @@ fun PhrasesScreen(
                 app.lessonRepo.addUserPhraseGroup(group)
                 showAddGroup = false
                 reload(group.id)
+                scope.launch { app.phraseSync.pushLocalAfterEdit() }
             }
         )
     }
@@ -391,7 +387,7 @@ private fun PhraseDetail(
     // not just the current group. Sticky within this composition.
     var starredOnly by remember { mutableStateOf(false) }
     var slowFirst by remember { mutableStateOf(app.practicePrefs.slowFirst()) }
-    val account by app.accountPrefs.state.collectAsState()
+    val auth by app.authStore.state.collectAsState()
     var showAccountGateForPhrase by remember(group.id) { mutableStateOf(false) }
     var showAddPhrase by remember(group.id) { mutableStateOf(false) }
     var addPhraseBusy by remember(group.id) { mutableStateOf(false) }
@@ -401,7 +397,7 @@ private fun PhraseDetail(
         app.practicePrefs.setSlowFirst(enabled)
     }
     fun requestAddPhrase() {
-        if (account.customItemGateSatisfied) {
+        if (auth.customItemGateSatisfied) {
             showAddPhrase = true
         } else {
             showAccountGateForPhrase = true
@@ -414,19 +410,9 @@ private fun PhraseDetail(
 
     if (showAccountGateForPhrase) {
         AccountGateDialog(
+            app = app,
             onDismiss = { showAccountGateForPhrase = false },
-            onEmail = { email ->
-                app.accountPrefs.signInWithEmail(email)
-                showAccountGateForPhrase = false
-                showAddPhrase = true
-            },
-            onGoogle = {
-                app.accountPrefs.signInWithGooglePlaceholder()
-                showAccountGateForPhrase = false
-                showAddPhrase = true
-            },
-            onSkip = {
-                app.accountPrefs.skipSignIn()
+            onReady = {
                 showAccountGateForPhrase = false
                 showAddPhrase = true
             }
@@ -462,6 +448,7 @@ private fun PhraseDetail(
                                 if (updated != null) {
                                     showAddPhrase = false
                                     onPhraseAdded(sentence)
+                                    app.phraseSync.pushLocalAfterEdit()
                                 } else {
                                     addPhraseError = "Phrase group is no longer available."
                                 }
@@ -675,7 +662,10 @@ private fun PhraseDetail(
                     sentence = s,
                     isCurrent = i == playingIndex,
                     isStarred = s.pl in starred,
-                    onToggleStar = { app.starredPhrases.toggle(s.pl) },
+                    onToggleStar = {
+                        app.starredPhrases.toggle(s.pl)
+                        scope.launch { app.phraseSync.pushLocalAfterEdit() }
+                    },
                     onWordClick = ::playSingleWord,
                     onPlay = {
                         // Inline one-off playback stays local; queue playback drives
@@ -697,14 +687,19 @@ private fun PhraseDetail(
 
 @Composable
 private fun AccountGateDialog(
+    app: LangbangApplication,
     onDismiss: () -> Unit,
-    onEmail: (String) -> Unit,
-    onGoogle: () -> Unit,
-    onSkip: () -> Unit
+    onReady: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var email by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
     val cleanedEmail = email.trim()
     val emailLooksValid = cleanedEmail.contains("@") && cleanedEmail.contains(".")
+    val googleConfigured = BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotBlank()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Save custom phrases") },
@@ -722,21 +717,116 @@ private fun AccountGateDialog(
                     label = { Text("Email") },
                     singleLine = true
                 )
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it.filter(Char::isDigit).take(6) },
+                    label = { Text("Email code") },
+                    singleLine = true
+                )
+                status?.let {
+                    Text(
+                        text = it,
+                        fontSize = 12.sp,
+                        color = if (it.contains("failed", ignoreCase = true)) LbColors.Stop else LbColors.TextSecondary
+                    )
+                }
+                if (busy) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Text("Working...", fontSize = 12.sp, color = LbColors.TextMuted)
+                    }
+                }
             }
         },
         confirmButton = {
-            TextButton(enabled = emailLooksValid, onClick = { onEmail(cleanedEmail) }) {
-                Text("Continue with email")
+            Row {
+                TextButton(
+                    enabled = !busy && emailLooksValid,
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            status = app.cloudBackend.startEmailSignIn(cleanedEmail).fold(
+                                onSuccess = { "Code sent to ${it.email}" },
+                                onFailure = { t -> "Email sign-in failed: ${t.message ?: t.javaClass.simpleName}" }
+                            )
+                            busy = false
+                        }
+                    }
+                ) {
+                    Text("Send code")
+                }
+                TextButton(
+                    enabled = !busy && emailLooksValid && code.length == 6,
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            app.cloudBackend.verifyEmailSignIn(
+                                email = cleanedEmail,
+                                code = code,
+                                instanceId = app.cloudConfig.state.value.selectedInstanceId
+                            ).fold(
+                                onSuccess = { response ->
+                                    app.authStore.saveAuth(response)
+                                    app.phraseSync.syncNow()
+                                    onReady()
+                                },
+                                onFailure = { t ->
+                                    status = "Email verify failed: ${t.message ?: t.javaClass.simpleName}"
+                                }
+                            )
+                            busy = false
+                        }
+                    }
+                ) {
+                    Text("Verify")
+                }
             }
         },
         dismissButton = {
             Row {
-                TextButton(onClick = onGoogle) { Text("Google") }
-                TextButton(onClick = onSkip) { Text("Skip") }
-                TextButton(onClick = onDismiss) { Text("Cancel") }
+                TextButton(
+                    enabled = !busy && googleConfigured,
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            customPhraseGoogleSignIn(app, context).fold(
+                                onSuccess = { onReady() },
+                                onFailure = { t ->
+                                    status = "Google sign-in failed: ${t.message ?: t.javaClass.simpleName}"
+                                }
+                            )
+                            busy = false
+                        }
+                    }
+                ) { Text("Google") }
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        app.authStore.skipCustomSyncWarning()
+                        onReady()
+                    }
+                ) { Text("Skip") }
+                TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") }
             }
         }
     )
+}
+
+private suspend fun customPhraseGoogleSignIn(
+    app: LangbangApplication,
+    context: android.content.Context
+): Result<CloudAuthResponse> {
+    val token = GoogleSignInHelper(context)
+        .requestIdToken(BuildConfig.GOOGLE_WEB_CLIENT_ID)
+        .getOrElse { return Result.failure(it) }
+    return app.cloudBackend.signInWithGoogle(
+        idToken = token.idToken,
+        nonce = token.nonce,
+        instanceId = app.cloudConfig.state.value.selectedInstanceId
+    ).onSuccess { response ->
+        app.authStore.saveAuth(response)
+        app.phraseSync.syncNow()
+    }
 }
 
 @Composable

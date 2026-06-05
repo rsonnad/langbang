@@ -53,7 +53,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.sponic.langbang.BuildConfig
 import com.sponic.langbang.LangbangApplication
-import com.sponic.langbang.data.AccountPrefsState
+import com.sponic.langbang.cloud.CloudAuthResponse
+import com.sponic.langbang.cloud.GoogleSignInHelper
 import com.sponic.langbang.data.PronounFilterStore
 import com.sponic.langbang.data.SlowStyle
 import com.sponic.langbang.domain.UsageSnapshot
@@ -84,7 +85,7 @@ fun SettingsScreen(app: LangbangApplication) {
             title = "Account",
             description = "Sign-in state and custom phrase persistence."
         )
-        AccountSyncCard(app = app)
+        AccountSyncCard(app = app, scope = scope, context = context)
         SettingsGroupHeader(
             title = "Practice",
             description = "Defaults used by drills, quizzes, and Now Voicing playback."
@@ -133,26 +134,22 @@ fun SettingsScreen(app: LangbangApplication) {
 }
 
 @Composable
-private fun AccountSyncCard(app: LangbangApplication) {
-    val account by app.accountPrefs.state.collectAsState()
-    var email by remember(account.email) { mutableStateOf(account.email.orEmpty()) }
-    val cleanedEmail = email.trim()
-    val emailLooksValid = cleanedEmail.contains("@") && cleanedEmail.contains(".")
-    val statusText = when {
-        account.provider == AccountPrefsState.PROVIDER_GOOGLE ->
-            "Google sign-in selected"
-        account.email != null ->
-            "Signed in as ${account.email}"
-        account.skippedSignIn ->
-            "Skipped sign-in"
-        else ->
-            "Not signed in"
-    }
+private fun AccountSyncCard(
+    app: LangbangApplication,
+    scope: kotlinx.coroutines.CoroutineScope,
+    context: Context
+) {
+    val auth by app.authStore.state.collectAsState()
+    val googleConfigured = BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotBlank()
+    var email by remember(auth.user?.email) { mutableStateOf(auth.user?.email.orEmpty()) }
+    var code by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(
             1.dp,
-            if (account.customItemGateSatisfied) LbColors.Success.copy(alpha = 0.35f)
+            if (auth.customItemGateSatisfied) LbColors.Success.copy(alpha = 0.35f)
             else LbColors.Line
         ),
         modifier = Modifier.fillMaxWidth()
@@ -162,52 +159,197 @@ private fun AccountSyncCard(app: LangbangApplication) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     SectionHeader("Account & custom phrases")
                     Text(
-                        statusText,
+                        auth.user?.email ?: if (auth.skippedCustomSyncWarning) "Skipped sign-in" else "Not signed in",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = if (account.customItemGateSatisfied) LbColors.Success else LbColors.TextSecondary
+                        color = if (auth.customItemGateSatisfied) LbColors.Success else LbColors.TextSecondary
+                    )
+                    Text(
+                        when {
+                            auth.syncingPhrases -> "Phrase sync: syncing"
+                            auth.lastPhraseSyncMs > 0 -> "Phrase sync: ${formatEpoch(auth.lastPhraseSyncMs)}"
+                            auth.signedIn -> "Phrase sync: not synced"
+                            else -> "Phrase sync available after sign-in"
+                        },
+                        fontSize = 11.sp,
+                        color = LbColors.TextMuted
                     )
                 }
-                if (account.customItemGateSatisfied) {
-                    OutlinedButton(onClick = { app.accountPrefs.signOut() }) {
-                        Text("Reset")
-                    }
+                if (busy) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 }
             }
             Text(
-                if (account.skippedSignIn) {
+                if (auth.skippedCustomSyncWarning && !auth.signedIn) {
                     "Custom phrases stay local on this tablet. They may be lost if app data is cleared or the app is reinstalled."
                 } else {
-                    "Use this before adding personal phrase groups or custom phrases. Email is available now; Google can be selected here for the account flow."
+                    "Sign in before adding personal phrase groups or custom phrases so they can sync across devices."
                 },
                 fontSize = 12.sp,
-                color = if (account.skippedSignIn) LbColors.Danger else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+                color = if (auth.skippedCustomSyncWarning && !auth.signedIn) {
+                    LbColors.Danger
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+                }
             )
-            OutlinedTextField(
-                value = email,
-                onValueChange = { email = it },
-                label = { Text("Email") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    enabled = emailLooksValid,
-                    onClick = { app.accountPrefs.signInWithEmail(cleanedEmail) }
+            auth.error?.let {
+                Text(it, fontSize = 11.sp, color = LbColors.Danger)
+            }
+            status?.let {
+                Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+            }
+
+            if (auth.signedIn) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        enabled = !busy && !auth.syncingPhrases,
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                status = app.phraseSync.syncNow().fold(
+                                    onSuccess = { "Phrases synced" },
+                                    onFailure = { t -> "Sync failed: ${t.message ?: t.javaClass.simpleName}" }
+                                )
+                                busy = false
+                            }
+                        }
+                    ) { Text(if (auth.syncingPhrases) "Syncing..." else "Sync phrases") }
+                    OutlinedButton(
+                        enabled = !busy,
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                app.cloudBackend.signOut(auth.sessionToken)
+                                GoogleSignInHelper(context).clearCredentialState()
+                                app.authStore.clear()
+                                status = "Signed out"
+                                busy = false
+                            }
+                        }
+                    ) { Text("Sign out") }
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        enabled = !busy && googleConfigured,
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                signInWithGoogle(app, context).fold(
+                                    onSuccess = { response ->
+                                        email = response.user.email
+                                        status = "Signed in"
+                                    },
+                                    onFailure = { t ->
+                                        status = "Google sign-in failed: ${t.message ?: t.javaClass.simpleName}"
+                                    }
+                                )
+                                busy = false
+                            }
+                        }
+                    ) { Text("Sign in with Google") }
+                    if (!googleConfigured) {
+                        Text(
+                            "Google OAuth client missing",
+                            fontSize = 11.sp,
+                            color = LbColors.Danger,
+                            modifier = Modifier.align(Alignment.CenterVertically)
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Continue with email")
+                    OutlinedTextField(
+                        value = email,
+                        onValueChange = { email = it },
+                        label = { Text("Email") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1.8f)
+                    )
+                    Button(
+                        enabled = !busy && email.trim().isNotEmpty(),
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                status = app.cloudBackend.startEmailSignIn(email).fold(
+                                    onSuccess = { "Code sent to ${it.email}" },
+                                    onFailure = { t -> "Email sign-in failed: ${t.message ?: t.javaClass.simpleName}" }
+                                )
+                                busy = false
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Send code") }
                 }
-                OutlinedButton(onClick = { app.accountPrefs.signInWithGooglePlaceholder() }) {
-                    Text("Google")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { code = it.filter(Char::isDigit).take(6) },
+                        label = { Text("Code") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(
+                        enabled = !busy && email.trim().isNotEmpty() && code.length == 6,
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                app.cloudBackend.verifyEmailSignIn(
+                                    email = email,
+                                    code = code,
+                                    instanceId = app.cloudConfig.state.value.selectedInstanceId
+                                ).fold(
+                                    onSuccess = { response ->
+                                        app.authStore.saveAuth(response)
+                                        app.phraseSync.syncNow()
+                                        status = "Signed in"
+                                    },
+                                    onFailure = { t ->
+                                        status = "Email verify failed: ${t.message ?: t.javaClass.simpleName}"
+                                    }
+                                )
+                                busy = false
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Verify") }
                 }
-                OutlinedButton(onClick = { app.accountPrefs.skipSignIn() }) {
-                    Text("Skip")
+                OutlinedButton(
+                    enabled = !busy,
+                    onClick = {
+                        app.authStore.skipCustomSyncWarning()
+                        status = "Custom phrases will stay local"
+                    }
+                ) {
+                    Text("Skip for now")
                 }
             }
         }
+    }
+}
+
+private suspend fun signInWithGoogle(
+    app: LangbangApplication,
+    context: Context
+): Result<CloudAuthResponse> {
+    val token = GoogleSignInHelper(context)
+        .requestIdToken(BuildConfig.GOOGLE_WEB_CLIENT_ID)
+        .getOrElse { return Result.failure(it) }
+    return app.cloudBackend.signInWithGoogle(
+        idToken = token.idToken,
+        nonce = token.nonce,
+        instanceId = app.cloudConfig.state.value.selectedInstanceId
+    ).onSuccess { response ->
+        app.authStore.saveAuth(response)
+        app.phraseSync.syncNow()
     }
 }
 

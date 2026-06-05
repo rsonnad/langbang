@@ -8,9 +8,10 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.sponic.langbang.BuildConfig
+import com.sponic.langbang.cloud.AuthStore
 import com.sponic.langbang.cloud.CloudBackendClient
 import com.sponic.langbang.cloud.CloudConfigStore
-import com.sponic.langbang.data.AccountPrefsStore
+import com.sponic.langbang.cloud.PhraseSyncService
 import com.sponic.langbang.data.AudioPrefsStore
 import com.sponic.langbang.data.LessonRepository
 import com.sponic.langbang.data.PracticePrefsStore
@@ -41,6 +42,10 @@ class LangbangApplication : Application() {
         private set
     lateinit var cloudBackend: CloudBackendClient
         private set
+    lateinit var authStore: AuthStore
+        private set
+    lateinit var phraseSync: PhraseSyncService
+        private set
     lateinit var lessonRepo: LessonRepository
         private set
     lateinit var audioCache: AudioCache
@@ -67,8 +72,6 @@ class LangbangApplication : Application() {
         private set
     lateinit var practicePrefs: PracticePrefsStore
         private set
-    lateinit var accountPrefs: AccountPrefsStore
-        private set
     lateinit var starredPhrases: StarredPhrasesStore
         private set
     lateinit var audioPrefs: AudioPrefsStore
@@ -87,14 +90,15 @@ class LangbangApplication : Application() {
         AdbWifiKeeper.enableIfGranted(this, "app start")
         cloudConfig = CloudConfigStore(this, BuildConfig.LANGBANGML_INSTANCE_ID)
         cloudBackend = CloudBackendClient(apiBase = BuildConfig.LANGBANGML_API_BASE)
+        authStore = AuthStore(this)
         lessonRepo = LessonRepository(this, cloudConfig)
         migrateSentenceCachesIfNeeded()
         sentenceRegen = SentenceRegenService(lessonRepo)
         pronounFilter = PronounFilterStore(this)
         randomConfig = RandomConfigStore(this)
         practicePrefs = PracticePrefsStore(this)
-        accountPrefs = AccountPrefsStore(this)
         starredPhrases = StarredPhrasesStore(this)
+        phraseSync = PhraseSyncService(cloudBackend, authStore, lessonRepo, starredPhrases, cloudConfig)
         audioPrefs = AudioPrefsStore(this)
         audioCache = AudioCache(this)
         audioPlayer = AudioPlayer()
@@ -125,6 +129,9 @@ class LangbangApplication : Application() {
         // through the always-visible banner in LangbangApp when work is needed.
         sentenceRegen.startIfNeeded()
         syncCloudConfig()
+        if (authStore.state.value.signedIn) {
+            syncUserPhrases()
+        }
     }
 
     fun syncCloudConfig() {
@@ -148,6 +155,15 @@ class LangbangApplication : Application() {
         cloudConfig.setSelectedInstance(instanceId)
         lessonRepo.clearCloudBackedBaseCache()
         syncCloudConfig()
+        if (authStore.state.value.signedIn) {
+            syncUserPhrases()
+        }
+    }
+
+    fun syncUserPhrases() {
+        appScope.launch {
+            phraseSync.syncNow()
+        }
     }
 
     /**

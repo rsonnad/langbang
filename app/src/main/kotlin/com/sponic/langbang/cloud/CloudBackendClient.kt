@@ -1,6 +1,7 @@
 package com.sponic.langbang.cloud
 
 import com.sponic.langbang.data.LbJson
+import com.sponic.langbang.data.model.PhraseGroup
 import com.sponic.langbang.data.model.SentenceExample
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -66,13 +67,107 @@ class CloudBackendClient(
         }
     }
 
-    private fun get(path: String): String {
+    suspend fun signInWithGoogle(
+        idToken: String,
+        nonce: String,
+        instanceId: String
+    ): Result<CloudAuthResponse> = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = CloudGoogleAuthRequest(
+                idToken = idToken,
+                nonce = nonce,
+                instanceId = instanceId
+            )
+            val body = post(
+                "/v1/auth/google",
+                json.encodeToString(CloudGoogleAuthRequest.serializer(), request)
+            )
+            json.decodeFromString(CloudAuthResponse.serializer(), body)
+        }
+    }
+
+    suspend fun startEmailSignIn(email: String): Result<CloudEmailStartResponse> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val request = CloudEmailStartRequest(email = email.trim())
+                val body = post(
+                    "/v1/auth/email/start",
+                    json.encodeToString(CloudEmailStartRequest.serializer(), request)
+                )
+                json.decodeFromString(CloudEmailStartResponse.serializer(), body)
+            }
+        }
+
+    suspend fun verifyEmailSignIn(
+        email: String,
+        code: String,
+        instanceId: String
+    ): Result<CloudAuthResponse> = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = CloudEmailVerifyRequest(
+                email = email.trim(),
+                code = code.trim(),
+                instanceId = instanceId
+            )
+            val body = post(
+                "/v1/auth/email/verify",
+                json.encodeToString(CloudEmailVerifyRequest.serializer(), request)
+            )
+            json.decodeFromString(CloudAuthResponse.serializer(), body)
+        }
+    }
+
+    suspend fun fetchUserPhrases(
+        sessionToken: String,
+        instanceId: String
+    ): Result<CloudUserPhrasesResponse> = withContext(Dispatchers.IO) {
+        runCatching {
+            val encoded = URLEncoder.encode(instanceId, "UTF-8")
+            val body = get("/v1/me/phrases?instanceId=$encoded", bearerToken = sessionToken)
+            json.decodeFromString(CloudUserPhrasesResponse.serializer(), body)
+        }
+    }
+
+    suspend fun syncUserPhrases(
+        sessionToken: String,
+        instanceId: String,
+        groups: List<PhraseGroup>,
+        starredPhrases: List<String>,
+        replace: Boolean = true
+    ): Result<CloudUserPhrasesResponse> = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = CloudUserPhrasesRequest(
+                instanceId = instanceId,
+                groups = groups,
+                starredPhrases = starredPhrases,
+                replace = replace
+            )
+            val body = put(
+                "/v1/me/phrases",
+                json.encodeToString(CloudUserPhrasesRequest.serializer(), request),
+                bearerToken = sessionToken
+            )
+            json.decodeFromString(CloudUserPhrasesResponse.serializer(), body)
+        }
+    }
+
+    suspend fun signOut(sessionToken: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            post("/v1/auth/sign-out", "{}", bearerToken = sessionToken)
+            Unit
+        }
+    }
+
+    private fun get(path: String, bearerToken: String? = null): String {
         val endpoint = "${apiBase.trimEnd('/')}$path"
         val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10000
             readTimeout = 20000
             setRequestProperty("Accept", "application/json")
+            bearerToken?.takeIf { it.isNotBlank() }?.let {
+                setRequestProperty("Authorization", "Bearer $it")
+            }
         }
         try {
             val code = conn.responseCode
@@ -86,15 +181,24 @@ class CloudBackendClient(
         }
     }
 
-    private fun post(path: String, body: String): String {
+    private fun post(path: String, body: String, bearerToken: String? = null): String =
+        write("POST", path, body, bearerToken)
+
+    private fun put(path: String, body: String, bearerToken: String? = null): String =
+        write("PUT", path, body, bearerToken)
+
+    private fun write(method: String, path: String, body: String, bearerToken: String? = null): String {
         val endpoint = "${apiBase.trimEnd('/')}$path"
         val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
+            requestMethod = method
             doOutput = true
             connectTimeout = 15000
             readTimeout = 45000
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/json")
+            bearerToken?.takeIf { it.isNotBlank() }?.let {
+                setRequestProperty("Authorization", "Bearer $it")
+            }
         }
         try {
             conn.outputStream.use {
