@@ -39,7 +39,7 @@ class GeminiClient(
          * client downloader pulls from a fresh tree even if only one type bumped.
          * Cheap — Gemini calls for the whole canonical set are pennies.
          */
-        const val SENTENCE_PROMPT_VERSION = 4
+        const val SENTENCE_PROMPT_VERSION = 5
 
         /**
          * Per-type wipe versions. Bump ONE of these when its prompt changes so
@@ -54,6 +54,11 @@ class GeminiClient(
          * prompts added a `words` field, but the migration wiped verbs too —
          * costing the user ~45 min of on-device verb regen for content that
          * was already correct. These per-type keys make the wipe surgical.
+         *
+         * v5 (2026-06-05): verb sentence bundles were quality-filtered to remove
+         * awkward "to home" English translations and the verb prompt gained explicit
+         * helper/catenative construction guidance. R2 v5 is copied from v4 with the
+         * rejected verb examples removed, so only [VERB_WIPE_VERSION] is bumped.
          *
          * v4 (2026-05-31): all four sentence prompts (verb/adj/adv/noun) now ask
          * Gemini to tag each noun/pronoun/adjective token with "gender" (m/f/n)
@@ -75,7 +80,7 @@ class GeminiClient(
          * unchanged (R2 v3 verb bundles are identical bytes copied from v2), so users
          * don't get worse content — they just get all of it instead of 15 of it.
          */
-        const val VERB_WIPE_VERSION = 3
+        const val VERB_WIPE_VERSION = 4
         const val ADJECTIVE_WIPE_VERSION = 5
         const val ADVERB_WIPE_VERSION = 5
 
@@ -107,7 +112,9 @@ class GeminiClient(
     suspend fun generateSentences(
         verb: VerbEntry,
         allowedPersonKeys: Set<String>? = null,
-        tense: String = TENSE_PRESENT
+        tense: String = TENSE_PRESENT,
+        requiredComponents: Set<String> = emptySet(),
+        minimumPolishWordCount: Int = 0
     ): Result<List<SentenceExample>> =
         withContext(Dispatchers.IO) {
             if (tense == TENSE_PAST && verb.past_forms.isNullOrEmpty()) {
@@ -116,7 +123,15 @@ class GeminiClient(
                 )
             }
             try {
-                val raw = postPrompt(buildSentencePrompt(verb, allowedPersonKeys, tense))
+                val raw = postPrompt(
+                    buildSentencePrompt(
+                        verb,
+                        allowedPersonKeys,
+                        tense,
+                        requiredComponents,
+                        minimumPolishWordCount
+                    )
+                )
                 Result.success(parseSentenceResponse(raw))
             } catch (t: Throwable) {
                 Result.failure(t)
@@ -227,7 +242,9 @@ class GeminiClient(
     private fun buildSentencePrompt(
         verb: VerbEntry,
         allowedPersonKeys: Set<String>?,
-        tense: String
+        tense: String,
+        requiredComponents: Set<String> = emptySet(),
+        minimumPolishWordCount: Int = 0
     ): String {
         val isPast = tense == TENSE_PAST
         val sourceForms = if (isPast) verb.past_forms.orEmpty() else verb.forms
@@ -251,6 +268,33 @@ class GeminiClient(
                 "forms — do NOT use any other conjugation: $formsBlurb. " +
                 "Vary which of those allowed forms you use across the 40 sentences. "
         }
+        val componentInstruction = if (requiredComponents.isEmpty()) {
+            "Keep each Polish sentence to 5 words or fewer. "
+        } else {
+            val requirements = buildList {
+                if ("pronoun" in requiredComponents) add("an explicit Polish subject pronoun")
+                if ("helperVerb" in requiredComponents) add("a natural helper/main-verb construction")
+                if ("adjective" in requiredComponents) add("at least one adjective")
+                if ("adverb" in requiredComponents) add("at least one adverb")
+                if ("noun" in requiredComponents) add("at least one concrete noun")
+            }.joinToString(", ")
+            val minimum = minimumPolishWordCount.coerceAtLeast(requiredComponents.size + 1)
+            "COMBINED-PHRASE REQUIREMENT: every sentence must include $requirements, " +
+                "plus one allowed form of \"${verb.lemma}\". Every Polish sentence must " +
+                "contain at least $minimum whitespace-separated words. Do not satisfy " +
+                "two required components with the same Polish word. " +
+                if ("helperVerb" in requiredComponents) {
+                    "For the helper/main-verb construction, prefer extremely common " +
+                        "Polish catenative patterns such as \"chcę pić\", \"muszę iść\", " +
+                        "\"mogę pomóc\", \"lubię czytać\", and \"mam ochotę iść\". If " +
+                        "\"${verb.lemma}\" is itself a helper/modal verb, use it naturally " +
+                        "with a second infinitive. If it cannot naturally take another " +
+                        "verb, use a common standalone phrase instead of forcing a strange one. "
+                } else {
+                    ""
+                } +
+                "Keep sentences simple and natural, but allow up to ${minimum + 3} words when needed. "
+        }
         return "Write 40 very simple example Polish sentences that use the verb \"" +
             "${verb.lemma}\" (English: ${verb.en}). " +
             "EVERYDAY-PHRASE REQUIREMENT (the most important rule): every sentence must " +
@@ -264,6 +308,11 @@ class GeminiClient(
             "thirsty, sleepy, hot, cold, tired, sick), basic intentions (want, need, going " +
             "to), common places (home, work, store, restaurant, school, gym, park), and " +
             "common objects (keys, phone, money, food, coffee, water, bread). " +
+            "COMMON POLISH CONSTRUCTIONS: use very common patterns when they fit, " +
+            "especially mieć ochotę + infinitive (mam ochotę iść / pić), musieć + " +
+            "infinitive, móc + infinitive, chcieć + infinitive, lubić + infinitive, " +
+            "trzeba + infinitive, and da się + infinitive. Do not overuse them and " +
+            "do not force them where the result sounds unnatural. " +
             "Use only the most common everyday vocabulary that a beginner would know " +
             "(food, family, basic objects, places, body states). " +
             "CRITICAL NATURALNESS RULE: every sentence must be something a real person " +
@@ -278,7 +327,7 @@ class GeminiClient(
             "friend or say to a family member (\"I'm leaving now\", \"call me later\", " +
             "\"don't forget bread\", \"I drank coffee already\"). " +
             tenseInstruction +
-            "Keep each Polish sentence to 5 words or fewer. " +
+            componentInstruction +
             "PREPOSITION COVERAGE: at least 10 of the 40 sentences must use a Polish " +
             "preposition. Include AT LEAST ONE sentence for each of these five common " +
             "prepositions: w (in/at), na (on/at), do (to), z (with/from), o (about). " +

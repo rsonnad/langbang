@@ -53,6 +53,20 @@ class PracticePrefsStore(context: Context) {
         prefs.edit().putBoolean(wordPlayRandomKey(category), enabled).apply()
     }
 
+    fun verbPhraseIncludePronouns(): Boolean =
+        prefs.getBoolean(KEY_VERB_PHRASE_INCLUDE_PRONOUNS, true)
+
+    fun setVerbPhraseIncludePronouns(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_VERB_PHRASE_INCLUDE_PRONOUNS, enabled).apply()
+    }
+
+    fun verbPhraseIncludeHelperVerb(): Boolean =
+        prefs.getBoolean(KEY_VERB_PHRASE_INCLUDE_HELPER_VERB, false)
+
+    fun setVerbPhraseIncludeHelperVerb(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_VERB_PHRASE_INCLUDE_HELPER_VERB, enabled).apply()
+    }
+
     fun verbPhraseIncludeAdjectives(): Boolean =
         prefs.getBoolean(KEY_VERB_PHRASE_INCLUDE_ADJECTIVES, true)
 
@@ -74,12 +88,23 @@ class PracticePrefsStore(context: Context) {
         prefs.edit().putBoolean(KEY_VERB_PHRASE_INCLUDE_NOUNS, enabled).apply()
     }
 
+    fun rejectedVerbPhraseKeys(): Set<String> =
+        prefs.getStringSet(KEY_REJECTED_VERB_PHRASES, emptySet())?.toSet() ?: emptySet()
+
+    fun addRejectedVerbPhraseKey(key: String) {
+        val updated = rejectedVerbPhraseKeys() + key
+        prefs.edit().putStringSet(KEY_REJECTED_VERB_PHRASES, HashSet(updated)).apply()
+    }
+
     companion object {
         private const val KEY_SLOW_FIRST = "slow-first"
         private const val KEY_CHECKED_VERBS = "checked-verbs"
+        private const val KEY_VERB_PHRASE_INCLUDE_PRONOUNS = "verb-phrase-include-pronouns"
+        private const val KEY_VERB_PHRASE_INCLUDE_HELPER_VERB = "verb-phrase-include-helper-verb"
         private const val KEY_VERB_PHRASE_INCLUDE_ADJECTIVES = "verb-phrase-include-adjectives"
         private const val KEY_VERB_PHRASE_INCLUDE_ADVERBS = "verb-phrase-include-adverbs"
         private const val KEY_VERB_PHRASE_INCLUDE_NOUNS = "verb-phrase-include-nouns"
+        private const val KEY_REJECTED_VERB_PHRASES = "rejected-verb-phrases"
         const val CATEGORY_VERBS = "verbs"
         const val CATEGORY_ADJECTIVES = "adjectives"
         const val CATEGORY_ADVERBS = "adverbs"

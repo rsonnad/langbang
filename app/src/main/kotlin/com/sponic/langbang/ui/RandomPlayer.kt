@@ -241,8 +241,6 @@ internal class RandomPlayerState(
                 if (slowFirst) {
                     pub(s, "pl-slow", pos)
                     playAndAwait(s.pl, app.targetAudioVoice().locale, slowPlVoice)
-                    pub(s, "en", pos)
-                    playAndAwait(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 }
                 pub(s, "pl", pos)
                 playAndAwait(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)

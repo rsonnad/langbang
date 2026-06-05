@@ -247,8 +247,6 @@ private suspend fun LangbangApplication.replayNowVoicingPhrase(item: NowVoicing)
     if (slowFirst) {
         NowVoicingBus.publish(item.copy(lang = "pl-slow", plHidden = false))
         playCachedFirst(item.pl, targetAudioVoice().locale, slowVoice)
-        NowVoicingBus.publish(item.copy(lang = "en", plHidden = false))
-        playCachedFirst(item.en, sourceAudioVoice().locale, sourceAudioVoice().voice)
     }
     NowVoicingBus.publish(item.copy(lang = "pl", plHidden = false))
     playCachedFirst(item.pl, targetAudioVoice().locale, targetAudioVoice().voice)

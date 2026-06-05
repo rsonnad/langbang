@@ -43,6 +43,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -328,8 +330,6 @@ internal class AdjectivesScreenState(
                 say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 pub("pl-slow")
                 say(s.pl, app.targetAudioVoice().locale, slowPlVoice)
-                pub("en")
-                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 pub("pl")
                 say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             } else {
@@ -359,6 +359,7 @@ fun AdjectivesScreen(
     val lesson = remember { app.lessonRepo.lesson3() }
     val scope = rememberCoroutineScope()
     val state = rememberAdjectivesScreenState(app)
+    val activeNowVoicing by NowVoicingBus.state.collectAsState()
     var generateAllBusy by remember { mutableStateOf(false) }
     var generateAllProgress by remember { mutableStateOf<String?>(null) }
     var generateAllError by remember { mutableStateOf<String?>(null) }
@@ -367,6 +368,10 @@ fun AdjectivesScreen(
         lesson.adjectives.none { it.lemma == state.selected?.lemma }
     ) {
         state.select(lesson.adjectives.firstOrNull())
+    }
+
+    LaunchedEffect(activeNowVoicing?.pl, activeNowVoicing?.words, lesson.adjectives) {
+        nowVoicingAdjective(activeNowVoicing, lesson.adjectives)?.let { state.select(it) }
     }
 
     val generateAll: () -> Unit = {
