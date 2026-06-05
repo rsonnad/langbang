@@ -9,6 +9,9 @@ preview_urls = false
 PUBLIC_R2_BASE = "https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev"
 AUDIO_PREFIX = "langbang/audio"
 AZURE_SPEECH_REGION = "eastus"
+ANALYTICS_ADMIN_EMAILS = "rahulioson@gmail.com"
+PUBLIC_API_BASE = "https://langbangml-api.langbangml.workers.dev"
+GOOGLE_WEB_CLIENT_ID = "385515827732-9r056blngf9vpv4r2ersiiv8lte5trvb.apps.googleusercontent.com"
 
 [[d1_databases]]
 binding = "DB"

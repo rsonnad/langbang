@@ -34,6 +34,10 @@ class StarredPhrasesStore(context: Context) {
         persist(now)
     }
 
+    fun replaceAll(set: Set<String>) {
+        persist(set.filter { it.isNotBlank() }.toSet())
+    }
+
     private fun persist(set: Set<String>) {
         // Defensive copy — SharedPreferences must not be handed a set it may later mutate,
         // and getStringSet returns a live instance otherwise.
