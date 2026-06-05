@@ -95,6 +95,17 @@ fun MultipleChoiceQuiz(
             score = correctCount,
             total = ordered.size,
             onRetry = {
+                app.analytics.track(
+                    name = "quiz_retried",
+                    feature = "quizzes",
+                    action = "retry",
+                    screen = "quizzes",
+                    properties = mapOf(
+                        "title" to title,
+                        "score" to correctCount.toString(),
+                        "total" to ordered.size.toString()
+                    )
+                )
                 runId += 1
             },
             onExit = onExit
@@ -241,6 +252,17 @@ fun MultipleChoiceQuiz(
                                 .border(1.dp, border, RoundedCornerShape(10.dp))
                                 .clickable(enabled = pickedIndex == null) {
                                     stopCurrentPlayback()
+                                    app.analytics.track(
+                                        name = "quiz_answer",
+                                        feature = "quizzes",
+                                        action = "answer",
+                                        screen = "quizzes",
+                                        properties = mapOf(
+                                            "title" to title,
+                                            "correct" to isCorrect.toString(),
+                                            "questionIndex" to index.toString()
+                                        )
+                                    )
                                     pickedIndex = i
                                     pickedCorrect = isCorrect
                                 },

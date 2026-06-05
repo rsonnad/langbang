@@ -2,7 +2,8 @@
 set -euo pipefail
 
 COUNT="${1:-4}"
-DEST="${2:-${TAB_SCREENSHOT_DEST_ROOT:-$HOME/Documents/Screenshotz}/TabA9-$(date +%Y%m%d-%H%M%S)}"
+TABLET_ALIAS="${TABLET_ALIAS:-cream}"
+DEST="${2:-${TAB_SCREENSHOT_DEST_ROOT:-$HOME/Documents/Screenshotz}/Tablet-${TABLET_ALIAS}-$(date +%Y%m%d-%H%M%S)}"
 
 if ! [[ "$COUNT" =~ ^[0-9]+$ ]] || [ "$COUNT" -lt 1 ]; then
   echo "Usage: $0 [count] [destination-dir]" >&2
@@ -13,6 +14,17 @@ find_tablet_serial() {
   if [ -n "${ADB_SERIAL:-}" ]; then
     echo "$ADB_SERIAL"
     return 0
+  fi
+
+  local helper
+  helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/identify-adb-tablets.sh"
+  if [ -x "$helper" ]; then
+    local name_serial
+    name_serial="$("$helper" --serial "$TABLET_ALIAS" 2>/dev/null || true)"
+    if [ -n "$name_serial" ]; then
+      echo "$name_serial"
+      return 0
+    fi
   fi
 
   local fixed="100.103.110.7:5555"
@@ -41,7 +53,7 @@ find_tablet_serial() {
 }
 
 SERIAL="$(find_tablet_serial)" || {
-  echo "No connected Galaxy Tab A9+ ADB serial found." >&2
+  echo "No connected ADB tablet serial found for TABLET_ALIAS=$TABLET_ALIAS." >&2
   exit 1
 }
 

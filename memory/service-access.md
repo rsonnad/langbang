@@ -386,7 +386,7 @@ manual screenshots to `/sdcard/DCIM/Screenshots` on the Tab A9+ (fallback:
 shots into a timestamped local folder:
 
 ```bash
-cd /Users/rahulio/Documents/CodingProjects/langbang
+cd /Users/rahulio/Documents/CodingProjects/LangBangML
 scripts/pull-tablet-screenshots.sh
 # default: newest 4 files -> ~/Documents/Screenshotz/TabA9-YYYYMMDD-HHMMSS
 scripts/pull-tablet-screenshots.sh 8

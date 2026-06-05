@@ -15,6 +15,17 @@ Cloudflare is the only backend for LangBangML.
 - `GET /v1/instances/:id/bootstrap`
 - `GET /v1/labels/:locale`
 - `POST /v1/audio/manifest`
+- `POST /v1/analytics/events`
+- `GET /admin/analytics`
+- `GET /v1/admin/analytics/summary?days=30`
+- `GET /v1/admin/analytics/events?days=7&limit=200`
+- `POST /v1/auth/google`
+- `POST /v1/auth/email/start`
+- `POST /v1/auth/email/verify`
+- `POST /v1/auth/sign-out`
+- `GET /v1/me`
+- `GET /v1/me/phrases?instanceId=...`
+- `PUT /v1/me/phrases`
 - `GET /v1/admin/content/:versionId/lessons`
 - `GET /v1/admin/content/:versionId/lessons/:lessonId`
 - `GET /v1/admin/content/:versionId/lessons/:lessonId/items?collection=...`
@@ -26,6 +37,45 @@ Cloudflare is the only backend for LangBangML.
 The Android app downloads its selected instance bootstrap at launch. The
 bootstrap contains the language pair, content version, lesson payloads, UX
 labels, instance settings, and audio manifest endpoint.
+
+`POST /v1/analytics/events` accepts batched Android product events with a stable
+installation ID, session ID, optional signed-in profile, app/device context, and
+low-cardinality feature/action names. Events are stored in D1 analytics tables
+and retried by the app using client event IDs so duplicate retries do not inflate
+counts.
+
+The analytics admin page is served at `/admin/analytics`. Data reads require
+either the existing content/admin bearer token or a Google ID token whose email
+is listed in `ANALYTICS_ADMIN_EMAILS` (defaults to `rahulioson@gmail.com`).
+Google browser sign-in also requires `GOOGLE_WEB_CLIENT_ID`/`GOOGLE_CLIENT_ID` to
+be configured on the Worker.
+
+Android account sync uses the same auth store. Google sign-in posts a Google ID
+token to `/v1/auth/google`; email sign-in sends and verifies six-digit codes
+through `/v1/auth/email/start` and `/v1/auth/email/verify`. Signed-in phrase
+sync stores client-owned custom phrase groups and starred phrase keys in D1 via
+`/v1/me/phrases`.
+
+Required auth configuration:
+
+- `EMAIL_LOGIN_PEPPER`: Worker secret used to hash short-lived email codes.
+- `GOOGLE_WEB_CLIENT_ID`: Google Auth Platform Web client ID. The current
+  temporary owner is `alpacaplayhouse@gmail.com`; migrate this to a dedicated
+  LangBang Google account before public release.
+- `RESEND_API_KEY`: Worker secret for Resend email-code delivery. Stored in
+  Bitwarden item `Resend - LangBang Email API` under `devops-langbang`.
+- `EMAIL_FROM`: currently `LangBang <hello@langbang.org>`.
+
+## Email Delivery
+
+LangBang uses Resend for email sign-in codes.
+
+- Resend account: `langbangapp@gmail.com`, authenticated with Google SSO.
+- Bitwarden routing: ALPU.CA collection `devops-langbang`, item
+  `Resend - LangBang Email API`.
+- Worker secrets: `RESEND_API_KEY`, `EMAIL_FROM`.
+- Current sender: `LangBang <hello@langbang.org>`.
+- Sending domain: `langbang.org`, verified in Resend with Cloudflare DNS.
 
 ## Initial Instances
 
@@ -113,8 +163,8 @@ scripts/publish-langbangml-builds.sh
 
 The script builds both flavors, uploads pinned and latest APKs, writes separate
 update manifests, uploads an R2-hosted fallback builds page, deploys the
-`langbang.org` Worker page when the site deploy script is available, and verifies
-that the live builds page references the just-published latest and pinned URLs:
+`langbang.org` Worker page from `cloudflare/langbang-org/`, and verifies that
+the live builds page references the just-published latest and pinned URLs:
 
 - `langbang/builds/en-pl/langbangml-en-pl-latest.apk`
 - `langbang/builds/en-pl/latest.json`
@@ -123,8 +173,9 @@ that the live builds page references the just-published latest and pinned URLs:
 - `langbang/builds/index.html`
 
 `https://langbang.org/builds` currently serves the public builds page through
-the existing `langbang-placeholder` site Worker route while the downloadable
-APKs and manifests come from this new Cloudflare account's R2 bucket.
+the `langbang-placeholder` site Worker source tracked in this LangBangML
+checkout, while the downloadable APKs and manifests come from this new
+Cloudflare account's R2 bucket.
 
 Use `--no-site-deploy` only when you deliberately want to publish R2 artifacts
 without touching the `langbang.org` Worker page.

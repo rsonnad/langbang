@@ -3,12 +3,77 @@
 Purpose: make the current quiz/practice modes explicit, then rationalize them into
 one primary practice loop plus a smaller set of specialized drills.
 
-## Current Quiz And Practice Modes
+## Current Ratings - 2026-06-05
 
-Bundled content baseline: 20 phonemes / 200 example words, 38 verbs, 9
-pronouns, 34 lesson-2 phrases, 56 adjectives, 10 adverbs, 2 phrase groups / 21
-sentences, and 30 nouns. Runtime repositories may add user content on top of
-those bundled counts.
+Scoring uses 1-5 where 5 means the mode strongly helps that dimension. `N/A`
+means the dimension is not the mode's job and should not count against it.
+
+Deletion bar:
+
+- Keep as a named quiz if it scores 4+ in at least one core learning dimension
+  and is not redundant with a stronger mode.
+- Merge or hide if it is mostly recognition, lacks context, or duplicates
+  Practice/Reveal.
+- Rename out of the quiz taxonomy if it is really pronunciation, listening, or
+  passive exposure rather than memory practice.
+
+| Surface | Option | Vocab | Recall | Grammar | Comp. | Feedback | Focus | Verdict |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Quizzes tab | Practice | 4 | 5 | 4 | 3 | 5 | 4 | Keep as the primary quiz. This is the best learning loop because it has self-grade, miss bursts, success expansion, and auto/manual scope. |
+| Quizzes tab | Helper + infinitive | 3 | 5 | 4 | 4 | 5 | 5 | Keep. This is narrow but very useful because it drills high-frequency helper patterns with real infinitives. |
+| Quizzes tab | One verb | 2 | 3 | 4 | 1 | 3 | 4 | Keep only as a secondary recognition check. It is useful for contrasting six forms of one verb, but it is not production practice. |
+| Quizzes tab | One person, all verbs | 3 | 3 | 4 | 1 | 3 | 4 | Keep as a secondary recognition check. Better than one-verb MC for pattern contrast across verbs. |
+| Quizzes tab | Adjectives EN -> PL | 4 | 3 | 1 | 1 | 3 | 2 | Removed from the visible hub on 2026-06-05. Reformulate later as shared lemma/form Practice instead of a standalone MC card. |
+| Quizzes tab | Adjectives PL -> EN | 3 | 2 | 1 | 1 | 3 | 2 | Removed from the visible hub on 2026-06-05. Passive recognition is not strong enough as a standalone quiz. |
+| Quizzes tab | Adverbs EN -> PL | 3 | 3 | N/A | 1 | 3 | 2 | Removed from the visible hub on 2026-06-05. Sentence Practice is better for adverbs. |
+| Quizzes tab | Adverbs PL -> EN | 3 | 2 | N/A | 1 | 3 | 2 | Removed from the visible hub on 2026-06-05. Passive recognition only. |
+| Quizzes tab | Pronouns | 2 | 3 | 5 | 1 | 3 | 3 | Keep, but add case filters if it stays visible. It targets a real confusion point. |
+| Verbs tab | Conj quiz | 3 | 4 | 4 | 2 | 1 | 4 | Keep as Reveal until Practice fully covers selected-verb form drills. It is hands-free but cannot remediate misses. |
+| Verbs tab | Recall quiz | 3 | 4 | 4 | 2 | 1 | 4 | Removed on 2026-06-05. Current code ran the same path as Conj quiz, so the label was redundant. |
+| Verbs tab | Sent. quiz | 4 | 4 | 4 | 4 | 1 | 4 | Keep as Reveal. Strong for sentence-level recall and comprehension, weak only on feedback. |
+| Verbs/Phrases tab | Sent. quiz | 4 | 4 | 3 | 5 | 1 | 4 | Keep as comprehension Reveal, especially with related adj/adv/noun phrase toggles. |
+| Adjectives tab | Recall quiz | 3 | 4 | 5 | 1 | 1 | 3 | Keep until Practice offers equivalent selected-adjective form scope. Strong grammar drill despite no remediation. |
+| Adjectives tab | Sent. quiz | 3 | 4 | 3 | 4 | 1 | 3 | Keep only when sentence cache exists; merge into Practice/Reveal later. |
+| Adverbs tab | Sent. quiz | 3 | 4 | N/A | 4 | 1 | 3 | Keep only when sentence cache exists; this is better than adverb lemma MC for actual use. |
+| Nouns tab | Recall quiz | 3 | 4 | 5 | 1 | 1 | 4 | Keep. This is one of the better grammar Reveal drills because case and number filters exist. |
+| Nouns tab | Sent. quiz | 3 | 4 | 3 | 4 | 1 | 4 | Keep when sentence cache exists; merge into shared Practice/Reveal later. |
+| Phrases tab | Quiz | 4 | 4 | 2 | 5 | 1 | 4 | Keep as phrase-deck Reveal, especially starred-only. Rename to Reveal/Practice later to reduce taxonomy noise. |
+| Pronunciation tab | Flashcard quiz | 2 | 1 | N/A | 2 | 1 | 3 | Keep, but rename to Pronunciation tour. It is not a memory quiz. |
+| Phrase detail | Your turn | 1 | 2 | N/A | 2 | 4 | 5 | Keep as Pronunciation assessment, not as quiz. It measures speaking accuracy against a visible phrase. |
+
+Removed in the 2026-06-05 cleanup pass:
+
+1. `Verbs tab -> Recall quiz`.
+2. `Quizzes tab -> Adjectives EN -> PL`.
+3. `Quizzes tab -> Adjectives PL -> EN`.
+4. `Quizzes tab -> Adverbs EN -> PL`.
+5. `Quizzes tab -> Adverbs PL -> EN`.
+
+Do not delete yet:
+
+1. Lesson-tab Recall/Sent. Reveal drills for verbs, nouns, adjectives, and
+   adverbs. They are not ideal, but they preserve selected-item and sentence-cache
+   workflows that Practice does not fully expose yet.
+2. Phrase Quiz. It is the strongest comprehension deck and has a useful starred
+   personal-deck path.
+3. Pronunciation Flashcard and Your turn. They should leave the quiz taxonomy,
+   but they should stay in the product.
+
+Process fixes found:
+
+1. This document's older "Current Quiz And Practice Modes" section was stale: it
+   did not include the current Quiz-tab Practice and Helper + infinitive cards.
+2. The visible app taxonomy still mixes production Practice, recognition MC,
+   timed Reveal, pronunciation tour, and speech assessment under quiz-ish labels.
+3. Multiple choice modes have better answer audio now than the older notes imply,
+   but their learning value is still recognition-heavy.
+
+## Earlier Baseline Review
+
+Bundled content baseline at this review pass: 20 phonemes / 200 example words,
+38 verbs, 9 pronouns, 34 lesson-2 phrases, 63 adjectives, 10 adverbs, 3 phrase
+groups / 35 sentences, and 34 nouns. Runtime repositories may add user content
+on top of those bundled counts.
 
 | Surface | Current label | How it works | Prompt and answer direction | Audio | Text reveal | Scope and breadth | Order | Grammar coverage | Filters today | Self grade | Design notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |

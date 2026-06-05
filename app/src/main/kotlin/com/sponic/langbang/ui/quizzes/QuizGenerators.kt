@@ -4,7 +4,6 @@ import com.sponic.langbang.data.LessonRepository
 import com.sponic.langbang.data.model.PERSON_KEYS
 import com.sponic.langbang.data.model.VerbEntry
 import com.sponic.langbang.data.VerbSentenceStore
-import com.sponic.langbang.integrations.AzureTtsClient
 
 /**
  * Builds [QuizQuestion] lists for every quiz type. Each generator pulls from the
@@ -107,67 +106,6 @@ object QuizGenerators {
                 distractors = distractorPool.shuffled().take(3),
                 context = "$personKey · $tenseLabel"
             )
-        }
-    }
-
-    /**
-     * Adjective vocab drill — EN → PL (nominative masculine, the dictionary form).
-     * Distractors: 3 random other adjectives in the lesson.
-     */
-    fun adjectiveVocab(repo: LessonRepository, enToPl: Boolean = true): List<QuizQuestion> {
-        val items = repo.lesson3().adjectives
-        if (items.size < 4) return emptyList()
-        val lemmas = items.map { it.lemma }
-        val glosses = items.map { it.en }
-        return items.map { adj ->
-            if (enToPl) {
-                val distractors = (lemmas - adj.lemma).shuffled().take(3)
-                QuizQuestion(
-                    prompt = adj.en,
-                    correct = adj.lemma,
-                    distractors = distractors,
-                    context = "Adjective · pick the Polish"
-                )
-            } else {
-                val distractors = (glosses - adj.en).shuffled().take(3)
-                QuizQuestion(
-                    prompt = adj.lemma,
-                    correct = adj.en,
-                    distractors = distractors,
-                    context = "Adjective · pick the English",
-                    correctLocale = AzureTtsClient.LOCALE_EN,
-                    polishPracticeWord = adj.lemma
-                )
-            }
-        }
-    }
-
-    /** Adverb vocab drill — same shape as adjectives. */
-    fun adverbVocab(repo: LessonRepository, enToPl: Boolean = true): List<QuizQuestion> {
-        val items = repo.lesson4().adverbs
-        if (items.size < 4) return emptyList()
-        val lemmas = items.map { it.lemma }
-        val glosses = items.map { it.en }
-        return items.map { adv ->
-            if (enToPl) {
-                val distractors = (lemmas - adv.lemma).shuffled().take(3)
-                QuizQuestion(
-                    prompt = adv.en,
-                    correct = adv.lemma,
-                    distractors = distractors,
-                    context = "Adverb · pick the Polish"
-                )
-            } else {
-                val distractors = (glosses - adv.en).shuffled().take(3)
-                QuizQuestion(
-                    prompt = adv.lemma,
-                    correct = adv.en,
-                    distractors = distractors,
-                    context = "Adverb · pick the English",
-                    correctLocale = AzureTtsClient.LOCALE_EN,
-                    polishPracticeWord = adv.lemma
-                )
-            }
         }
     }
 

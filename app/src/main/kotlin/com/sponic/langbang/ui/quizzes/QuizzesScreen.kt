@@ -56,14 +56,14 @@ import com.sponic.langbang.ui.lessons.VerbsTabState
 /**
  * Tab-root for the new tap-to-answer quiz section. Lists the available drill modes
  * as Cards; selecting one swaps the body for [MultipleChoiceQuiz] until the user
- * exits. Separate from the existing audio "Conj quiz" / "Recall quiz" buttons in
+ * exits. Separate from the existing audio "Conj quiz" button in
  * VerbsTab — those drive playback; this is silent, fast, tablet-on-couch friendly.
  *
- * Five modes:
- *   1. Verb forms (one verb, all 6 persons in selected tense)
- *   2. Verb forms (one person, across every verb)
- *   3. Adjectives (EN ↔ PL toggle)
- *   4. Adverbs (EN ↔ PL toggle)
+ * Current modes:
+ *   1. Practice (self-graded production recall)
+ *   2. Helper + infinitive practice
+ *   3. Verb forms (one verb, all 6 persons in selected tense)
+ *   4. Verb forms (one person, across every verb)
  *   5. Pronouns (case forms — ja/mnie/mi etc)
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -75,6 +75,16 @@ fun QuizzesScreen(
 ) {
     var mode by remember { mutableStateOf<QuizMode>(QuizMode.Hub) }
     val returnToHub = {
+        val previous = mode
+        if (previous != QuizMode.Hub) {
+            app.analytics.track(
+                name = "quiz_mode_exited",
+                feature = "quizzes",
+                action = "exit",
+                screen = "quizzes",
+                properties = mapOf("mode" to previous.analyticsName())
+            )
+        }
         PlaybackController.stop()
         NowVoicingBus.clear()
         mode = QuizMode.Hub
@@ -85,11 +95,31 @@ fun QuizzesScreen(
     LaunchedEffect(resetToken) {
         if (resetToken > 0) returnToHub()
     }
+    LaunchedEffect(mode) {
+        if (mode != QuizMode.Hub) {
+            app.analytics.track(
+                name = "quiz_mode_viewed",
+                feature = "quizzes",
+                action = "view",
+                screen = "quizzes",
+                properties = mapOf("mode" to mode.analyticsName())
+            )
+        }
+    }
     Column(modifier = Modifier.fillMaxSize()) {
         nowVoicing()
         Box(modifier = Modifier.weight(1f)) {
             when (val m = mode) {
-                QuizMode.Hub -> Hub(onPick = { mode = it })
+                QuizMode.Hub -> Hub(onPick = {
+                    app.analytics.track(
+                        name = "quiz_mode_selected",
+                        feature = "quizzes",
+                        action = "select",
+                        screen = "quizzes",
+                        properties = mapOf("mode" to it.analyticsName())
+                    )
+                    mode = it
+                })
                 QuizMode.Practice -> PracticeQuiz(
                     app = app,
                     onExit = returnToHub
@@ -133,22 +163,6 @@ fun QuizzesScreen(
                     },
                     onExit = returnToHub
                 )
-                is QuizMode.Adjectives -> MultipleChoiceQuiz(
-                    app = app,
-                    title = if (m.enToPl) "Adjectives · EN → PL" else "Adjectives · PL → EN",
-                    questions = remember(m.enToPl) {
-                        QuizGenerators.adjectiveVocab(app.lessonRepo, enToPl = m.enToPl)
-                    },
-                    onExit = returnToHub
-                )
-                is QuizMode.Adverbs -> MultipleChoiceQuiz(
-                    app = app,
-                    title = if (m.enToPl) "Adverbs · EN → PL" else "Adverbs · PL → EN",
-                    questions = remember(m.enToPl) {
-                        QuizGenerators.adverbVocab(app.lessonRepo, enToPl = m.enToPl)
-                    },
-                    onExit = returnToHub
-                )
                 QuizMode.Pronouns -> MultipleChoiceQuiz(
                     app = app,
                     title = "Pronoun case forms",
@@ -178,9 +192,19 @@ private sealed interface QuizMode {
             else -> personKey
         }
     }
-    data class Adjectives(val enToPl: Boolean) : QuizMode
-    data class Adverbs(val enToPl: Boolean) : QuizMode
     data object Pronouns : QuizMode
+}
+
+private fun QuizMode.analyticsName(): String = when (this) {
+    QuizMode.Hub -> "hub"
+    QuizMode.Practice -> "practice"
+    QuizMode.HelperInfinitives -> "helper_infinitives"
+    QuizMode.SentenceAudio -> "sentence_audio"
+    QuizMode.PerVerbPick -> "per_verb_picker"
+    QuizMode.CrossVerbPick -> "cross_verb_picker"
+    is QuizMode.PerVerb -> "per_verb_${tense}"
+    is QuizMode.CrossVerb -> "cross_verb_${tense}_${personKey}"
+    QuizMode.Pronouns -> "pronouns"
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -211,26 +235,6 @@ private fun Hub(onPick: (QuizMode) -> Unit) {
             title = "One person, all verbs",
             subtitle = "Lock a pronoun, then drill that form across every verb.",
             mode = QuizMode.CrossVerbPick
-        ),
-        QuizCardSpec(
-            title = "Adjectives EN -> PL",
-            subtitle = "Pick the Polish word for each English adjective.",
-            mode = QuizMode.Adjectives(enToPl = true)
-        ),
-        QuizCardSpec(
-            title = "Adjectives PL -> EN",
-            subtitle = "Pick the English meaning for each Polish adjective.",
-            mode = QuizMode.Adjectives(enToPl = false)
-        ),
-        QuizCardSpec(
-            title = "Adverbs EN -> PL",
-            subtitle = "Pick the Polish word for each English adverb.",
-            mode = QuizMode.Adverbs(enToPl = true)
-        ),
-        QuizCardSpec(
-            title = "Adverbs PL -> EN",
-            subtitle = "Pick the English meaning for each Polish adverb.",
-            mode = QuizMode.Adverbs(enToPl = false)
         ),
         QuizCardSpec(
             title = "Pronouns",

@@ -71,6 +71,17 @@ internal class RandomPlayerState(
     val hasQueue: Boolean get() = phrases.isNotEmpty()
 
     fun stop() {
+        if (playing || paused || phrases.isNotEmpty()) {
+            app.analytics.track(
+                name = "random_play_stopped",
+                feature = "listening",
+                action = "stop",
+                properties = mapOf(
+                    "queueSize" to queueSize.toString(),
+                    "position" to position.toString()
+                )
+            )
+        }
         job?.cancel()
         job = null
         playing = false
@@ -96,8 +107,20 @@ internal class RandomPlayerState(
         if (phrases.isEmpty()) {
             playing = false
             paused = false
+            app.analytics.track(
+                name = "random_play_empty",
+                feature = "listening",
+                action = "play",
+                properties = config.analyticsProperties() + ("queueSize" to "0")
+            )
             return
         }
+        app.analytics.track(
+            name = "random_play_started",
+            feature = "listening",
+            action = "play",
+            properties = config.analyticsProperties() + ("queueSize" to phrases.size.toString())
+        )
         launchFromCurrent()
     }
 
@@ -116,8 +139,20 @@ internal class RandomPlayerState(
             paused = false
             NowVoicingBus.clear()
             PlaybackController.unregister()
+            app.analytics.track(
+                name = "random_play_reconfigured_empty",
+                feature = "listening",
+                action = "configure",
+                properties = config.analyticsProperties() + ("queueSize" to "0")
+            )
             return
         }
+        app.analytics.track(
+            name = "random_play_reconfigured",
+            feature = "listening",
+            action = "configure",
+            properties = config.analyticsProperties() + ("queueSize" to phrases.size.toString())
+        )
         if (wasPaused) {
             playing = false
             paused = true
@@ -134,10 +169,22 @@ internal class RandomPlayerState(
         job?.cancel()
         job = null
         app.audioPlayer.stop()
+        app.analytics.track(
+            name = "random_play_paused",
+            feature = "listening",
+            action = "pause",
+            properties = mapOf("queueSize" to queueSize.toString(), "position" to position.toString())
+        )
     }
 
     fun resume() {
         if (!paused || phrases.isEmpty()) return
+        app.analytics.track(
+            name = "random_play_resumed",
+            feature = "listening",
+            action = "resume",
+            properties = mapOf("queueSize" to queueSize.toString(), "position" to position.toString())
+        )
         launchFromCurrent()
     }
 
@@ -151,6 +198,12 @@ internal class RandomPlayerState(
         currentIndex = (currentIndex - 1).coerceAtLeast(0)
         position = currentIndex + 1
         if (wasPlaying) {
+            app.analytics.track(
+                name = "random_play_rewind",
+                feature = "listening",
+                action = "rewind",
+                properties = mapOf("queueSize" to queueSize.toString(), "position" to position.toString())
+            )
             launchFromCurrent()
         } else {
             // Stay paused but at the new position. Republish the new phrase so the
@@ -175,6 +228,12 @@ internal class RandomPlayerState(
         }
         currentIndex = nextIndex
         position = currentIndex + 1
+        app.analytics.track(
+            name = "random_play_next",
+            feature = "listening",
+            action = "next",
+            properties = mapOf("queueSize" to queueSize.toString(), "position" to position.toString())
+        )
         if (wasPlaying) {
             launchFromCurrent()
         } else {
@@ -193,6 +252,12 @@ internal class RandomPlayerState(
         app.audioPlayer.stop()
         currentIndex = 0
         position = 1
+        app.analytics.track(
+            name = "random_play_restarted",
+            feature = "listening",
+            action = "restart",
+            properties = mapOf("queueSize" to queueSize.toString())
+        )
         if (wasPlaying && playing) {
             launchFromCurrent()
         } else if (paused) {
@@ -252,6 +317,12 @@ internal class RandomPlayerState(
                 }
             }
             // Natural completion only reaches here (cancellation exits via exception).
+            app.analytics.track(
+                name = "random_play_completed",
+                feature = "listening",
+                action = "complete",
+                properties = mapOf("queueSize" to queueSize.toString())
+            )
             playing = false
             paused = false
             NowVoicingBus.clear()
@@ -585,3 +656,13 @@ internal class RandomPlayerState(
         return cleaned.ifEmpty { setOf(RandomConfig.PREPOSITION_NONE) }
     }
 }
+
+private fun RandomConfig.analyticsProperties(): Map<String, String> = mapOf(
+    "playMode" to playMode.name,
+    "adjectiveMode" to adjectiveMode.name,
+    "adverbMode" to adverbMode.name,
+    "personCount" to personKeys.size.toString(),
+    "tenseCount" to tenses.size.toString(),
+    "prepositionCount" to prepositions.size.toString(),
+    "hasMustContain" to mustContainWord.isNotBlank().toString()
+)

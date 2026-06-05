@@ -1,5 +1,6 @@
 package com.sponic.langbang.domain
 
+import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.os.Handler
 import android.os.Looper
@@ -48,11 +49,16 @@ object AudioActivityBus {
  */
 class AudioPlayer {
     private val mp = MediaPlayer()
+    private val audioAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        .build()
     private var onDoneCurrent: (() -> Unit)? = null
     private var prepared = false
     private var paused = false
 
     init {
+        applyAudioAttributes()
         mp.setOnPreparedListener {
             prepared = true
             if (!paused) it.start()
@@ -84,6 +90,7 @@ class AudioPlayer {
         prepared = false
         runCatching { mp.reset() }
         if (!file.exists()) { onDone(); return }
+        applyAudioAttributes()
         // Reflect "active" the instant the tap lands, before prepare completes.
         AudioActivityBus.markActive()
         onDoneCurrent = onDone
@@ -129,5 +136,9 @@ class AudioPlayer {
         val cb = onDoneCurrent
         onDoneCurrent = null
         cb?.invoke()
+    }
+
+    private fun applyAudioAttributes() {
+        runCatching { mp.setAudioAttributes(audioAttributes) }
     }
 }

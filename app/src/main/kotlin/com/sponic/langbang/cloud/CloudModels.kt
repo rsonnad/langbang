@@ -1,5 +1,6 @@
 package com.sponic.langbang.cloud
 
+import com.sponic.langbang.data.model.PhraseGroup
 import com.sponic.langbang.data.model.TokenPair
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -100,6 +101,70 @@ data class CloudPhraseCompletionResponse(
     val target: String = "",
     val literal: String? = null,
     val words: List<TokenPair> = emptyList()
+)
+
+@Serializable
+data class CloudGoogleAuthRequest(
+    val idToken: String,
+    val nonce: String,
+    val instanceId: String
+)
+
+@Serializable
+data class CloudEmailStartRequest(
+    val email: String
+)
+
+@Serializable
+data class CloudEmailStartResponse(
+    val ok: Boolean = false,
+    val email: String = "",
+    val sent: Boolean = false,
+    val expiresInMinutes: Int = 0
+)
+
+@Serializable
+data class CloudEmailVerifyRequest(
+    val email: String,
+    val code: String,
+    val instanceId: String
+)
+
+@Serializable
+data class CloudAuthResponse(
+    val user: CloudAuthUser,
+    val session: CloudAuthSession
+)
+
+@Serializable
+data class CloudAuthUser(
+    val id: String,
+    val email: String,
+    val emailVerified: Boolean = false,
+    val displayName: String = "",
+    val pictureUrl: String = ""
+)
+
+@Serializable
+data class CloudAuthSession(
+    val token: String,
+    val expiresAt: String
+)
+
+@Serializable
+data class CloudUserPhrasesRequest(
+    val instanceId: String,
+    val groups: List<PhraseGroup>,
+    val starredPhrases: List<String> = emptyList(),
+    val replace: Boolean = true
+)
+
+@Serializable
+data class CloudUserPhrasesResponse(
+    val instanceId: String,
+    val groups: List<PhraseGroup> = emptyList(),
+    val starredPhrases: List<String> = emptyList(),
+    val syncedAt: String = ""
 )
 
 data class CloudSyncState(

@@ -55,7 +55,7 @@ Glasses controls:
 Verification path:
 
 ```bash
-cd /Users/rahulio/Documents/CodingProjects/langbang/even-g2-test
+cd /Users/rahulio/Documents/CodingProjects/LangBangML/even-g2-test
 npm install
 npm run build
 npm run pack

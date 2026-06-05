@@ -26,7 +26,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -525,11 +524,10 @@ private fun ExamplesControls(
                 CircularProgressIndicator(
                     modifier = Modifier.size(18.dp), strokeWidth = 2.dp
                 )
-            } else {
-                val isRegenerate = state.sentences.isNotEmpty()
+            } else if (state.sentences.isEmpty()) {
                 LbButton.Ghost(
-                    label = if (isRegenerate) "Refresh examples" else "Generate examples",
-                    icon = if (isRegenerate) Icons.Default.Refresh else Icons.Default.Add,
+                    label = "Generate examples",
+                    icon = Icons.Default.Add,
                     onClick = { state.generate() }
                 )
             }

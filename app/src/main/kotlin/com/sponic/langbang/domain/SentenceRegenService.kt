@@ -1,5 +1,6 @@
 package com.sponic.langbang.domain
 
+import android.util.Log
 import com.sponic.langbang.data.LessonRepository
 import com.sponic.langbang.data.R2SentenceManifest
 import com.sponic.langbang.data.VerbSentenceStore
@@ -19,6 +20,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import com.sponic.langbang.data.LbJson
 import kotlinx.serialization.builtins.ListSerializer
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.atomic.AtomicInteger
@@ -36,7 +38,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * Settings card render the same live state.
  */
 class SentenceRegenService(
-    private val repo: LessonRepository
+    private val repo: LessonRepository,
+    private val network: NetworkMonitor
 ) {
     sealed interface State {
         data object Idle : State
@@ -47,6 +50,7 @@ class SentenceRegenService(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = LbJson.lenient
+    private val unusableRoutes = mutableSetOf<String>()
 
     /**
      * Serializes every write into the per-type SharedPreferences-style JSON stores
@@ -103,7 +107,7 @@ class SentenceRegenService(
                         total = total,
                         currentKey = key
                     )
-                    val ok = downloadAndStore(key, entry.url)
+                    val ok = downloadAndStore(key, bundleUrlForKey(key, entry.url))
                     if (ok) downloaded.incrementAndGet() else failures.incrementAndGet()
                     _state.value = State.Downloading(
                         done = downloaded.get() + failures.get(),
@@ -123,19 +127,8 @@ class SentenceRegenService(
 
     private suspend fun fetchManifest(): R2SentenceManifest = withContext(Dispatchers.IO) {
         val url = "$MANIFEST_BASE/v${GeminiClient.SENTENCE_PROMPT_VERSION}/manifest.json"
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 8000
-            readTimeout = 15000
-            requestMethod = "GET"
-        }
-        try {
-            val code = conn.responseCode
-            if (code !in 200..299) error("manifest HTTP $code")
-            val text = conn.inputStream.bufferedReader().use { it.readText() }
-            json.decodeFromString(R2SentenceManifest.serializer(), text)
-        } finally {
-            conn.disconnect()
-        }
+        val text = readR2Text(url, label = "manifest", connectTimeout = 8000, readTimeout = 15000)
+        json.decodeFromString(R2SentenceManifest.serializer(), text)
     }
 
     /**
@@ -165,17 +158,7 @@ class SentenceRegenService(
         withContext(Dispatchers.IO) {
             val parsed = parseKey(key) ?: return@withContext false
             val text = try {
-                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 8000
-                    readTimeout = 20000
-                    requestMethod = "GET"
-                }
-                try {
-                    if (conn.responseCode !in 200..299) return@withContext false
-                    conn.inputStream.bufferedReader().use { it.readText() }
-                } finally {
-                    conn.disconnect()
-                }
+                readR2Text(url, label = key, connectTimeout = 8000, readTimeout = 20000)
             } catch (_: Throwable) {
                 return@withContext false
             }
@@ -202,6 +185,63 @@ class SentenceRegenService(
             true
         }
 
+    private fun readR2Text(
+        url: String,
+        label: String,
+        connectTimeout: Int,
+        readTimeout: Int
+    ): String {
+        val endpoint = URL(url)
+        var lastError: Throwable? = null
+        for ((route, conn) in r2Connections(endpoint)) {
+            try {
+                conn.connectTimeout = connectTimeout
+                conn.readTimeout = readTimeout
+                conn.requestMethod = "GET"
+                val code = conn.responseCode
+                if (code in 200..299) {
+                    return conn.inputStream.bufferedReader().use { it.readText() }
+                }
+                lastError = IOException("$label HTTP $code")
+                Log.w(TAG, "R2 $label returned HTTP $code via $route")
+            } catch (t: Throwable) {
+                lastError = t
+                if (markRouteUnusable(route)) {
+                    Log.w(TAG, "R2 $label failed via $route: ${t.message}")
+                }
+            } finally {
+                conn.disconnect()
+            }
+        }
+        throw lastError ?: IOException("$label unavailable")
+    }
+
+    private fun r2Connections(url: URL): List<Pair<String, HttpURLConnection>> {
+        val routed = network.validatedInternetNetworks().mapNotNull { candidate ->
+            val route = candidate.toString()
+            if (isRouteUnusable(route)) return@mapNotNull null
+            runCatching {
+                route to network.openConnection(url, candidate)
+            }.getOrNull()
+        }
+        val fallback = runCatching {
+            "default" to (url.openConnection() as HttpURLConnection)
+        }.getOrNull()
+        return if (fallback == null) routed else routed + fallback
+    }
+
+    private fun isRouteUnusable(route: String): Boolean =
+        synchronized(unusableRoutes) { route in unusableRoutes }
+
+    private fun markRouteUnusable(route: String): Boolean =
+        route != "default" && synchronized(unusableRoutes) { unusableRoutes.add(route) }
+
+    private fun bundleUrlForKey(key: String, manifestUrl: String): String {
+        val derived = "$MANIFEST_BASE/v${GeminiClient.SENTENCE_PROMPT_VERSION}/$key"
+        if (manifestUrl.startsWith(MANIFEST_BASE)) return manifestUrl
+        return derived
+    }
+
     private data class ParsedKey(val type: BundleType, val lemma: String)
     private enum class BundleType { VERB_PRESENT, VERB_PAST, ADJECTIVE, ADVERB, NOUN }
 
@@ -225,6 +265,8 @@ class SentenceRegenService(
     }
 
     companion object {
+        private const val TAG = "SentenceRegen"
+
         private const val MANIFEST_BASE =
             "https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev/langbang/sentences"
 
