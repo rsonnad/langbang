@@ -26,13 +26,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,6 +59,9 @@ import com.sponic.langbang.data.PracticePrefsStore
 import com.sponic.langbang.data.PronounFilterStore
 import com.sponic.langbang.data.VerbSentenceStore
 import com.sponic.langbang.data.model.ConjugationClass
+import com.sponic.langbang.data.model.AdjectiveEntry
+import com.sponic.langbang.data.model.AdverbEntry
+import com.sponic.langbang.data.model.NounEntry
 import com.sponic.langbang.data.model.PERSON_KEYS
 import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.data.model.TokenPair
@@ -99,6 +103,32 @@ private data class ConjugationCue(
     val tokens: List<TokenPair>
 )
 
+private data class PhraseVerbCue(
+    val personKey: String,
+    val form: String,
+    val englishVerb: String,
+    val past: Boolean
+)
+
+private data class PhrasePart(
+    val words: List<TokenPair>,
+    val en: String,
+    val literal: String
+)
+
+private data class HelperPhrasePart(
+    val lemma: String,
+    val words: List<TokenPair>,
+    val en: String,
+    val literal: String
+)
+
+private enum class EnglishComplementStyle {
+    ToInfinitive,
+    BareInfinitive,
+    Gerund
+}
+
 /**
  * Holds the sentence-generation + playback state for the Verbs tab. Lives at the tab root
  * so the control strip (Generate / Play / Regenerate / All verbs) can render in the
@@ -134,6 +164,10 @@ internal class VerbsTabState(
         app.practicePrefs.wordPlayRandom(PracticePrefsStore.CATEGORY_VERBS)
     )
         private set
+    var includePronouns: Boolean by mutableStateOf(app.practicePrefs.verbPhraseIncludePronouns())
+        private set
+    var includeHelperVerb: Boolean by mutableStateOf(app.practicePrefs.verbPhraseIncludeHelperVerb())
+        private set
     var includeAdjectives: Boolean by mutableStateOf(app.practicePrefs.verbPhraseIncludeAdjectives())
         private set
     var includeAdverbs: Boolean by mutableStateOf(app.practicePrefs.verbPhraseIncludeAdverbs())
@@ -141,6 +175,8 @@ internal class VerbsTabState(
     var includeNouns: Boolean by mutableStateOf(app.practicePrefs.verbPhraseIncludeNouns())
         private set
     var generateProgress: String? by mutableStateOf(null)
+        private set
+    var phraseQualityNotice: String? by mutableStateOf(null)
         private set
     var includedPresentKeys: Set<String> by mutableStateOf(
         app.pronounFilter.allIncluded(PERSON_KEYS, PronounFilterStore.TENSE_PRESENT)
@@ -157,7 +193,9 @@ internal class VerbsTabState(
      *  right row; sentence playback leaves it null. */
     var playingLemma: String? by mutableStateOf(null)
         private set
-    val playing: Boolean get() = player.hasQueue
+    var preparingPlayback: Boolean by mutableStateOf(false)
+        private set
+    val playing: Boolean get() = player.hasQueue || preparingPlayback
 
     fun selectVerb(verb: VerbEntry?) {
         if (selected?.lemma == verb?.lemma) return
@@ -202,6 +240,16 @@ internal class VerbsTabState(
         app.practicePrefs.setSlowFirst(enabled)
     }
 
+    fun updateIncludePronouns(enabled: Boolean) {
+        includePronouns = enabled
+        app.practicePrefs.setVerbPhraseIncludePronouns(enabled)
+    }
+
+    fun updateIncludeHelperVerb(enabled: Boolean) {
+        includeHelperVerb = enabled
+        app.practicePrefs.setVerbPhraseIncludeHelperVerb(enabled)
+    }
+
     fun updateIncludeAdjectives(enabled: Boolean) {
         includeAdjectives = enabled
         app.practicePrefs.setVerbPhraseIncludeAdjectives(enabled)
@@ -236,13 +284,24 @@ internal class VerbsTabState(
     fun targetPlayCount(allVerbs: List<VerbEntry>): Int {
         val targetCount = resolveTargets(allVerbs).size
         if (!wordTypeVariationsEnabled()) return targetCount
-        return targetCount * selectedWordTypeCount() * playLimit()
+        return targetCount * playLimit()
     }
 
-    fun wordTypeVariationsEnabled(): Boolean = selectedWordTypeCount() > 0
+    fun wordTypeVariationsEnabled(): Boolean = selectedPhraseComponentCount() > 0
 
-    private fun selectedWordTypeCount(): Int =
-        listOf(includeAdjectives, includeAdverbs, includeNouns).count { it }
+    private fun selectedPhraseComponentCount(): Int =
+        listOf(includePronouns, includeAdjectives, includeAdverbs, includeNouns).count { it }
+
+    private fun minimumPhraseWordCount(): Int =
+        1 + selectedPhraseComponentCount()
+
+    private fun phraseRequirements(): Set<String> = buildSet {
+        if (includePronouns) add("pronoun")
+        if (includeHelperVerb) add("helperVerb")
+        if (includeAdjectives) add("adjective")
+        if (includeAdverbs) add("adverb")
+        if (includeNouns) add("noun")
+    }
 
     fun toggleIncluded(
         key: String,
@@ -370,6 +429,9 @@ internal class VerbsTabState(
 
     fun stop() {
         player.stop()
+        preparingPlayback = false
+        generateProgress = null
+        phraseQualityNotice = null
         playingLemma = null
     }
 
@@ -474,65 +536,696 @@ internal class VerbsTabState(
         return combined
     }
 
-    private fun wordTypeVariationSentencesFor(
+    private suspend fun wordTypeVariationSentencesFor(
         verb: VerbEntry,
         limitPerType: Int
     ): List<SentenceExample> {
         val allowedForms = allowedFormsFor(verb)
         if (allowedForms.isEmpty() || limitPerType <= 0) return emptyList()
 
-        val extras = mutableListOf<SentenceExample>()
-        if (includeAdjectives) {
-            extras += categoryVariationSentences(
-                entries = app.lessonRepo.lesson3().adjectives,
-                category = PracticePrefsStore.CATEGORY_ADJECTIVES,
-                lemmaOf = { it.lemma },
-                sentencesFor = { app.lessonRepo.adjectiveSentencesFor(it.lemma) },
-                allowedForms = allowedForms,
-                limit = limitPerType
-            )
+        fun matches(): List<SentenceExample> =
+            phraseCandidateSentencesFor(verb)
+                .filter { sentenceMatchesPhraseRequirements(it, allowedForms) }
+                .filter { sentencePassesCommonUsageGate(verb, it) }
+                .distinctBy { it.pl }
+                .let { if (randomOrder) it.shuffled() else it }
+
+        var matching = matches()
+        if (matching.size < limitPerType) {
+            generateProgress = "Building phrase variants · ${verb.lemma}"
+            val local = buildLocalPhraseSentences(verb, limitPerType)
+            matching = (matching + local)
+                .distinctBy { it.pl }
+                .let { if (randomOrder) it.shuffled() else it }
         }
-        if (includeAdverbs) {
-            extras += categoryVariationSentences(
-                entries = app.lessonRepo.lesson4().adverbs,
-                category = PracticePrefsStore.CATEGORY_ADVERBS,
-                lemmaOf = { it.lemma },
-                sentencesFor = { app.lessonRepo.adverbSentencesFor(it.lemma) },
-                allowedForms = allowedForms,
-                limit = limitPerType
-            )
-        }
-        if (includeNouns) {
-            extras += categoryVariationSentences(
-                entries = app.lessonRepo.lesson6().nouns,
-                category = PracticePrefsStore.CATEGORY_NOUNS,
-                lemmaOf = { it.lemma },
-                sentencesFor = { app.lessonRepo.nounSentencesFor(it.lemma) },
-                allowedForms = allowedForms,
-                limit = limitPerType
-            )
-        }
-        val expected = selectedWordTypeCount() * limitPerType
-        val distinct = extras.distinctBy { it.pl }
-        if (distinct.size < expected) app.sentenceRegen.startIfNeeded()
-        return distinct
+        if (matching.size < limitPerType) app.sentenceRegen.startIfNeeded()
+        return matching.take(limitPerType)
     }
 
-    private fun <T> categoryVariationSentences(
-        entries: List<T>,
-        category: String,
-        lemmaOf: (T) -> String,
-        sentencesFor: (T) -> List<SentenceExample>,
-        allowedForms: Set<String>,
+    private fun phraseCandidateSentencesFor(verb: VerbEntry): List<SentenceExample> {
+        val verbSentences = loadCombinedSentences(verb)
+        val adjectiveSentences = if (!includeAdjectives) emptyList() else {
+            val adjectives = app.lessonRepo.lesson3().adjectives
+            val selected = selectedCategoryLemmas(
+                PracticePrefsStore.CATEGORY_ADJECTIVES,
+                adjectives.map { it.lemma }
+            )
+            adjectives.filter { it.lemma in selected }
+                .flatMap { app.lessonRepo.adjectiveSentencesFor(it.lemma) }
+        }
+        val adverbSentences = if (!includeAdverbs) emptyList() else {
+            val adverbs = app.lessonRepo.lesson4().adverbs
+            val selected = selectedCategoryLemmas(
+                PracticePrefsStore.CATEGORY_ADVERBS,
+                adverbs.map { it.lemma }
+            )
+            adverbs.filter { it.lemma in selected }
+                .flatMap { app.lessonRepo.adverbSentencesFor(it.lemma) }
+        }
+        val nounSentences = if (!includeNouns) emptyList() else {
+            val nouns = app.lessonRepo.lesson6().nouns
+            val selected = selectedCategoryLemmas(
+                PracticePrefsStore.CATEGORY_NOUNS,
+                nouns.map { it.lemma }
+            )
+            nouns.filter { it.lemma in selected }
+                .flatMap { app.lessonRepo.nounSentencesFor(it.lemma) }
+        }
+        return verbSentences + adjectiveSentences + adverbSentences + nounSentences
+    }
+
+    private fun buildLocalPhraseSentences(
+        verb: VerbEntry,
         limit: Int
     ): List<SentenceExample> {
-        val selected = selectedCategoryLemmas(category, entries.map(lemmaOf))
-        val candidates = entries.filter { lemmaOf(it) in selected }
-            .let { if (randomOrder) it.shuffled() else it }
-            .flatMap(sentencesFor)
-            .filter { sentenceContainsAllowedForm(it, allowedForms) }
-            .distinctBy { it.pl }
-        return if (randomOrder) candidates.shuffled().take(limit) else candidates.take(limit)
+        val cues = phraseVerbCuesFor(verb)
+        if (cues.isEmpty() || limit <= 0) return emptyList()
+
+        val cuePool = if (randomOrder) cues.shuffled() else cues
+        var rejected = 0
+        val candidates = (0 until (limit * 4).coerceAtLeast(limit)).mapNotNull { index ->
+            val cue = cuePool[index % cuePool.size]
+            val sentence = if (includeHelperVerb) {
+                helperVerbPhraseSentence(verb, cue, index)
+                    ?: directObjectPhraseSentence(verb, cue, index)
+            } else {
+                directObjectPhraseSentence(verb, cue, index)
+            }
+            when {
+                sentence == null -> null
+                sentencePassesCommonUsageGate(verb, sentence) -> sentence
+                else -> {
+                    rejected += 1
+                    app.practicePrefs.addRejectedVerbPhraseKey(sentence.qualityKey())
+                    null
+                }
+            }
+        }.distinctBy { it.pl }
+        if (rejected > 0) {
+            phraseQualityNotice = "Skipped $rejected awkward phrase variant(s)."
+        }
+        return candidates.take(limit)
+    }
+
+    private fun phraseVerbCuesFor(verb: VerbEntry): List<PhraseVerbCue> = buildList {
+        PERSON_KEYS.forEach { key ->
+            if (key in includedPresentKeys) {
+                val form = verb.forms[key].orEmpty()
+                if (form.isNotBlank()) {
+                    add(PhraseVerbCue(key, form, englishConjugate(verb.en, key, past = false), past = false))
+                }
+            }
+            if (key in includedPastKeys) {
+                val form = verb.past_forms.orEmpty()[key].orEmpty()
+                if (form.isNotBlank()) {
+                    add(PhraseVerbCue(key, form, englishConjugate(verb.en, key, past = true), past = true))
+                }
+            }
+        }
+    }
+
+    private fun directObjectPhraseSentence(
+        verb: VerbEntry,
+        cue: PhraseVerbCue,
+        index: Int
+    ): SentenceExample? {
+        val noun = phraseNounForVerb(verb, index) ?: return null
+        val adjective = phraseAdjectiveForNoun(noun, index)
+        val adverb = phraseAdverbFor(verb, helperLemma = null, index = index)
+        if (includeAdverbs && adverb == null) return null
+        return assembleVerbObjectPhrase(
+            cue = cue,
+            verbPart = PhrasePart(
+                words = listOf(verbToken(verb, cue.form, cue.englishVerb)),
+                en = cue.englishVerb,
+                literal = cue.englishVerb
+            ),
+            adjective = adjective,
+            noun = noun,
+            adverb = adverb,
+            adverbBeforeVerb = adverb?.lemma in setOf("bardzo", "trochę", "teraz", "dzisiaj", "jutro")
+        )
+    }
+
+    private fun helperVerbPhraseSentence(
+        verb: VerbEntry,
+        cue: PhraseVerbCue,
+        index: Int
+    ): SentenceExample? {
+        return when {
+            verb.lemma in setOf("chcieć", "móc", "musieć", "lubić") ->
+                selectedVerbAsHelperPhrase(verb, cue, index)
+            verb.lemma == "mieć" ->
+                selectedMiecOchotePhrase(verb, cue, index)
+            else ->
+                externalHelperPhrase(verb, cue, index)
+        }
+    }
+
+    private fun selectedVerbAsHelperPhrase(
+        verb: VerbEntry,
+        cue: PhraseVerbCue,
+        index: Int
+    ): SentenceExample? {
+        val complement = complementForHelperVerb(verb, index) ?: return null
+        val adverb = phraseAdverbFor(verb, helperLemma = verb.lemma, index = index)
+        if (includeAdverbs && adverb == null) return null
+        return assembleHelperPhrase(
+            selectedCue = cue,
+            helperWords = listOf(verbToken(verb, cue.form, cue.englishVerb)),
+            helperEnglish = cue.englishVerb,
+            helperLiteral = cue.englishVerb,
+            complement = complement,
+            adverb = adverb,
+            adverbAfterHelper = adverb?.lemma != "bardzo"
+        )
+    }
+
+    private fun selectedMiecOchotePhrase(
+        verb: VerbEntry,
+        cue: PhraseVerbCue,
+        index: Int
+    ): SentenceExample? {
+        val complement = complementForInfinitive(
+            verb = verbByLemma(listOf("iść", "pić", "czytać", "jeść"), index) ?: return null,
+            index = index,
+            englishStyle = EnglishComplementStyle.Gerund
+        ) ?: return null
+        val adverb = phraseAdverbFor(verb, helperLemma = "mieć_ochotę", index = index)
+        if (includeAdverbs && adverb == null) return null
+        return assembleHelperPhrase(
+            selectedCue = cue,
+            helperWords = listOf(
+                verbToken(verb, cue.form, if (cue.past) "felt like" else "feel like"),
+                TokenPair("ochotę", "desire", caseKey = "acc", caseLabel = "accusative")
+            ),
+            helperEnglish = if (cue.past) "felt like" else "feel like",
+            helperLiteral = "${if (cue.past) "had" else "have"} desire",
+            complement = complement,
+            adverb = adverb,
+            adverbAfterHelper = true
+        )
+    }
+
+    private fun externalHelperPhrase(
+        verb: VerbEntry,
+        cue: PhraseVerbCue,
+        index: Int
+    ): SentenceExample? {
+        val helper = helperVerbFor(verb, cue, index) ?: return null
+        val complement = complementForSelectedInfinitive(verb, helper.lemma, index) ?: return null
+        val adverb = phraseAdverbFor(verb, helperLemma = helper.lemma, index = index)
+        if (includeAdverbs && adverb == null) return null
+        return assembleHelperPhrase(
+            selectedCue = cue,
+            helperWords = helper.words,
+            helperEnglish = helper.en,
+            helperLiteral = helper.literal,
+            complement = complement,
+            adverb = adverb,
+            adverbAfterHelper = adverb?.lemma != "bardzo"
+        )
+    }
+
+    private fun assembleVerbObjectPhrase(
+        cue: PhraseVerbCue,
+        verbPart: PhrasePart,
+        adjective: AdjectiveEntry?,
+        noun: NounEntry?,
+        adverb: AdverbEntry?,
+        adverbBeforeVerb: Boolean
+    ): SentenceExample {
+        val subjectEn = englishSubjectFor(cue.personKey)
+        val words = mutableListOf<TokenPair>()
+        if (includePronouns) words += TokenPair(audioPronoun(cue.personKey), subjectEn)
+        if (adverb != null && adverbBeforeVerb) {
+            words += TokenPair(adverb.lemma, adverb.en.primaryGloss())
+        }
+        words += verbPart.words
+        if (adverb != null && !adverbBeforeVerb) {
+            words += TokenPair(adverb.lemma, adverb.en.primaryGloss())
+        }
+        adjective?.let {
+            words += TokenPair(
+                pl = adjectivePhraseForm(it, noun),
+                en = if (noun == null) "${it.en.primaryGloss()} one" else it.en.primaryGloss(),
+                gender = noun?.gender,
+                caseKey = "acc",
+                caseLabel = "accusative"
+            )
+        }
+        noun?.let {
+            words += TokenPair(
+                pl = it.acc["sg"].orEmpty().ifBlank { it.lemma },
+                en = it.en.primaryGloss(),
+                gender = it.gender,
+                caseKey = "acc",
+                caseLabel = "accusative",
+                numberLabel = "singular"
+            )
+        }
+        val pl = words.joinToString(" ") { it.pl }
+        return SentenceExample(
+            pl = pl,
+            en = englishPhrase(subjectEn, verbPart.en, adjective, adverb, noun, adverbBeforeVerb),
+            literal = words.joinToString(" ") { it.en },
+            words = words
+        )
+    }
+
+    private fun assembleHelperPhrase(
+        selectedCue: PhraseVerbCue,
+        helperWords: List<TokenPair>,
+        helperEnglish: String,
+        helperLiteral: String,
+        complement: PhrasePart,
+        adverb: AdverbEntry?,
+        adverbAfterHelper: Boolean
+    ): SentenceExample {
+        val subjectEn = englishSubjectFor(selectedCue.personKey)
+        val words = mutableListOf<TokenPair>()
+        if (includePronouns) words += TokenPair(audioPronoun(selectedCue.personKey), subjectEn)
+        if (adverb != null && !adverbAfterHelper) {
+            words += TokenPair(adverb.lemma, adverb.en.primaryGloss())
+        }
+        words += helperWords
+        if (adverb != null && adverbAfterHelper) {
+            words += TokenPair(adverb.lemma, adverb.en.primaryGloss())
+        }
+        words += complement.words
+        val pl = words.joinToString(" ") { it.pl }
+        val adverbEnglish = adverb?.en?.primaryGloss()
+        val enParts = mutableListOf(subjectEn)
+        if (adverbEnglish != null && !adverbAfterHelper) enParts += adverbEnglish
+        enParts += helperEnglish
+        if (adverbEnglish != null && adverbAfterHelper) enParts += adverbEnglish
+        enParts += complement.en
+        return SentenceExample(
+            pl = pl,
+            en = enParts.joinToString(" "),
+            literal = listOfNotNull(
+                if (includePronouns) subjectEn else null,
+                if (adverb != null && !adverbAfterHelper) adverb.en.primaryGloss() else null,
+                helperLiteral,
+                if (adverb != null && adverbAfterHelper) adverb.en.primaryGloss() else null,
+                complement.literal
+            ).joinToString(" "),
+            words = words
+        )
+    }
+
+    private fun helperVerbFor(
+        verb: VerbEntry,
+        cue: PhraseVerbCue,
+        index: Int
+    ): HelperPhrasePart? {
+        if (verb.lemma in setOf("być", "mieć")) return null
+        if (index % 3 == 0) {
+            ochoteHelperFor(cue)?.let { return it }
+        }
+        val helperLemma = when (verb.lemma) {
+            "iść", "jechać", "wracać", "spać", "pracować" -> "musieć"
+            "pomagać", "tańczyć", "dzwonić" -> "móc"
+            else -> "chcieć"
+        }
+        val helper = app.lessonRepo.lesson2().verbs.firstOrNull { it.lemma == helperLemma } ?: return null
+        val form = if (cue.past) helper.past_forms.orEmpty()[cue.personKey] else helper.forms[cue.personKey]
+        if (form.isNullOrBlank()) return null
+        return HelperPhrasePart(
+            lemma = helperLemma,
+            words = listOf(verbToken(helper, form, englishConjugate(helper.en, cue.personKey, cue.past))),
+            en = englishConjugate(helper.en, cue.personKey, cue.past),
+            literal = englishConjugate(helper.en, cue.personKey, cue.past)
+        )
+    }
+
+    private fun ochoteHelperFor(cue: PhraseVerbCue): HelperPhrasePart? {
+        val miec = app.lessonRepo.lesson2().verbs.firstOrNull { it.lemma == "mieć" } ?: return null
+        val form = if (cue.past) miec.past_forms.orEmpty()[cue.personKey] else miec.forms[cue.personKey]
+        if (form.isNullOrBlank()) return null
+        return HelperPhrasePart(
+            lemma = "mieć_ochotę",
+            words = listOf(
+                verbToken(miec, form, if (cue.past) "felt like" else "feel like"),
+                TokenPair("ochotę", "desire", caseKey = "acc", caseLabel = "accusative")
+            ),
+            en = if (cue.past) "felt like" else "feel like",
+            literal = "${if (cue.past) "had" else "have"} desire"
+        )
+    }
+
+    private fun complementForHelperVerb(verb: VerbEntry, index: Int): PhrasePart? {
+        val mainVerb = when (verb.lemma) {
+            "chcieć" -> verbByLemma(listOf("iść", "pić", "czytać", "jeść"), index)
+            "móc" -> verbByLemma(listOf("pomagać", "iść", "pić"), index)
+            "musieć" -> verbByLemma(listOf("iść", "pracować", "dzwonić"), index)
+            "lubić" -> verbByLemma(listOf("czytać", "tańczyć", "spać"), index)
+            else -> null
+        } ?: return null
+        val style = when (verb.lemma) {
+            "móc", "musieć" -> EnglishComplementStyle.BareInfinitive
+            "lubić" -> EnglishComplementStyle.Gerund
+            else -> EnglishComplementStyle.ToInfinitive
+        }
+        return complementForInfinitive(mainVerb, index, style)
+    }
+
+    private fun complementForSelectedInfinitive(
+        verb: VerbEntry,
+        helperLemma: String,
+        index: Int
+    ): PhrasePart? {
+        val style = when (helperLemma) {
+            "móc", "musieć" -> EnglishComplementStyle.BareInfinitive
+            "mieć_ochotę" -> EnglishComplementStyle.Gerund
+            else -> EnglishComplementStyle.ToInfinitive
+        }
+        return complementForInfinitive(verb, index, style)
+    }
+
+    private fun complementForInfinitive(
+        verb: VerbEntry,
+        index: Int,
+        englishStyle: EnglishComplementStyle
+    ): PhrasePart? {
+        val words = mutableListOf<TokenPair>()
+        words += TokenPair(
+            pl = verb.lemma,
+            en = englishComplement(verb, englishStyle),
+            variableKind = "infinitive"
+        )
+        val objectPart = when (verb.lemma) {
+            "iść", "jechać", "wracać" -> destinationPart(index)
+            "pić" -> objectPartFor(
+                nounLemmas = listOf("kawa", "herbata", "woda"),
+                index = index
+            )
+            "jeść" -> objectPartFor(
+                nounLemmas = listOf("jedzenie", "chleb"),
+                index = index
+            )
+            "czytać" -> objectPartFor(
+                nounLemmas = listOf("książka"),
+                index = index
+            )
+            "kupować" -> objectPartFor(
+                nounLemmas = listOf("kawa", "chleb", "książka"),
+                index = index
+            )
+            else -> null
+        }
+        if (includeNouns && objectPart == null) return null
+        objectPart?.let { words += it.words }
+        val base = englishComplement(verb, englishStyle)
+        return PhrasePart(
+            words = words,
+            en = listOfNotNull(base, objectPart?.en).joinToString(" "),
+            literal = listOfNotNull(base, objectPart?.literal).joinToString(" ")
+        )
+    }
+
+    private fun destinationPart(index: Int): PhrasePart? {
+        val noun = nounByLemma(listOf("sklep", "szkoła", "praca", "dom", "miasto"), index) ?: return null
+        val adjective = phraseAdjectiveForNoun(noun, index)
+        if (includeAdjectives && adjective == null) return null
+        val words = mutableListOf<TokenPair>()
+        words += TokenPair("do", "to")
+        adjective?.let {
+            words += TokenPair(
+                pl = adjectiveGenitiveLikeForm(it, noun),
+                en = it.en.primaryGloss(),
+                gender = noun.gender,
+                caseKey = "gen",
+                caseLabel = "genitive"
+            )
+        }
+        words += TokenPair(
+            pl = noun.gen["sg"].orEmpty().ifBlank { noun.lemma },
+            en = noun.en.primaryGloss(),
+            gender = noun.gender,
+            caseKey = "gen",
+            caseLabel = "genitive",
+            numberLabel = "singular"
+        )
+        val objectEn = englishObjectPhrase(adjective, null, noun, false)
+            ?: noun.en.primaryGloss()
+        return PhrasePart(
+            words = words,
+            en = "to $objectEn",
+            literal = words.joinToString(" ") { it.en }
+        )
+    }
+
+    private fun objectPartFor(nounLemmas: List<String>, index: Int): PhrasePart? {
+        val noun = nounByLemma(nounLemmas, index) ?: return null
+        val adjective = phraseAdjectiveForNoun(noun, index)
+        if (includeAdjectives && adjective == null) return null
+        val words = mutableListOf<TokenPair>()
+        adjective?.let {
+            words += TokenPair(
+                pl = adjectivePhraseForm(it, noun),
+                en = it.en.primaryGloss(),
+                gender = noun.gender,
+                caseKey = "acc",
+                caseLabel = "accusative"
+            )
+        }
+        words += TokenPair(
+            pl = noun.acc["sg"].orEmpty().ifBlank { noun.lemma },
+            en = noun.en.primaryGloss(),
+            gender = noun.gender,
+            caseKey = "acc",
+            caseLabel = "accusative",
+            numberLabel = "singular"
+        )
+        val objectEn = englishObjectPhrase(adjective, null, noun, false)
+            ?: noun.en.primaryGloss()
+        return PhrasePart(
+            words = words,
+            en = objectEn,
+            literal = words.joinToString(" ") { it.en }
+        )
+    }
+
+    private fun phraseNounForVerb(verb: VerbEntry, index: Int): NounEntry? {
+        val lemmas = when (verb.lemma) {
+            "mieć", "widzieć", "lubić", "kochać" -> listOf("dom", "kawa", "książka", "telefon", "samochód")
+            "pić" -> listOf("kawa", "herbata", "woda")
+            "jeść" -> listOf("chleb", "jedzenie")
+            "czytać" -> listOf("książka")
+            "kupować" -> listOf("kawa", "chleb", "książka", "telefon")
+            else -> emptyList()
+        }
+        return nounByLemma(lemmas, index)
+    }
+
+    private fun phraseAdjectiveForNoun(noun: NounEntry, index: Int): AdjectiveEntry? {
+        if (!includeAdjectives) return null
+        val lemmas = when (noun.lemma) {
+            "kawa", "herbata" -> listOf("dobry", "ciepły", "gorący", "mały")
+            "woda" -> listOf("zimny", "czysty")
+            "książka" -> listOf("dobry", "nowy", "ciekawy", "krótki")
+            "sklep", "telefon", "samochód" -> listOf("nowy", "mały", "dobry")
+            "dom", "mieszkanie" -> listOf("nowy", "duży", "mały")
+            "chleb", "jedzenie" -> listOf("dobry", "świeży", "ciepły")
+            else -> listOf("dobry", "nowy", "mały")
+        }
+        return adjectiveByLemma(lemmas, index)
+    }
+
+    private fun phraseAdverbFor(
+        verb: VerbEntry,
+        helperLemma: String?,
+        index: Int
+    ): AdverbEntry? {
+        if (!includeAdverbs) return null
+        val lemmas = when (helperLemma ?: verb.lemma) {
+            "chcieć", "lubić" -> listOf("bardzo", "teraz", "dzisiaj", "jutro")
+            "musieć" -> listOf("teraz", "dzisiaj", "szybko")
+            "móc" -> listOf("teraz", "dzisiaj", "szybko")
+            "mieć_ochotę" -> listOf("dzisiaj", "teraz")
+            "pić", "jeść", "czytać", "kupować" -> listOf("teraz", "dzisiaj")
+            "spać" -> listOf("dobrze", "teraz")
+            "czuć" -> listOf("dobrze", "trochę")
+            else -> listOf("dzisiaj", "teraz", "szybko")
+        }
+        return adverbByLemma(lemmas, index)
+    }
+
+    private fun verbByLemma(lemmas: List<String>, index: Int): VerbEntry? {
+        val all = app.lessonRepo.lesson2().verbs
+        val candidates = lemmas.mapNotNull { lemma -> all.firstOrNull { it.lemma == lemma } }
+        return candidates.getOrNull(index % candidates.size.coerceAtLeast(1))
+    }
+
+    private fun nounByLemma(lemmas: List<String>, index: Int): NounEntry? {
+        val selected = selectedNouns()
+        val candidates = lemmas.mapNotNull { lemma -> selected.firstOrNull { it.lemma == lemma } }
+        return candidates.getOrNull(index % candidates.size.coerceAtLeast(1))
+    }
+
+    private fun adjectiveByLemma(lemmas: List<String>, index: Int): AdjectiveEntry? {
+        val selected = selectedAdjectives()
+        val candidates = lemmas.mapNotNull { lemma -> selected.firstOrNull { it.lemma == lemma } }
+        return candidates.getOrNull(index % candidates.size.coerceAtLeast(1))
+    }
+
+    private fun adverbByLemma(lemmas: List<String>, index: Int): AdverbEntry? {
+        val selected = selectedAdverbs()
+        val candidates = lemmas.mapNotNull { lemma -> selected.firstOrNull { it.lemma == lemma } }
+        return candidates.getOrNull(index % candidates.size.coerceAtLeast(1))
+    }
+
+    private fun verbToken(verb: VerbEntry, form: String, en: String): TokenPair =
+        TokenPair(
+            pl = form,
+            en = en,
+            variableStart = variableStartForPolishForm(verb.lemma, form),
+            variableEnd = variableEndForPolishForm(verb.lemma, form),
+            variableKind = "conjugation"
+        )
+
+    private fun adjectivePhraseForm(adjective: AdjectiveEntry, noun: NounEntry?): String {
+        if (noun?.gender == "m" && noun.acc["sg"] == noun.nom["sg"]) {
+            return adjective.nom["m"].orEmpty()
+                .ifBlank { adjective.acc["m"].orEmpty() }
+                .ifBlank { adjective.lemma }
+        }
+        val key = noun?.gender?.takeIf { it in setOf("m", "f", "n") } ?: "m"
+        return adjective.acc[key].orEmpty()
+            .ifBlank { adjective.nom[key].orEmpty() }
+            .ifBlank { adjective.lemma }
+    }
+
+    private fun englishPhrase(
+        subject: String,
+        verb: String,
+        adjective: AdjectiveEntry?,
+        adverb: AdverbEntry?,
+        noun: NounEntry?,
+        adverbModifiesAdjective: Boolean
+    ): String {
+        val beforeVerb = adverb?.takeUnless { adverbModifiesAdjective }?.en?.primaryGloss()
+        val objectPhrase = englishObjectPhrase(adjective, adverb, noun, adverbModifiesAdjective)
+        return listOfNotNull(subject, beforeVerb, verb, objectPhrase)
+            .joinToString(" ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun englishObjectPhrase(
+        adjective: AdjectiveEntry?,
+        adverb: AdverbEntry?,
+        noun: NounEntry?,
+        adverbModifiesAdjective: Boolean
+    ): String? {
+        val adjectiveGloss = adjective?.en?.primaryGloss()
+        val adjectiveModifier = adverb?.takeIf { adverbModifiesAdjective }?.en?.primaryGloss()
+        val nounGloss = noun?.en?.primaryGloss()
+        val descriptor = listOfNotNull(adjectiveModifier, adjectiveGloss)
+            .joinToString(" ")
+            .ifBlank { null }
+        return when {
+            nounGloss != null && descriptor != null ->
+                listOf(articleFor(nounGloss), descriptor, nounGloss)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" ")
+            nounGloss != null ->
+                listOf(articleFor(nounGloss), nounGloss)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" ")
+            descriptor != null -> "something $descriptor"
+            else -> null
+        }
+    }
+
+    private fun articleFor(noun: String): String {
+        val base = noun.primaryGloss()
+        if (base in setOf("coffee", "tea", "water", "bread", "food", "work", "love")) return ""
+        return if (base.firstOrNull()?.lowercaseChar() in setOf('a', 'e', 'i', 'o', 'u')) "an" else "a"
+    }
+
+    private fun selectedAdjectives(): List<AdjectiveEntry> {
+        val adjectives = app.lessonRepo.lesson3().adjectives
+        val selected = selectedCategoryLemmas(
+            PracticePrefsStore.CATEGORY_ADJECTIVES,
+            adjectives.map { it.lemma }
+        )
+        return adjectives.filter { it.lemma in selected }
+    }
+
+    private fun selectedAdverbs(): List<AdverbEntry> {
+        val adverbs = app.lessonRepo.lesson4().adverbs
+        val selected = selectedCategoryLemmas(
+            PracticePrefsStore.CATEGORY_ADVERBS,
+            adverbs.map { it.lemma }
+        )
+        return adverbs.filter { it.lemma in selected }
+    }
+
+    private fun selectedNouns(): List<NounEntry> {
+        val nouns = app.lessonRepo.lesson6().nouns
+        val selected = selectedCategoryLemmas(
+            PracticePrefsStore.CATEGORY_NOUNS,
+            nouns.map { it.lemma }
+        )
+        return nouns.filter { it.lemma in selected }
+    }
+
+    private fun sentenceMatchesPhraseRequirements(
+        sentence: SentenceExample,
+        allowedForms: Set<String>
+    ): Boolean {
+        if (!sentenceContainsAllowedForm(sentence, allowedForms)) return false
+        val tokens = sentence.pl.lessonPolishTokens().toSet()
+        if (tokens.size < minimumPhraseWordCount()) return false
+        if (includePronouns && tokens.none { it in selectedPronounTokens() }) return false
+        if (includeHelperVerb &&
+            helperStructurePossibleFor(sentence, allowedForms) &&
+            !sentenceHasHelperStructure(sentence, allowedForms)
+        ) return false
+        if (includeAdjectives && tokens.none { it in selectedAdjectiveTokens() }) return false
+        if (includeAdverbs && tokens.none { it in selectedAdverbTokens() }) return false
+        if (includeNouns && tokens.none { it in selectedNounTokens() }) return false
+        return true
+    }
+
+    private fun selectedPronounTokens(): Set<String> =
+        (includedPresentKeys + includedPastKeys)
+            .flatMap { audioPronoun(it).lessonPolishTokens() }
+            .toSet()
+
+    private fun selectedAdjectiveTokens(): Set<String> {
+        val adjectives = app.lessonRepo.lesson3().adjectives
+        val selected = selectedCategoryLemmas(
+            PracticePrefsStore.CATEGORY_ADJECTIVES,
+            adjectives.map { it.lemma }
+        )
+        return adjectives.filter { it.lemma in selected }
+            .flatMap { it.polishAdjectiveTokens() }
+            .toSet()
+    }
+
+    private fun selectedAdverbTokens(): Set<String> {
+        val adverbs = app.lessonRepo.lesson4().adverbs
+        val selected = selectedCategoryLemmas(
+            PracticePrefsStore.CATEGORY_ADVERBS,
+            adverbs.map { it.lemma }
+        )
+        return adverbs.filter { it.lemma in selected }
+            .flatMap { it.polishAdverbTokens() }
+            .toSet()
+    }
+
+    private fun selectedNounTokens(): Set<String> {
+        val nouns = app.lessonRepo.lesson6().nouns
+        val selected = selectedCategoryLemmas(
+            PracticePrefsStore.CATEGORY_NOUNS,
+            nouns.map { it.lemma }
+        )
+        return nouns.filter { it.lemma in selected }
+            .flatMap { it.polishNounTokens() }
+            .toSet()
     }
 
     private fun selectedCategoryLemmas(category: String, allLemmas: List<String>): Set<String> {
@@ -549,8 +1242,76 @@ internal class VerbsTabState(
         verb.past_forms.orEmpty().filterKeys { it in includedPastKeys }.values.forEach {
             if (it.isNotBlank()) forms += it.lowercase()
         }
+        if (includeHelperVerb) forms += verb.lemma.lowercase()
         return forms
     }
+
+    private fun sentencePassesCommonUsageGate(
+        verb: VerbEntry,
+        sentence: SentenceExample
+    ): Boolean {
+        if (sentence.qualityKey() in app.practicePrefs.rejectedVerbPhraseKeys()) return false
+        val en = sentence.en.normalizedQualityText()
+        val plTokens = sentence.pl.lessonPolishTokens().toSet()
+        if (includeHelperVerb &&
+            verb.lemma != "być" &&
+            !sentenceHasHelperStructure(sentence, allowedFormsFor(verb))
+        ) return false
+        val awkwardEnglish = listOf(
+            Regex("\\b(well|quickly|fast|gladly|willingly) wanted\\b"),
+            Regex("\\b(well|quickly|fast|gladly|willingly) want\\b"),
+            Regex("\\bwanted a (good|bad|big|small|new) (cat|dog)\\b"),
+            Regex("\\bwant a (good|bad|big|small|new) (cat|dog)\\b"),
+            Regex("\\bcan to \\w+\\b"),
+            Regex("\\bmust to \\w+\\b"),
+            Regex("\\bfeel like to \\w+\\b")
+        )
+        if (awkwardEnglish.any { it.containsMatchIn(en) }) return false
+        if (verb.lemma == "chcieć" &&
+            plTokens.any { it in setOf("dobrze", "szybko", "chętnie") }
+        ) return false
+        if ("chciałem" in plTokens || "chcę" in plTokens) {
+            if (plTokens.any { it in setOf("kota", "psa") } &&
+                plTokens.any { it in setOf("dobrego", "złego", "dużego", "małego", "nowego") }
+            ) return false
+        }
+        return true
+    }
+
+    private fun helperStructurePossibleFor(
+        sentence: SentenceExample,
+        allowedForms: Set<String>
+    ): Boolean {
+        if (!includeHelperVerb) return false
+        val tokens = sentence.pl.lessonPolishTokens().toSet()
+        return tokens.any { it in allowedForms } || tokens.any { it in helperVerbPolishForms() }
+    }
+
+    private fun sentenceHasHelperStructure(
+        sentence: SentenceExample,
+        allowedForms: Set<String>
+    ): Boolean {
+        val tokens = sentence.pl.lessonPolishTokens().toSet()
+        val helperForms = helperVerbPolishForms()
+        val knownInfinitives = app.lessonRepo.lesson2().verbs
+            .map { it.lemma.lowercase() }
+            .toSet()
+        val hasSelected = tokens.any { it in allowedForms }
+        val hasHelper = tokens.any { it in helperForms } ||
+            ("ochotę" in tokens && tokens.any { it in setOf("mam", "masz", "ma", "mamy", "macie", "mają", "miałem", "miałeś", "miał", "mieliśmy", "mieliście", "mieli") })
+        val hasInfinitive = tokens.any { it in knownInfinitives }
+        return hasSelected && hasHelper && hasInfinitive
+    }
+
+    private fun helperVerbPolishForms(): Set<String> =
+        app.lessonRepo.lesson2().verbs
+            .filter { it.lemma in setOf("chcieć", "móc", "musieć", "lubić", "mieć") }
+            .flatMap { helper ->
+                helper.forms.values + helper.past_forms.orEmpty().values + helper.lemma
+            }
+            .filter { it.isNotBlank() }
+            .map { it.lowercase() }
+            .toSet() + "ochotę"
 
     private fun sentenceContainsAllowedForm(
         sentence: SentenceExample,
@@ -564,38 +1325,49 @@ internal class VerbsTabState(
         quiz: Boolean = false,
         includeWordTypeVariations: Boolean = false
     ) {
-        if (player.hasQueue) {
+        if (player.hasQueue || preparingPlayback) {
             stop()
             return
         }
         val targets = resolveTargets(allVerbs)
         if (targets.isEmpty()) return
         scope.launch {
-            val limit = playLimit()
-            if (limit <= 0) return@launch
-            // Build the queue up-front so rewind/restart can re-enter any item.
-            val built: List<SentenceExample> = targets.flatMap { vv ->
-                val all = if (includeWordTypeVariations) {
-                    wordTypeVariationSentencesFor(vv, limit).ifEmpty { ensureSentencesFor(vv) }
-                } else {
-                    ensureSentencesFor(vv)
+            preparingPlayback = true
+            try {
+                val limit = playLimit()
+                if (limit <= 0) return@launch
+                // Build the queue up-front so rewind/restart can re-enter any item.
+                val built: List<SentenceExample> = targets.flatMap { vv ->
+                    val all = if (includeWordTypeVariations) {
+                        wordTypeVariationSentencesFor(vv, limit)
+                    } else {
+                        ensureSentencesFor(vv)
+                    }
+                    val filtered = if (quiz) filterByTense(vv, all) else all
+                    if (includeWordTypeVariations) {
+                        filtered
+                    } else if (randomOrder || quiz) {
+                        filtered.shuffled().take(limit)
+                    } else {
+                        filtered.take(limit)
+                    }
                 }
-                val filtered = if (quiz) filterByTense(vv, all) else all
-                if (includeWordTypeVariations) {
-                    filtered
-                } else if (randomOrder || quiz) {
-                    filtered.shuffled().take(limit)
-                } else {
-                    filtered.take(limit)
+                val items = when {
+                    randomOrder -> built.shuffled()
+                    quiz -> built.sortedBy { tokenCountOf(it.pl) }
+                    else -> built
                 }
+                if (items.isEmpty()) {
+                    error = "No phrases match the selected word types yet."
+                    return@launch
+                } else {
+                    error = null
+                }
+                startSentenceQueue(items, quiz)
+            } finally {
+                preparingPlayback = false
+                generateProgress = null
             }
-            val items = when {
-                randomOrder -> built.shuffled()
-                quiz -> built.sortedBy { tokenCountOf(it.pl) }
-                else -> built
-            }
-            if (items.isEmpty()) return@launch
-            startSentenceQueue(items, quiz)
         }
     }
 
@@ -633,8 +1405,6 @@ internal class VerbsTabState(
                 say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 setLang("pl-slow", s, position)
                 say(s.pl, app.targetAudioVoice().locale, slowPlVoice)
-                setLang("en", s, position)
-                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 setLang("pl", s, position)
                 say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             } else {
@@ -762,8 +1532,6 @@ internal class VerbsTabState(
                     if (slowFirst) {
                         publishConjugation(cue, i, total, mode, "pl-slow", plHidden = false)
                         say(cue.combined, app.targetAudioVoice().locale, slowPlVoice)
-                        publishConjugation(cue, i, total, mode, "en", plHidden = false)
-                        say(cue.englishGloss, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                     }
                     publishConjugation(cue, i, total, mode, "pl", plHidden = false)
                     say(cue.combined, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
@@ -827,10 +1595,15 @@ internal fun VerbsTab(
 ) {
     val lesson = remember { app.lessonRepo.lesson2() }
     val state = rememberVerbsTabState(app)
+    val activeNowVoicing by NowVoicingBus.state.collectAsState()
 
     // Initialise/refresh the selection when the lesson list changes.
     if (state.selected == null || lesson.verbs.none { it.lemma == state.selected?.lemma }) {
         state.selectVerb(lesson.verbs.firstOrNull())
+    }
+
+    LaunchedEffect(activeNowVoicing?.pl, activeNowVoicing?.words, lesson.verbs) {
+        nowVoicingVerb(activeNowVoicing, lesson.verbs)?.let { state.selectVerb(it) }
     }
 
     val grouped = remember(lesson) {
@@ -900,6 +1673,18 @@ private fun TopBar(
                 ) {
                     if (showControls) {
                         PhraseCategoryToggle(
+                            label = "Pronoun",
+                            checked = state.includePronouns,
+                            enabled = !state.playing,
+                            onCheckedChange = { state.updateIncludePronouns(it) }
+                        )
+                        PhraseCategoryToggle(
+                            label = "Hlp verb",
+                            checked = state.includeHelperVerb,
+                            enabled = !state.playing,
+                            onCheckedChange = { state.updateIncludeHelperVerb(it) }
+                        )
+                        PhraseCategoryToggle(
                             label = "Adj",
                             checked = state.includeAdjectives,
                             enabled = !state.playing,
@@ -931,20 +1716,21 @@ private fun TopBar(
                         enabled = !state.playing,
                         onCheckedChange = { state.updateSlowFirst(it) }
                     )
-                    Spacer(Modifier.width(8.dp))
-                    VerbPlayButton(
-                        playing = state.playing,
-                        count = state.targetPlayCount(allVerbs),
-                        onPlay = {
-                            if (state.wordTypeVariationsEnabled()) {
-                                state.playAll(allVerbs, includeWordTypeVariations = true)
-                            } else {
-                                state.playAllConjugations(allVerbs)
+                    if (state.preparingPlayback) {
+                        Spacer(Modifier.width(8.dp))
+                        LbButton.Ghost("Generating", onClick = {}, enabled = false)
+                    } else if (!state.playing) {
+                        Spacer(Modifier.width(8.dp))
+                        VerbPlayButton(
+                            count = state.targetPlayCount(allVerbs),
+                            onPlay = {
+                                if (state.wordTypeVariationsEnabled()) {
+                                    state.playAll(allVerbs, includeWordTypeVariations = true)
+                                } else {
+                                    state.playAllConjugations(allVerbs)
+                                }
                             }
-                        },
-                        onStop = { state.stop() }
-                    )
-                    if (!state.playing) {
+                        )
                         Spacer(Modifier.width(8.dp))
                         WordPlayLimitControl(
                             limitText = state.playLimitText,
@@ -960,6 +1746,14 @@ private fun TopBar(
                     "Generating · $it",
                     fontSize = 10.sp,
                     color = LbColors.Label,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 1.dp)
+                )
+            }
+            state.phraseQualityNotice?.let {
+                Text(
+                    it,
+                    fontSize = 10.sp,
+                    color = LbColors.TextMuted,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 1.dp)
                 )
             }
@@ -995,21 +1789,18 @@ private fun PhraseCategoryToggle(
 
 @Composable
 private fun VerbPlayButton(
-    playing: Boolean,
     count: Int,
     onPlay: () -> Unit,
-    onStop: () -> Unit,
     playLabel: String? = null
 ) {
-    val bg = if (playing) LbColors.Stop else LbColors.Audio
-    val label = if (playing) "Stop" else playLabel ?: "Play $count"
+    val label = playLabel ?: "Play $count"
     Surface(
-        color = bg,
+        color = LbColors.Audio,
         shape = RoundedCornerShape(10.dp),
         modifier = Modifier
             .height(30.dp)
             .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = if (playing) onStop else onPlay)
+            .clickable(onClick = onPlay)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 11.dp),
@@ -1017,8 +1808,8 @@ private fun VerbPlayButton(
             horizontalArrangement = Arrangement.Center
         ) {
             Icon(
-                imageVector = if (playing) Icons.Default.Stop else Icons.Default.PlayArrow,
-                contentDescription = if (playing) "Stop" else "Play $count",
+                imageVector = Icons.Default.PlayArrow,
+                contentDescription = "Play $count",
                 tint = Color.White,
                 modifier = Modifier.size(14.dp)
             )
@@ -1436,6 +2227,77 @@ private fun playPolish(app: LangbangApplication, scope: CoroutineScope, text: St
         app.playAudioAndAwait(text, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
     }
 }
+
+private fun String.primaryGloss(): String =
+    substringBefore("/")
+        .substringBefore("(")
+        .trim()
+        .ifBlank { trim() }
+
+private fun englishVerbBase(verb: VerbEntry): String =
+    verb.en
+        .replace("can / to be able", "be able")
+        .replace("must / have to", "have to")
+        .removePrefix("to ")
+        .substringBefore("/")
+        .substringBefore("(")
+        .trim()
+        .ifBlank { verb.en }
+
+private fun englishComplement(
+    verb: VerbEntry,
+    style: EnglishComplementStyle
+): String {
+    val base = englishVerbBase(verb)
+    return when (style) {
+        EnglishComplementStyle.ToInfinitive -> "to $base"
+        EnglishComplementStyle.BareInfinitive -> base
+        EnglishComplementStyle.Gerund -> englishGerund(verb)
+    }
+}
+
+private fun englishInfinitive(verb: VerbEntry): String =
+    englishComplement(verb, EnglishComplementStyle.ToInfinitive)
+
+private fun englishGerund(verb: VerbEntry): String {
+    val base = englishVerbBase(verb)
+    val irregular = mapOf(
+        "be" to "being",
+        "go" to "going",
+        "have" to "having",
+        "write" to "writing",
+        "take" to "taking",
+        "give" to "giving",
+        "come back" to "coming back",
+        "live" to "living",
+        "dance" to "dancing"
+    )
+    irregular[base]?.let { return it }
+    return when {
+        base.endsWith("ie") -> base.dropLast(2) + "ying"
+        base.endsWith("e") && base.length > 2 -> base.dropLast(1) + "ing"
+        else -> base + "ing"
+    }
+}
+
+private fun adjectiveGenitiveLikeForm(
+    adjective: AdjectiveEntry,
+    noun: NounEntry
+): String {
+    val key = noun.gender.takeIf { it in setOf("m", "f", "n") } ?: "m"
+    return adjective.acc[key].orEmpty()
+        .ifBlank { adjective.nom[key].orEmpty() }
+        .ifBlank { adjective.lemma }
+}
+
+private fun SentenceExample.qualityKey(): String =
+    "${pl.normalizedQualityText()}|${en.normalizedQualityText()}"
+
+private fun String.normalizedQualityText(): String =
+    lowercase()
+        .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+        .trim()
+        .replace(Regex("\\s+"), " ")
 
 /** Short English subject pronoun for NV panel gloss. */
 private fun englishSubjectFor(personKey: String): String = when (personKey) {

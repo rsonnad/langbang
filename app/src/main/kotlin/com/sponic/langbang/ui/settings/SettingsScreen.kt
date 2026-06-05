@@ -53,6 +53,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.sponic.langbang.BuildConfig
 import com.sponic.langbang.LangbangApplication
+import com.sponic.langbang.data.AccountPrefsState
 import com.sponic.langbang.data.PronounFilterStore
 import com.sponic.langbang.data.SlowStyle
 import com.sponic.langbang.domain.UsageSnapshot
@@ -79,13 +80,30 @@ fun SettingsScreen(app: LangbangApplication) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         VersionHeader()
-        CloudConfigCard(app = app)
+        SettingsGroupHeader(
+            title = "Account",
+            description = "Sign-in state and custom phrase persistence."
+        )
+        AccountSyncCard(app = app)
+        SettingsGroupHeader(
+            title = "Practice",
+            description = "Defaults used by drills, quizzes, and Now Voicing playback."
+        )
         PracticePronounsCard(app = app)
         PracticePlaybackCard(app = app)
         NounColorLegendCard()
+        SettingsGroupHeader(
+            title = "Content & Audio",
+            description = "Cloud content, generated sentence packs, and cached speech."
+        )
+        CloudConfigCard(app = app)
         RegenerateSentencesCard(app = app, scope = scope, context = context)
         AudioDownloadCard(app = app, scope = scope, context = context)
         SlowAudioStyleCard(app = app)
+        SettingsGroupHeader(
+            title = "System",
+            description = "Usage estimates and tablet backup setup."
+        )
         AzureUsageCard(usage = usage)
         BackupCard(
             host = backup.config.host,
@@ -111,6 +129,112 @@ fun SettingsScreen(app: LangbangApplication) {
             },
             onCopyKey = { copyToClipboard(context, "SSH public key", backup.publicKeyOpenSsh) }
         )
+    }
+}
+
+@Composable
+private fun AccountSyncCard(app: LangbangApplication) {
+    val account by app.accountPrefs.state.collectAsState()
+    var email by remember(account.email) { mutableStateOf(account.email.orEmpty()) }
+    val cleanedEmail = email.trim()
+    val emailLooksValid = cleanedEmail.contains("@") && cleanedEmail.contains(".")
+    val statusText = when {
+        account.provider == AccountPrefsState.PROVIDER_GOOGLE ->
+            "Google sign-in selected"
+        account.email != null ->
+            "Signed in as ${account.email}"
+        account.skippedSignIn ->
+            "Skipped sign-in"
+        else ->
+            "Not signed in"
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(
+            1.dp,
+            if (account.customItemGateSatisfied) LbColors.Success.copy(alpha = 0.35f)
+            else LbColors.Line
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    SectionHeader("Account & custom phrases")
+                    Text(
+                        statusText,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (account.customItemGateSatisfied) LbColors.Success else LbColors.TextSecondary
+                    )
+                }
+                if (account.customItemGateSatisfied) {
+                    OutlinedButton(onClick = { app.accountPrefs.signOut() }) {
+                        Text("Reset")
+                    }
+                }
+            }
+            Text(
+                if (account.skippedSignIn) {
+                    "Custom phrases stay local on this tablet. They may be lost if app data is cleared or the app is reinstalled."
+                } else {
+                    "Use this before adding personal phrase groups or custom phrases. Email is available now; Google can be selected here for the account flow."
+                },
+                fontSize = 12.sp,
+                color = if (account.skippedSignIn) LbColors.Danger else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+            )
+            OutlinedTextField(
+                value = email,
+                onValueChange = { email = it },
+                label = { Text("Email") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    enabled = emailLooksValid,
+                    onClick = { app.accountPrefs.signInWithEmail(cleanedEmail) }
+                ) {
+                    Text("Continue with email")
+                }
+                OutlinedButton(onClick = { app.accountPrefs.signInWithGooglePlaceholder() }) {
+                    Text("Google")
+                }
+                OutlinedButton(onClick = { app.accountPrefs.skipSignIn() }) {
+                    Text("Skip")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsGroupHeader(title: String, description: String) {
+    Surface(
+        color = LbColors.SurfaceTint,
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, LbColors.Line),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                title,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = LbColors.Primary
+            )
+            Text(
+                description,
+                fontSize = 11.sp,
+                color = LbColors.TextMuted
+            )
+        }
     }
 }
 

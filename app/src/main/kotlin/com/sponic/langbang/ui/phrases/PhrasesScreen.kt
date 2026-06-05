@@ -110,7 +110,9 @@ fun PhrasesScreen(
     var selectedId by remember { mutableStateOf<String?>(null) }
     val selected = data.groups.firstOrNull { it.id == selectedId } ?: data.groups.firstOrNull()
     val starred by app.starredPhrases.starred.collectAsState()
+    val account by app.accountPrefs.state.collectAsState()
     val pendingAudio = remember { mutableStateListOf<SentenceExample>() }
+    var showAccountGateForGroup by remember { mutableStateOf(false) }
     var showAddGroup by remember { mutableStateOf(false) }
     var generating by remember { mutableStateOf(false) }
     var generationStatus by remember { mutableStateOf<String?>(null) }
@@ -125,6 +127,14 @@ fun PhrasesScreen(
     fun reload(selectGroupId: String? = null) {
         refreshKey += 1
         if (selectGroupId != null) selectedId = selectGroupId
+    }
+
+    fun requestAddGroup() {
+        if (account.customItemGateSatisfied) {
+            showAddGroup = true
+        } else {
+            showAccountGateForGroup = true
+        }
     }
 
     fun generatePendingAudio() {
@@ -161,6 +171,27 @@ fun PhrasesScreen(
         }
     }
 
+    if (showAccountGateForGroup) {
+        AccountGateDialog(
+            onDismiss = { showAccountGateForGroup = false },
+            onEmail = { email ->
+                app.accountPrefs.signInWithEmail(email)
+                showAccountGateForGroup = false
+                showAddGroup = true
+            },
+            onGoogle = {
+                app.accountPrefs.signInWithGooglePlaceholder()
+                showAccountGateForGroup = false
+                showAddGroup = true
+            },
+            onSkip = {
+                app.accountPrefs.skipSignIn()
+                showAccountGateForGroup = false
+                showAddGroup = true
+            }
+        )
+    }
+
     if (showAddGroup) {
         AddPhraseGroupDialog(
             onDismiss = { showAddGroup = false },
@@ -187,7 +218,7 @@ fun PhrasesScreen(
             generating = generating,
             generationStatus = generationStatus,
             generationError = generationError,
-            onAddGroup = { showAddGroup = true },
+            onAddGroup = ::requestAddGroup,
             onGeneratePending = ::generatePendingAudio,
             onSelect = { selectedId = it.id },
             modifier = Modifier
@@ -360,6 +391,8 @@ private fun PhraseDetail(
     // not just the current group. Sticky within this composition.
     var starredOnly by remember { mutableStateOf(false) }
     var slowFirst by remember { mutableStateOf(app.practicePrefs.slowFirst()) }
+    val account by app.accountPrefs.state.collectAsState()
+    var showAccountGateForPhrase by remember(group.id) { mutableStateOf(false) }
     var showAddPhrase by remember(group.id) { mutableStateOf(false) }
     var addPhraseBusy by remember(group.id) { mutableStateOf(false) }
     var addPhraseError by remember(group.id) { mutableStateOf<String?>(null) }
@@ -367,9 +400,37 @@ private fun PhraseDetail(
         slowFirst = enabled
         app.practicePrefs.setSlowFirst(enabled)
     }
+    fun requestAddPhrase() {
+        if (account.customItemGateSatisfied) {
+            showAddPhrase = true
+        } else {
+            showAccountGateForPhrase = true
+        }
+    }
     // Stop playback when this group's detail leaves composition.
     DisposableEffect(group) {
         onDispose { player.stop() }
+    }
+
+    if (showAccountGateForPhrase) {
+        AccountGateDialog(
+            onDismiss = { showAccountGateForPhrase = false },
+            onEmail = { email ->
+                app.accountPrefs.signInWithEmail(email)
+                showAccountGateForPhrase = false
+                showAddPhrase = true
+            },
+            onGoogle = {
+                app.accountPrefs.signInWithGooglePlaceholder()
+                showAccountGateForPhrase = false
+                showAddPhrase = true
+            },
+            onSkip = {
+                app.accountPrefs.skipSignIn()
+                showAccountGateForPhrase = false
+                showAddPhrase = true
+            }
+        )
     }
 
     if (showAddPhrase) {
@@ -602,7 +663,7 @@ private fun PhraseDetail(
                     icon = Icons.Default.Add,
                     contentDescription = "Add phrase",
                     enabled = !playing,
-                    onClick = { showAddPhrase = true }
+                    onClick = ::requestAddPhrase
                 )
             }
         }
@@ -632,6 +693,50 @@ private fun PhraseDetail(
             }
         }
     }
+}
+
+@Composable
+private fun AccountGateDialog(
+    onDismiss: () -> Unit,
+    onEmail: (String) -> Unit,
+    onGoogle: () -> Unit,
+    onSkip: () -> Unit
+) {
+    var email by remember { mutableStateOf("") }
+    val cleanedEmail = email.trim()
+    val emailLooksValid = cleanedEmail.contains("@") && cleanedEmail.contains(".")
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Save custom phrases") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Sign in before creating personal content so custom phrases can be tied to your account. " +
+                        "If you skip, they stay only on this tablet and may be lost if app data is cleared or the app is reinstalled.",
+                    fontSize = 13.sp,
+                    color = LbColors.TextSecondary
+                )
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Email") },
+                    singleLine = true
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = emailLooksValid, onClick = { onEmail(cleanedEmail) }) {
+                Text("Continue with email")
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onGoogle) { Text("Google") }
+                TextButton(onClick = onSkip) { Text("Skip") }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        }
+    )
 }
 
 @Composable

@@ -104,7 +104,7 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 private enum class Section(val labelKey: String, val fallbackLabel: String) {
-    Pronunciation("tabs.pronunciation", "Pron"),
+    Pronunciation("tabs.pronunciation", "Pronu"),
     Verbs("tabs.verbs", "Verbs"),
     Adjectives("tabs.adjectives", "Adj"),
     Adverbs("tabs.adverbs", "Adv"),

@@ -59,7 +59,7 @@ INSERT OR REPLACE INTO app_instances (
 INSERT OR REPLACE INTO ui_labels (locale, label_key, label_value) VALUES
   ('en-US', 'app.title', 'LangBangML'),
   ('en-US', 'app.version_prefix', 'v'),
-  ('en-US', 'tabs.pronunciation', 'Pron'),
+  ('en-US', 'tabs.pronunciation', 'Pronu'),
   ('en-US', 'tabs.verbs', 'Verbs'),
   ('en-US', 'tabs.adjectives', 'Adj'),
   ('en-US', 'tabs.adverbs', 'Adv'),
