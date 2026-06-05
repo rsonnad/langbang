@@ -25,7 +25,7 @@ object LbColors {
     val Stop = Color(0xFFE0533A)
     val Star = Color(0xFFF2B13C)
     val Chrome = Color(0xFF102230)
-    val Bar = Chrome
+    val Bar = Color(0xFF4A0B12)
     val OnDark = Color(0xFFEAF0F3)
     val OnDark2 = Color(0xFF9FB3BF)
     val DarkScope = Color(0xFF4F86F7)

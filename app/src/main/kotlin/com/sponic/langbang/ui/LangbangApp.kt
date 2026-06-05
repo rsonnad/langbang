@@ -440,7 +440,7 @@ private fun AppHeader(
             Row(
                 modifier = Modifier.fillMaxWidth()
                     .border(0.dp, Color.Transparent)
-                    .padding(start = 10.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+                    .padding(start = 10.dp, end = 12.dp, top = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
@@ -490,9 +490,14 @@ private fun AppHeader(
                     modifier = Modifier
                         .weight(1f)
                         .horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Bottom
                 ) {
-                    TabStrip(section = section, labels = labels, onSelect = onSelect)
+                    TabStrip(
+                        section = section,
+                        labels = labels,
+                        onSelect = onSelect,
+                        modifier = Modifier.height(50.dp)
+                    )
                 }
                 IconButton(
                     onClick = onToggleSettings,
@@ -614,28 +619,30 @@ private fun RandomPlayPill(
 }
 
 @Composable
-private fun TabStrip(section: Section, labels: Map<String, String>, onSelect: (Section) -> Unit) {
-    Surface(
-        color = LbColors.Chrome.copy(alpha = 0.78f),
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, LbColors.OnDark2.copy(alpha = 0.28f))
+private fun TabStrip(
+    section: Section,
+    labels: Map<String, String>,
+    onSelect: (Section) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.Bottom
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TabSections.forEachIndexed { index, tab ->
-                if (index > 0) {
-                    Box(
-                        modifier = Modifier
-                            .height(22.dp)
-                            .width(1.dp)
-                            .background(LbColors.OnDark2.copy(alpha = 0.24f))
-                    )
-                }
-                TabPill(
-                    label = label(labels, tab.labelKey, tab.fallbackLabel),
-                    selected = section == tab,
-                    onClick = { onSelect(tab) }
+        TabSections.forEachIndexed { index, tab ->
+            if (index > 0) {
+                Box(
+                    modifier = Modifier
+                        .height(28.dp)
+                        .width(1.dp)
+                        .background(LbColors.OnDark2.copy(alpha = 0.2f))
                 )
             }
+            TabPill(
+                label = label(labels, tab.labelKey, tab.fallbackLabel),
+                selected = section == tab,
+                onClick = { onSelect(tab) }
+            )
         }
     }
 }
@@ -644,26 +651,37 @@ private fun TabStrip(section: Section, labels: Map<String, String>, onSelect: (S
 private fun TabPill(label: String, selected: Boolean, onClick: () -> Unit) {
     Surface(
         color = if (selected) Color.White else Color.Transparent,
-        shape = RoundedCornerShape(6.dp),
+        shape = RoundedCornerShape(
+            topStart = 7.dp,
+            topEnd = 7.dp,
+            bottomStart = 0.dp,
+            bottomEnd = 0.dp
+        ),
         border = BorderStroke(
             width = 1.dp,
-            color = if (selected) LbColors.Primary.copy(alpha = 0.7f) else Color.Transparent
+            color = if (selected) LbColors.Primary.copy(alpha = 0.65f) else Color.Transparent
         ),
-        modifier = Modifier.clickable(onClick = onClick)
+        modifier = Modifier
+            .height(50.dp)
+            .clickable(onClick = onClick)
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            modifier = Modifier.fillMaxHeight(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Bottom
+        ) {
             Text(
                 label,
                 color = if (selected) LbColors.Primary else LbColors.OnDark,
                 fontSize = 11.sp,
                 fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
                 maxLines = 1,
-                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp)
             )
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(2.dp)
+                    .height(3.dp)
                     .background(if (selected) LbColors.Primary else Color.Transparent)
             )
         }

@@ -166,12 +166,7 @@ fun MultipleChoiceQuiz(
             Text("${index + 1} / ${ordered.size}",
                 fontSize = 12.sp, color = LbColors.Label)
             Spacer(Modifier.width(12.dp))
-            OutlinedButton(
-                onClick = onExit,
-                contentPadding = PaddingValues(horizontal = 9.dp, vertical = 2.dp)
-            ) {
-                Text("Exit", fontSize = 11.sp)
-            }
+            EndQuizButton(onClick = onExit)
             Spacer(Modifier.width(8.dp))
             OutlinedButton(
                 onClick = {
@@ -356,6 +351,17 @@ private fun containsPolishToken(sentence: String, word: String): Boolean {
 }
 
 @Composable
+private fun EndQuizButton(onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        colors = ButtonDefaults.buttonColors(containerColor = LbColors.Stop),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+    ) {
+        Text("End quiz", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+    }
+}
+
+@Composable
 private fun EmptyQuiz(title: String, onExit: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -369,7 +375,7 @@ private fun EmptyQuiz(title: String, onExit: () -> Unit) {
                 "banner finishes syncing.",
             fontSize = 13.sp, color = LbColors.TextSecondary
         )
-        Button(onClick = onExit) { Text("Back") }
+        Button(onClick = onExit) { Text("Back to quizzes") }
     }
 }
 
