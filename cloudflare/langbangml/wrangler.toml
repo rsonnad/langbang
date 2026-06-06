@@ -12,6 +12,8 @@ AZURE_SPEECH_REGION = "eastus"
 ANALYTICS_ADMIN_EMAILS = "rahulioson@gmail.com"
 PUBLIC_API_BASE = "https://langbangml-api.langbangml.workers.dev"
 GOOGLE_WEB_CLIENT_ID = "385515827732-9r056blngf9vpv4r2ersiiv8lte5trvb.apps.googleusercontent.com"
+SOURCE_CODE_URL = "https://github.com/rsonnad/langbang/tree/codex/langbangml"
+AI_PHRASE_QUOTA_EMAIL = "rahulioson@gmail.com"
 
 [[d1_databases]]
 binding = "DB"

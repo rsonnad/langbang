@@ -1,6 +1,7 @@
 package com.sponic.langbang.cloud
 
 import com.sponic.langbang.data.model.PhraseGroup
+import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.data.model.TokenPair
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -152,6 +153,26 @@ data class CloudAuthSession(
 )
 
 @Serializable
+data class CloudAgentTokenRequest(
+    val instanceId: String,
+    val label: String = "Claude/Codex",
+    val rotate: Boolean = false
+)
+
+@Serializable
+data class CloudAgentTokenResponse(
+    val ok: Boolean = false,
+    val token: String = "",
+    val tokenPrefix: String = "",
+    val label: String = "",
+    val defaultInstanceId: String = "",
+    val dailyLimit: Int = 100,
+    val apiBase: String = "",
+    val instructionsUrl: String = "",
+    val createdAt: String = ""
+)
+
+@Serializable
 data class CloudUserPhrasesRequest(
     val instanceId: String,
     val groups: List<PhraseGroup>,
@@ -165,6 +186,65 @@ data class CloudUserPhrasesResponse(
     val groups: List<PhraseGroup> = emptyList(),
     val starredPhrases: List<String> = emptyList(),
     val syncedAt: String = ""
+)
+
+@Serializable
+data class CloudUserWords(
+    val verbs: List<com.sponic.langbang.data.model.VerbEntry> = emptyList(),
+    val nouns: List<com.sponic.langbang.data.model.NounEntry> = emptyList(),
+    val adjectives: List<com.sponic.langbang.data.model.AdjectiveEntry> = emptyList(),
+    val adverbs: List<com.sponic.langbang.data.model.AdverbEntry> = emptyList()
+)
+
+@Serializable
+data class CloudUserContentResponse(
+    val instanceId: String,
+    val groups: List<PhraseGroup> = emptyList(),
+    val starredPhrases: List<String> = emptyList(),
+    val words: CloudUserWords = CloudUserWords(),
+    val hasRemoteContent: Boolean = false,
+    val hasRemotePhrases: Boolean = false,
+    val hasRemoteWords: Boolean = false,
+    val syncedAt: String = ""
+)
+
+@Serializable
+data class CloudAiPhraseQuota(
+    val limit: Int = 50,
+    val used: Int = 0,
+    val remaining: Int = 50
+)
+
+@Serializable
+data class CloudAiPhraseGenerateRequest(
+    val instanceId: String,
+    val groupId: String,
+    val groupTitle: String,
+    val groupSubtitle: String = "",
+    val prompt: String,
+    val count: Int = 5
+)
+
+@Serializable
+data class CloudAiPhraseGenerateResponse(
+    val ok: Boolean = false,
+    val instanceId: String = "",
+    val group: PhraseGroup? = null,
+    val phrases: List<SentenceExample> = emptyList(),
+    val quota: CloudAiPhraseQuota = CloudAiPhraseQuota()
+)
+
+@Serializable
+data class CloudAiPhraseQuotaRequest(
+    val instanceId: String,
+    val message: String = ""
+)
+
+@Serializable
+data class CloudAiPhraseQuotaResponse(
+    val ok: Boolean = false,
+    val sent: Boolean = false,
+    val quota: CloudAiPhraseQuota = CloudAiPhraseQuota()
 )
 
 data class CloudSyncState(

@@ -7,10 +7,13 @@ Cloudflare is the only backend for LangBangML.
 - R2 bucket: `langbangml`
 - Public R2 base: `https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev`
 - Audio prefix: `langbang/audio`
+- Source code: `https://github.com/rsonnad/langbang`
+- License: `AGPL-3.0`
 
 ## Endpoints
 
 - `GET /health`
+- `GET /agent`
 - `GET /v1/instances`
 - `GET /v1/instances/:id/bootstrap`
 - `GET /v1/labels/:locale`
@@ -24,8 +27,20 @@ Cloudflare is the only backend for LangBangML.
 - `POST /v1/auth/email/verify`
 - `POST /v1/auth/sign-out`
 - `GET /v1/me`
+- `POST /v1/me/agent-token`
+- `GET /v1/me/content?instanceId=...`
 - `GET /v1/me/phrases?instanceId=...`
 - `PUT /v1/me/phrases`
+- `GET /v1/me/phrases/ai-quota`
+- `POST /v1/me/phrases/ai-generate`
+- `POST /v1/me/phrases/ai-quota-request`
+- `GET /v1/agent/status`
+- `GET /v1/agent/phrases`
+- `POST /v1/agent/phrases`
+- `DELETE /v1/agent/phrases`
+- `GET /v1/agent/words`
+- `POST /v1/agent/words`
+- `DELETE /v1/agent/words`
 - `GET /v1/admin/content/:versionId/lessons`
 - `GET /v1/admin/content/:versionId/lessons/:lessonId`
 - `GET /v1/admin/content/:versionId/lessons/:lessonId/items?collection=...`
@@ -55,6 +70,15 @@ token to `/v1/auth/google`; email sign-in sends and verifies six-digit codes
 through `/v1/auth/email/start` and `/v1/auth/email/verify`. Signed-in phrase
 sync stores client-owned custom phrase groups and starred phrase keys in D1 via
 `/v1/me/phrases`.
+
+The personal Agent API is documented at `/agent`. Signed-in users create a
+per-user token from the Android Settings screen. The token is limited to
+user-owned custom phrases and words, not global admin content, and defaults to
+100 authenticated calls per day.
+
+The in-app Phrases + flow also has AI phrase generation backed by the same
+Worker-side Gemini Flash path. Default quota is 50 generated custom phrases per
+account; quota requests are emailed to `rahulioson@gmail.com`.
 
 Required auth configuration:
 

@@ -2,8 +2,6 @@ package com.sponic.langbang.cloud
 
 import com.sponic.langbang.data.LessonRepository
 import com.sponic.langbang.data.StarredPhrasesStore
-import com.sponic.langbang.data.model.PhraseGroup
-import com.sponic.langbang.data.model.SentenceExample
 
 class PhraseSyncService(
     private val backend: CloudBackendClient,
@@ -12,7 +10,7 @@ class PhraseSyncService(
     private val starredPhrases: StarredPhrasesStore,
     private val cloudConfig: CloudConfigStore
 ) {
-    suspend fun syncNow(): Result<CloudUserPhrasesResponse> {
+    suspend fun syncNow(): Result<CloudUserContentResponse> {
         val auth = authStore.state.value
         if (!auth.signedIn) {
             return Result.failure(IllegalStateException("Sign in first."))
@@ -21,22 +19,27 @@ class PhraseSyncService(
         val instanceId = cloudConfig.state.value.selectedInstanceId
         authStore.markPhraseSyncing()
         return runCatching {
-            val remote = backend.fetchUserPhrases(token, instanceId).getOrThrow()
-            val mergedGroups = mergeGroups(remote.groups, lessonRepo.userPhraseGroups())
-            val mergedStars = (remote.starredPhrases + starredPhrases.starred.value)
-                .filter { it.isNotBlank() }
-                .distinct()
-
-            lessonRepo.replaceUserPhraseGroups(mergedGroups)
-            starredPhrases.replaceAll(mergedStars.toSet())
-
-            backend.syncUserPhrases(
-                sessionToken = token,
-                instanceId = instanceId,
-                groups = mergedGroups,
-                starredPhrases = mergedStars,
-                replace = true
-            ).getOrThrow()
+            val remote = backend.fetchUserContent(token, instanceId).getOrThrow()
+            if (remote.hasRemotePhrases) {
+                lessonRepo.replaceUserPhraseGroups(remote.groups)
+                starredPhrases.replaceAll(remote.starredPhrases.toSet())
+            } else if (lessonRepo.userPhraseGroups().isNotEmpty() || starredPhrases.starred.value.isNotEmpty()) {
+                backend.syncUserPhrases(
+                    sessionToken = token,
+                    instanceId = instanceId,
+                    groups = lessonRepo.userPhraseGroups(),
+                    starredPhrases = starredPhrases.starred.value.toList(),
+                    replace = true
+                ).getOrThrow()
+            }
+            if (remote.hasRemoteWords) {
+                lessonRepo.replaceUserWords(remote.words)
+            }
+            remote.copy(
+                groups = lessonRepo.userPhraseGroups(),
+                starredPhrases = starredPhrases.starred.value.toList(),
+                words = lessonRepo.userWords()
+            )
         }.onSuccess {
             authStore.savePhraseSyncSuccess()
         }.onFailure { t ->
@@ -69,32 +72,5 @@ class PhraseSyncService(
         }.onFailure { t ->
             authStore.saveError(t.message ?: t.javaClass.simpleName)
         }
-    }
-
-    private fun mergeGroups(remote: List<PhraseGroup>, local: List<PhraseGroup>): List<PhraseGroup> {
-        val byId = LinkedHashMap<String, PhraseGroup>()
-        remote.forEach { group -> byId[group.id.lowercase()] = group }
-        local.forEach { group ->
-            val key = group.id.lowercase()
-            val existing = byId[key]
-            byId[key] = if (existing == null) {
-                group
-            } else {
-                group.copy(sentences = mergeSentences(existing.sentences, group.sentences))
-            }
-        }
-        return byId.values.toList()
-    }
-
-    private fun mergeSentences(
-        remote: List<SentenceExample>,
-        local: List<SentenceExample>
-    ): List<SentenceExample> {
-        val byKey = LinkedHashMap<String, SentenceExample>()
-        (remote + local).forEach { sentence ->
-            val key = "${sentence.pl.trim().lowercase()}|${sentence.en.trim().lowercase()}"
-            if (key.isNotBlank()) byKey[key] = sentence
-        }
-        return byKey.values.toList()
     }
 }
