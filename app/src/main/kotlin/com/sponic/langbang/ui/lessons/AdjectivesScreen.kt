@@ -501,18 +501,21 @@ private fun ExamplesControls(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (playCount > 0) {
-                if (state.playing) {
-                    LbButton.Stop("Stop", onClick = { state.stop() }, icon = Icons.Default.Stop)
-                } else {
-                    LbButton.Audio("Play", onClick = { state.playAll(adjectives, quiz = false) }, count = playCount)
-                    WordPlayLimitControl(
-                        limitText = state.playLimitText,
-                        onLimitTextChange = { state.updatePlayLimitText(it) },
-                        leadingLabel = "groups of",
-                        trailingLabel = null
-                    )
-                }
+            if (state.playing) {
+                LbButton.Stop("Stop", onClick = { state.stop() }, icon = Icons.Default.Stop)
+            } else {
+                LbButton.Audio(
+                    "Play",
+                    onClick = { state.playAll(adjectives, quiz = false) },
+                    count = playCount,
+                    enabled = playCount > 0
+                )
+                WordPlayLimitControl(
+                    limitText = state.playLimitText,
+                    onLimitTextChange = { state.updatePlayLimitText(it) },
+                    leadingLabel = "groups of",
+                    trailingLabel = null
+                )
             }
             if (!state.playing) {
                 LbButton.Ghost("Recall quiz", onClick = { state.recallQuiz() })

@@ -59,6 +59,7 @@ import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.data.PracticePrefsStore
 import com.sponic.langbang.data.model.AdverbEntry
 import com.sponic.langbang.data.model.SentenceExample
+import com.sponic.langbang.data.model.TokenPair
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
@@ -191,7 +192,7 @@ internal class AdverbsScreenState(
         if (limit <= 0) return 0
         return adverbs
             .filter { it.lemma in checkedLemmas }
-            .sumOf { app.lessonRepo.adverbSentencesFor(it.lemma).size.coerceAtMost(limit) }
+            .sumOf { sentencePoolFor(it).size.coerceAtMost(limit) }
     }
 
     fun playAll(adverbs: List<AdverbEntry>, quiz: Boolean) {
@@ -210,10 +211,157 @@ internal class AdverbsScreenState(
         val items = adverbs
             .filter { it.lemma in checkedLemmas }
             .flatMap { adv ->
-                val pool = app.lessonRepo.adverbSentencesFor(adv.lemma)
+                val pool = sentencePoolFor(adv)
                 if (randomOrder) pool.shuffled().take(limit) else pool.take(limit)
             }
         return if (randomOrder || quiz) items.shuffled() else items
+    }
+
+    private fun sentencePoolFor(adverb: AdverbEntry): List<SentenceExample> =
+        (app.lessonRepo.adverbSentencesFor(adverb.lemma) + fallbackAdverbSentences(adverb))
+            .distinctBy { it.pl.lowercase() }
+
+    private fun fallbackAdverbSentences(adverb: AdverbEntry): List<SentenceExample> {
+        val gloss = adverb.en.substringBefore("/").trim().ifBlank { adverb.en }
+        fun ex(pl: String, en: String, vararg words: Pair<String, String>) =
+            SentenceExample(
+                pl = pl,
+                en = en,
+                literal = words.joinToString(" ") { it.second },
+                words = words.map { TokenPair(it.first, it.second) }
+            )
+
+        return when (adverb.lemma.lowercase()) {
+            "bardzo" -> listOf(
+                ex("Bardzo lubię kawę", "I really like coffee", "Bardzo" to "really", "lubię" to "I like", "kawę" to "coffee"),
+                ex("Bardzo dziękuję", "Thank you very much", "Bardzo" to "very", "dziękuję" to "I thank"),
+                ex("Bardzo chcę iść", "I really want to go", "Bardzo" to "really", "chcę" to "I want", "iść" to "to go"),
+                ex("Bardzo lubię ten dom", "I really like this house", "Bardzo" to "really", "lubię" to "I like", "ten" to "this", "dom" to "house"),
+                ex("Bardzo dobrze rozumiem", "I understand very well", "Bardzo" to "very", "dobrze" to "well", "rozumiem" to "I understand"),
+                ex("Bardzo proszę", "Here you go", "Bardzo" to "very", "proszę" to "please"),
+                ex("Bardzo mi miło", "It is very nice to meet you", "Bardzo" to "very", "mi" to "to me", "miło" to "nice"),
+                ex("Bardzo szybko idę", "I am walking very quickly", "Bardzo" to "very", "szybko" to "quickly", "idę" to "I go"),
+                ex("Bardzo dobrze mówię", "I speak very well", "Bardzo" to "very", "dobrze" to "well", "mówię" to "I speak"),
+                ex("Bardzo chcę pomóc", "I really want to help", "Bardzo" to "really", "chcę" to "I want", "pomóc" to "to help")
+            )
+            "dobrze" -> listOf(
+                ex("Dobrze mówię po polsku", "I speak Polish well", "Dobrze" to "well", "mówię" to "I speak", "po" to "in", "polsku" to "Polish"),
+                ex("Dobrze się czuję", "I feel good", "Dobrze" to "good", "się" to "myself", "czuję" to "I feel"),
+                ex("Dobrze rozumiem", "I understand well", "Dobrze" to "well", "rozumiem" to "I understand"),
+                ex("Dobrze pracuję", "I work well", "Dobrze" to "well", "pracuję" to "I work"),
+                ex("Dobrze śpię", "I sleep well", "Dobrze" to "well", "śpię" to "I sleep"),
+                ex("Dobrze pamiętam", "I remember well", "Dobrze" to "well", "pamiętam" to "I remember"),
+                ex("Dobrze czytam", "I read well", "Dobrze" to "well", "czytam" to "I read"),
+                ex("Dobrze słyszę", "I hear well", "Dobrze" to "well", "słyszę" to "I hear"),
+                ex("Dobrze znam to miejsce", "I know this place well", "Dobrze" to "well", "znam" to "I know", "to" to "this", "miejsce" to "place"),
+                ex("Dobrze gotuję", "I cook well", "Dobrze" to "well", "gotuję" to "I cook")
+            )
+            "szybko" -> listOf(
+                ex("Szybko idę", "I am walking quickly", "Szybko" to "quickly", "idę" to "I go"),
+                ex("Szybko wracam", "I am coming back quickly", "Szybko" to "quickly", "wracam" to "I return"),
+                ex("Szybko czytam", "I read quickly", "Szybko" to "quickly", "czytam" to "I read"),
+                ex("Szybko piszę", "I write quickly", "Szybko" to "quickly", "piszę" to "I write"),
+                ex("Szybko mówię", "I speak quickly", "Szybko" to "quickly", "mówię" to "I speak"),
+                ex("Szybko pracuję", "I work quickly", "Szybko" to "quickly", "pracuję" to "I work"),
+                ex("Szybko jem", "I eat quickly", "Szybko" to "quickly", "jem" to "I eat"),
+                ex("Szybko piję wodę", "I drink water quickly", "Szybko" to "quickly", "piję" to "I drink", "wodę" to "water"),
+                ex("Szybko kupuję chleb", "I buy bread quickly", "Szybko" to "quickly", "kupuję" to "I buy", "chleb" to "bread"),
+                ex("Szybko uczę się", "I learn quickly", "Szybko" to "quickly", "uczę" to "I learn", "się" to "myself")
+            )
+            "trochę" -> listOf(
+                ex("Trochę rozumiem", "I understand a little", "Trochę" to "a little", "rozumiem" to "I understand"),
+                ex("Trochę mówię po polsku", "I speak a little Polish", "Trochę" to "a little", "mówię" to "I speak", "po" to "in", "polsku" to "Polish"),
+                ex("Trochę chcę spać", "I want to sleep a little", "Trochę" to "a little", "chcę" to "I want", "spać" to "to sleep"),
+                ex("Trochę pracuję", "I am working a little", "Trochę" to "a little", "pracuję" to "I work"),
+                ex("Trochę czytam", "I am reading a little", "Trochę" to "a little", "czytam" to "I read"),
+                ex("Trochę piję wodę", "I am drinking a little water", "Trochę" to "a little", "piję" to "I drink", "wodę" to "water"),
+                ex("Trochę lubię kawę", "I like coffee a little", "Trochę" to "a little", "lubię" to "I like", "kawę" to "coffee"),
+                ex("Trochę pamiętam", "I remember a little", "Trochę" to "a little", "pamiętam" to "I remember"),
+                ex("Trochę się boję", "I am a little afraid", "Trochę" to "a little", "się" to "myself", "boję" to "I fear"),
+                ex("Trochę jestem zmęczony", "I am a little tired", "Trochę" to "a little", "jestem" to "I am", "zmęczony" to "tired")
+            )
+            "tutaj" -> listOf(
+                ex("Tutaj mieszkam", "I live here", "Tutaj" to "here", "mieszkam" to "I live"),
+                ex("Tutaj pracuję", "I work here", "Tutaj" to "here", "pracuję" to "I work"),
+                ex("Tutaj jestem", "I am here", "Tutaj" to "here", "jestem" to "I am"),
+                ex("Tutaj czekam", "I am waiting here", "Tutaj" to "here", "czekam" to "I wait"),
+                ex("Tutaj jem", "I eat here", "Tutaj" to "here", "jem" to "I eat"),
+                ex("Tutaj piję kawę", "I drink coffee here", "Tutaj" to "here", "piję" to "I drink", "kawę" to "coffee"),
+                ex("Tutaj czytam książkę", "I read a book here", "Tutaj" to "here", "czytam" to "I read", "książkę" to "book"),
+                ex("Tutaj kupuję chleb", "I buy bread here", "Tutaj" to "here", "kupuję" to "I buy", "chleb" to "bread"),
+                ex("Tutaj śpię", "I sleep here", "Tutaj" to "here", "śpię" to "I sleep"),
+                ex("Tutaj mówię po polsku", "I speak Polish here", "Tutaj" to "here", "mówię" to "I speak", "po" to "in", "polsku" to "Polish")
+            )
+            "razem" -> listOf(
+                ex("Razem idziemy", "We are going together", "Razem" to "together", "idziemy" to "we go"),
+                ex("Razem pracujemy", "We work together", "Razem" to "together", "pracujemy" to "we work"),
+                ex("Razem czytamy", "We read together", "Razem" to "together", "czytamy" to "we read"),
+                ex("Razem jemy", "We eat together", "Razem" to "together", "jemy" to "we eat"),
+                ex("Razem pijemy kawę", "We drink coffee together", "Razem" to "together", "pijemy" to "we drink", "kawę" to "coffee"),
+                ex("Razem wracamy", "We return together", "Razem" to "together", "wracamy" to "we return"),
+                ex("Razem uczymy się", "We learn together", "Razem" to "together", "uczymy" to "we learn", "się" to "ourselves"),
+                ex("Razem gotujemy", "We cook together", "Razem" to "together", "gotujemy" to "we cook"),
+                ex("Razem kupujemy chleb", "We buy bread together", "Razem" to "together", "kupujemy" to "we buy", "chleb" to "bread"),
+                ex("Razem oglądamy film", "We watch a movie together", "Razem" to "together", "oglądamy" to "we watch", "film" to "movie")
+            )
+            "dzisiaj" -> listOf(
+                ex("Dzisiaj pracuję", "I am working today", "Dzisiaj" to "today", "pracuję" to "I work"),
+                ex("Dzisiaj idę do szkoły", "I am going to school today", "Dzisiaj" to "today", "idę" to "I go", "do" to "to", "szkoły" to "school"),
+                ex("Dzisiaj czytam książkę", "I am reading a book today", "Dzisiaj" to "today", "czytam" to "I read", "książkę" to "book"),
+                ex("Dzisiaj piję kawę", "I am drinking coffee today", "Dzisiaj" to "today", "piję" to "I drink", "kawę" to "coffee"),
+                ex("Dzisiaj kupuję chleb", "I am buying bread today", "Dzisiaj" to "today", "kupuję" to "I buy", "chleb" to "bread"),
+                ex("Dzisiaj wracam do domu", "I am returning home today", "Dzisiaj" to "today", "wracam" to "I return", "do" to "to", "domu" to "home"),
+                ex("Dzisiaj jem obiad", "I am eating lunch today", "Dzisiaj" to "today", "jem" to "I eat", "obiad" to "lunch"),
+                ex("Dzisiaj śpię w domu", "I sleep at home today", "Dzisiaj" to "today", "śpię" to "I sleep", "w" to "in", "domu" to "home"),
+                ex("Dzisiaj mówię po polsku", "I speak Polish today", "Dzisiaj" to "today", "mówię" to "I speak", "po" to "in", "polsku" to "Polish"),
+                ex("Dzisiaj uczę się", "I am studying today", "Dzisiaj" to "today", "uczę" to "I learn", "się" to "myself")
+            )
+            "jutro" -> listOf(
+                ex("Jutro idę do szkoły", "I am going to school tomorrow", "Jutro" to "tomorrow", "idę" to "I go", "do" to "to", "szkoły" to "school"),
+                ex("Jutro pracuję", "I am working tomorrow", "Jutro" to "tomorrow", "pracuję" to "I work"),
+                ex("Jutro wracam do domu", "I am returning home tomorrow", "Jutro" to "tomorrow", "wracam" to "I return", "do" to "to", "domu" to "home"),
+                ex("Jutro kupuję kawę", "I am buying coffee tomorrow", "Jutro" to "tomorrow", "kupuję" to "I buy", "kawę" to "coffee"),
+                ex("Jutro czytam książkę", "I am reading a book tomorrow", "Jutro" to "tomorrow", "czytam" to "I read", "książkę" to "book"),
+                ex("Jutro piję herbatę", "I am drinking tea tomorrow", "Jutro" to "tomorrow", "piję" to "I drink", "herbatę" to "tea"),
+                ex("Jutro jem chleb", "I eat bread tomorrow", "Jutro" to "tomorrow", "jem" to "I eat", "chleb" to "bread"),
+                ex("Jutro dzwonię", "I am calling tomorrow", "Jutro" to "tomorrow", "dzwonię" to "I call"),
+                ex("Jutro pomagam", "I am helping tomorrow", "Jutro" to "tomorrow", "pomagam" to "I help"),
+                ex("Jutro uczę się", "I am studying tomorrow", "Jutro" to "tomorrow", "uczę" to "I learn", "się" to "myself")
+            )
+            "teraz" -> listOf(
+                ex("Teraz czytam książkę", "I am reading a book now", "Teraz" to "now", "czytam" to "I read", "książkę" to "book"),
+                ex("Teraz piję kawę", "I am drinking coffee now", "Teraz" to "now", "piję" to "I drink", "kawę" to "coffee"),
+                ex("Teraz pracuję", "I am working now", "Teraz" to "now", "pracuję" to "I work"),
+                ex("Teraz idę do domu", "I am going home now", "Teraz" to "now", "idę" to "I go", "do" to "to", "domu" to "home"),
+                ex("Teraz jem chleb", "I am eating bread now", "Teraz" to "now", "jem" to "I eat", "chleb" to "bread"),
+                ex("Teraz mówię po polsku", "I am speaking Polish now", "Teraz" to "now", "mówię" to "I speak", "po" to "in", "polsku" to "Polish"),
+                ex("Teraz uczę się", "I am studying now", "Teraz" to "now", "uczę" to "I learn", "się" to "myself"),
+                ex("Teraz wracam", "I am returning now", "Teraz" to "now", "wracam" to "I return"),
+                ex("Teraz słucham", "I am listening now", "Teraz" to "now", "słucham" to "I listen"),
+                ex("Teraz czekam", "I am waiting now", "Teraz" to "now", "czekam" to "I wait")
+            )
+            "chętnie" -> listOf(
+                ex("Chętnie pomogę", "I will gladly help", "Chętnie" to "gladly", "pomogę" to "I will help"),
+                ex("Chętnie pójdę", "I will gladly go", "Chętnie" to "gladly", "pójdę" to "I will go"),
+                ex("Chętnie wypiję kawę", "I will gladly drink coffee", "Chętnie" to "gladly", "wypiję" to "I will drink", "kawę" to "coffee"),
+                ex("Chętnie przeczytam książkę", "I will gladly read a book", "Chętnie" to "gladly", "przeczytam" to "I will read", "książkę" to "book"),
+                ex("Chętnie zjem chleb", "I will gladly eat bread", "Chętnie" to "gladly", "zjem" to "I will eat", "chleb" to "bread"),
+                ex("Chętnie kupię herbatę", "I will gladly buy tea", "Chętnie" to "gladly", "kupię" to "I will buy", "herbatę" to "tea"),
+                ex("Chętnie porozmawiam", "I will gladly talk", "Chętnie" to "gladly", "porozmawiam" to "I will talk"),
+                ex("Chętnie posłucham", "I will gladly listen", "Chętnie" to "gladly", "posłucham" to "I will listen"),
+                ex("Chętnie zaczekam", "I will gladly wait", "Chętnie" to "gladly", "zaczekam" to "I will wait"),
+                ex("Chętnie się nauczę", "I will gladly learn", "Chętnie" to "gladly", "się" to "myself", "nauczę" to "I will learn")
+            )
+            else -> listOf(
+                ex(
+                    "Używam słowa ${adverb.lemma}",
+                    "I use the word $gloss",
+                    "Używam" to "I use",
+                    "słowa" to "word",
+                    adverb.lemma to gloss
+                )
+            )
+        }
     }
 
     private fun startQueue(items: List<SentenceExample>, quiz: Boolean) {
@@ -433,18 +581,21 @@ private fun AdvExamplesControls(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (playCount > 0) {
-                if (state.playing) {
-                    LbButton.Stop("Stop", onClick = { state.stop() }, icon = Icons.Default.Stop)
-                } else {
-                    LbButton.Audio("Play", onClick = { state.playAll(adverbs, quiz = false) }, count = playCount)
-                    WordPlayLimitControl(
-                        limitText = state.playLimitText,
-                        onLimitTextChange = { state.updatePlayLimitText(it) },
-                        leadingLabel = "groups of",
-                        trailingLabel = null
-                    )
-                }
+            if (state.playing) {
+                LbButton.Stop("Stop", onClick = { state.stop() }, icon = Icons.Default.Stop)
+            } else {
+                LbButton.Audio(
+                    "Play",
+                    onClick = { state.playAll(adverbs, quiz = false) },
+                    count = playCount,
+                    enabled = playCount > 0
+                )
+                WordPlayLimitControl(
+                    limitText = state.playLimitText,
+                    onLimitTextChange = { state.updatePlayLimitText(it) },
+                    leadingLabel = "groups of",
+                    trailingLabel = null
+                )
             }
             if (state.sentences.isNotEmpty() && !state.playing) {
                 LbButton.Ghost("Sent. quiz", onClick = { state.playAll(adverbs, quiz = true) }, icon = Icons.Default.PlayArrow)

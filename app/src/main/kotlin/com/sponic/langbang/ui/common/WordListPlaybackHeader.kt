@@ -1,9 +1,7 @@
 package com.sponic.langbang.ui.common
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,15 +9,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.Icons
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sponic.langbang.ui.theme.LbColors
@@ -72,8 +72,11 @@ fun WordPlayLimitControl(
     enabled: Boolean = true,
     leadingLabel: String,
     trailingLabel: String?,
+    minValue: Int = 1,
+    maxValue: Int = 99,
     modifier: Modifier = Modifier
 ) {
+    val current = limitText.toIntOrNull()?.coerceIn(minValue, maxValue) ?: minValue
     Row(
         modifier = modifier.height(30.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -84,10 +87,12 @@ fun WordPlayLimitControl(
             color = if (enabled) LbColors.TextSecondary else LbColors.TextMuted
         )
         Spacer(Modifier.width(4.dp))
-        CompactNumberField(
-            value = limitText,
-            onValueChange = onLimitTextChange,
-            enabled = enabled
+        CompactStepper(
+            value = current,
+            onValueChange = { onLimitTextChange(it.toString()) },
+            enabled = enabled,
+            minValue = minValue,
+            maxValue = maxValue
         )
         trailingLabel?.let {
             Spacer(Modifier.width(4.dp))
@@ -101,33 +106,74 @@ fun WordPlayLimitControl(
 }
 
 @Composable
-private fun CompactNumberField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    enabled: Boolean
+private fun CompactStepper(
+    value: Int,
+    onValueChange: (Int) -> Unit,
+    enabled: Boolean,
+    minValue: Int,
+    maxValue: Int
 ) {
     Surface(
         color = LbColors.Sheet,
         shape = LbShapes.Button,
         border = BorderStroke(1.dp, LbColors.Line),
         modifier = Modifier
-            .width(42.dp)
+            .width(82.dp)
             .height(30.dp)
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                enabled = enabled,
-                singleLine = true,
-                textStyle = LocalTextStyle.current.copy(
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (enabled) LbColors.TextPrimary else LbColors.TextMuted,
-                    textAlign = TextAlign.Center
-                ),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.width(28.dp)
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            StepperArrow(
+                decrement = true,
+                enabled = enabled && value > minValue,
+                onClick = { onValueChange((value - 1).coerceIn(minValue, maxValue)) }
+            )
+            Text(
+                value.toString(),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (enabled) LbColors.TextPrimary else LbColors.TextMuted,
+                modifier = Modifier.width(26.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            StepperArrow(
+                decrement = false,
+                enabled = enabled && value < maxValue,
+                onClick = { onValueChange((value + 1).coerceIn(minValue, maxValue)) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun StepperArrow(
+    decrement: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        color = androidx.compose.ui.graphics.Color.Transparent,
+        shape = LbShapes.Button,
+        modifier = Modifier
+            .width(28.dp)
+            .height(30.dp)
+            .clip(LbShapes.Button)
+            .clickable(enabled = enabled, onClick = onClick)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center
+        ) {
+            Icon(
+                imageVector = if (decrement) {
+                    Icons.AutoMirrored.Filled.KeyboardArrowLeft
+                } else {
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight
+                },
+                contentDescription = if (decrement) "Decrease variations" else "Increase variations",
+                tint = if (enabled) LbColors.TextSecondary else LbColors.TextMuted,
+                modifier = Modifier.size(18.dp)
             )
         }
     }
