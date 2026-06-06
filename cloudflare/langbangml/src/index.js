@@ -2248,7 +2248,7 @@ function analyticsAdminPage(env) {
         <div class="guide-card">
           <h3>Enable Google Login</h3>
           <ol>
-            <li>In Google Cloud, create or select the LangBang auth project under the planned account <code>alpacaplayhouse@gmail.com</code>.</li>
+            <li>In Google Cloud, use the LangBang auth project that owns the configured Web client and Android app client entries.</li>
             <li>Open Google Auth Platform, configure Branding, and set authorized domain <code>langbang.org</code>.</li>
             <li>Create an OAuth client with application type <strong>Web application</strong>.</li>
             <li>Add Authorized JavaScript origins: <code>https://langbang.org</code> and <code>${escapeHtml(apiBase)}</code>.</li>

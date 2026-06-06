@@ -59,9 +59,9 @@ sync stores client-owned custom phrase groups and starred phrase keys in D1 via
 Required auth configuration:
 
 - `EMAIL_LOGIN_PEPPER`: Worker secret used to hash short-lived email codes.
-- `GOOGLE_WEB_CLIENT_ID`: Google Auth Platform Web client ID. The current
-  temporary owner is `alpacaplayhouse@gmail.com`; migrate this to a dedicated
-  LangBang Google account before public release.
+- `GOOGLE_WEB_CLIENT_ID`: Google Auth Platform Web client ID. Google Auth
+  Platform has the Web client plus Android app client entries; Android requests
+  an ID token for the Web client ID and the Worker verifies it server-side.
 - `RESEND_API_KEY`: Worker secret for Resend email-code delivery. Stored in
   Bitwarden item `Resend - LangBang Email API` under `devops-langbang`.
 - `EMAIL_FROM`: currently `LangBang <hello@langbang.org>`.
