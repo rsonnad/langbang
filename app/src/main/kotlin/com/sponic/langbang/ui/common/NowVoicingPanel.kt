@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Star
@@ -36,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -195,6 +197,7 @@ private fun NowVoicingPlaybackOptions(
 ) {
     var speakEnglish by remember { mutableStateOf(app.practicePrefs.speakEnglishFirst()) }
     var slowFirst by remember { mutableStateOf(app.practicePrefs.slowFirst()) }
+    var loopPractice by remember { mutableStateOf(app.practicePrefs.loopPractice()) }
     Row(
         modifier = modifier.height(24.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -216,6 +219,37 @@ private fun NowVoicingPlaybackOptions(
                 app.practicePrefs.setSlowFirst(it)
             }
         )
+        NowVoicingLoopToggle(
+            checked = loopPractice,
+            onCheckedChange = {
+                loopPractice = it
+                app.practicePrefs.setLoopPractice(it)
+            }
+        )
+    }
+}
+
+@Composable
+private fun NowVoicingLoopToggle(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Surface(
+        color = if (checked) LbColors.Audio.copy(alpha = 0.16f) else Color.Transparent,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .size(24.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onCheckedChange(!checked) }
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                Icons.Default.Repeat,
+                contentDescription = if (checked) "Loop practice on" else "Loop practice off",
+                tint = if (checked) LbColors.Audio else LbColors.TextMuted,
+                modifier = Modifier.size(17.dp)
+            )
+        }
     }
 }
 

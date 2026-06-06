@@ -18,6 +18,12 @@ class PracticePrefsStore(context: Context) {
         prefs.edit().putBoolean(KEY_SPEAK_ENGLISH_FIRST, enabled).apply()
     }
 
+    fun loopPractice(): Boolean = prefs.getBoolean(KEY_LOOP_PRACTICE, false)
+
+    fun setLoopPractice(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_LOOP_PRACTICE, enabled).apply()
+    }
+
     /**
      * Sticky set of verb lemmas the learner has ticked in the Verbs list. These are the
      * verbs included (in random order) when Play / the quizzes run across multiple
@@ -105,6 +111,7 @@ class PracticePrefsStore(context: Context) {
     companion object {
         private const val KEY_SLOW_FIRST = "slow-first"
         private const val KEY_SPEAK_ENGLISH_FIRST = "speak-english-first"
+        private const val KEY_LOOP_PRACTICE = "loop-practice"
         private const val KEY_CHECKED_VERBS = "checked-verbs"
         private const val KEY_VERB_PHRASE_INCLUDE_PRONOUNS = "verb-phrase-include-pronouns"
         private const val KEY_VERB_PHRASE_INCLUDE_HELPER_VERB = "verb-phrase-include-helper-verb"

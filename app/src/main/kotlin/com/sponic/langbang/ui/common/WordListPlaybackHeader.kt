@@ -118,7 +118,7 @@ private fun CompactStepper(
         shape = LbShapes.Button,
         border = BorderStroke(1.dp, LbColors.Line),
         modifier = Modifier
-            .width(68.dp)
+            .width(54.dp)
             .height(30.dp)
     ) {
         Row(
@@ -134,7 +134,7 @@ private fun CompactStepper(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = if (enabled) LbColors.TextPrimary else LbColors.TextMuted,
-                modifier = Modifier.width(24.dp),
+                modifier = Modifier.width(20.dp),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             StepperArrow(
@@ -156,7 +156,7 @@ private fun StepperArrow(
         color = androidx.compose.ui.graphics.Color.Transparent,
         shape = LbShapes.Button,
         modifier = Modifier
-            .width(22.dp)
+            .width(17.dp)
             .height(30.dp)
             .clip(LbShapes.Button)
             .clickable(enabled = enabled, onClick = onClick)
@@ -173,7 +173,7 @@ private fun StepperArrow(
                 },
                 contentDescription = if (decrement) "Decrease variations" else "Increase variations",
                 tint = if (enabled) LbColors.TextSecondary else LbColors.TextMuted,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(17.dp)
             )
         }
     }
