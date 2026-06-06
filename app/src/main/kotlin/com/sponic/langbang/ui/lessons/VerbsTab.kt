@@ -97,6 +97,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 
 private val WhitespaceRegex = Regex("\\s+")
 private val NonLetterRegex = Regex("[^\\p{L}]+")
@@ -320,9 +321,20 @@ internal class VerbsTabState(
         return if (randomOrder) targets.shuffled() else targets
     }
 
-    fun targetPlayCount(allVerbs: List<VerbEntry>): Int? {
+    suspend fun targetPlayCount(allVerbs: List<VerbEntry>): Int {
         val targetCount = resolveTargets(allVerbs).size
-        return if (wordTypeVariationsEnabled()) null else targetCount
+        if (!wordTypeVariationsEnabled()) return targetCount
+        val limit = playLimit()
+        if (limit <= 0) return 0
+        return resolveTargets(allVerbs).sumOf { wordTypeVariationCountFor(it, limit) }
+    }
+
+    fun quickTargetPlayCount(allVerbs: List<VerbEntry>): Int {
+        val targetCount = resolveTargets(allVerbs).size
+        if (!wordTypeVariationsEnabled()) return targetCount
+        val limit = playLimit()
+        if (limit <= 0) return 0
+        return resolveTargets(allVerbs).sumOf { quickWordTypeVariationCountFor(it, limit) }
     }
 
     fun wordTypeVariationsEnabled(): Boolean = selectedPhraseComponentCount() > 0
@@ -610,6 +622,50 @@ internal class VerbsTabState(
         return matching.take(limitPerType)
     }
 
+    private suspend fun wordTypeVariationCountFor(
+        verb: VerbEntry,
+        limitPerType: Int
+    ): Int {
+        val requirements = phraseRequirementSnapshot()
+        val allowedForms = allowedFormsFor(verb, requirements)
+        if (allowedForms.isEmpty() || limitPerType <= 0) return 0
+        val cached = matchingPhraseCandidates(
+            verb = verb,
+            candidates = phraseCandidateSentencesFor(verb),
+            allowedForms = allowedForms,
+            requirements = requirements
+        )
+        val local = if (cached.size < limitPerType) {
+            buildLocalPhraseSentences(
+                verb = verb,
+                limit = limitPerType - cached.size,
+                recordRejected = false
+            )
+        } else {
+            emptyList()
+        }
+        return mergePhraseCandidates(
+            existing = cached,
+            local = local,
+            randomOrder = requirements.randomOrder
+        ).take(limitPerType).size
+    }
+
+    private fun quickWordTypeVariationCountFor(
+        verb: VerbEntry,
+        limitPerType: Int
+    ): Int {
+        val requirements = phraseRequirementSnapshot()
+        val allowedForms = allowedFormsFor(verb, requirements)
+        if (allowedForms.isEmpty() || limitPerType <= 0) return 0
+        return buildLocalPhraseSentences(
+            verb = verb,
+            limit = limitPerType,
+            recordRejected = false,
+            applyUsageGate = false
+        ).take(limitPerType).size
+    }
+
     private fun showPhraseGenerationNotice() {
         showPhraseQualityNotice(
             "Generating, validating, and downloading more phrase variants. Estimate: 2–4 min for a small batch; 5–10 min for larger selections."
@@ -691,7 +747,9 @@ internal class VerbsTabState(
 
     private fun buildLocalPhraseSentences(
         verb: VerbEntry,
-        limit: Int
+        limit: Int,
+        recordRejected: Boolean = true,
+        applyUsageGate: Boolean = true
     ): List<SentenceExample> {
         val cues = phraseVerbCuesFor(verb)
         if (cues.isEmpty() || limit <= 0) return emptyList()
@@ -708,15 +766,17 @@ internal class VerbsTabState(
             }
             when {
                 sentence == null -> null
-                sentencePassesCommonUsageGate(verb, sentence) -> sentence
+                !applyUsageGate || sentencePassesCommonUsageGate(verb, sentence) -> sentence
                 else -> {
                     rejected += 1
-                    app.practicePrefs.addRejectedVerbPhraseKey(sentence.qualityKey())
+                    if (recordRejected) {
+                        app.practicePrefs.addRejectedVerbPhraseKey(sentence.qualityKey())
+                    }
                     null
                 }
             }
         }.distinctBy { it.pl }
-        if (rejected > 0) {
+        if (recordRejected && rejected > 0) {
             showPhraseQualityNotice("Skipped $rejected awkward phrase variant(s).")
         }
         return candidates.take(limit)
@@ -1785,6 +1845,33 @@ private fun TopBar(
     allVerbs: List<VerbEntry>,
     showControls: Boolean
 ) {
+    var playCountPreview by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(
+        showControls,
+        allVerbs.size,
+        state.selected?.lemma,
+        state.checkedLemmas,
+        state.playLimitText,
+        state.randomOrder,
+        state.includePronouns,
+        state.includeHelperVerb,
+        state.includeAdjectives,
+        state.includeAdverbs,
+        state.includeNouns,
+        state.includedPresentKeys,
+        state.includedPastKeys
+    ) {
+        playCountPreview = null
+        if (showControls) {
+            val quickCount = state.quickTargetPlayCount(allVerbs)
+            if (quickCount > 0) {
+                playCountPreview = quickCount
+                yield()
+            }
+            val exactCount = state.targetPlayCount(allVerbs)
+            playCountPreview = exactCount
+        }
+    }
     Surface(color = LbColors.SurfaceRaised, modifier = Modifier.fillMaxWidth()) {
         Column {
             Row(
@@ -1838,10 +1925,9 @@ private fun TopBar(
                         LbButton.Ghost("Generating", onClick = {}, enabled = false)
                     } else if (!state.playing) {
                         Spacer(Modifier.width(8.dp))
-                        val playCount = state.targetPlayCount(allVerbs)
                         VerbPlayButton(
-                            count = playCount,
-                            playLabel = if (playCount == null) "Play phrases" else null,
+                            count = playCountPreview,
+                            playLabel = if (playCountPreview == null) "Play ..." else null,
                             onPlay = {
                                 if (state.wordTypeVariationsEnabled()) {
                                     state.playAll(allVerbs, includeWordTypeVariations = true)

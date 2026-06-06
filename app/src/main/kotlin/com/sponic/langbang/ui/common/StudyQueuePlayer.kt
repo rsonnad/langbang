@@ -51,6 +51,7 @@ class StudyQueuePlayer(
         private set
 
     private var total = 0
+    private var itemTotal = 0
     private var index = 0
     private var job: Job? = null
     private var retainOnCancel = false
@@ -90,7 +91,8 @@ class StudyQueuePlayer(
         playItem: suspend StudyQueuePlayer.(Int) -> Unit,
     ) {
         if (total <= 0) return
-        this.total = total
+        this.itemTotal = total
+        this.total = total * if (app.practicePrefs.loopPractice()) 4 else 1
         this.index = startIndex.coerceIn(0, total - 1)
         this.playItem = playItem
         this.prefetchItem = prefetchItem
@@ -116,17 +118,22 @@ class StudyQueuePlayer(
         val body = playItem ?: return
         job = scope.launch {
             while (index < total) {
-                playingIndex = index
+                val itemIndex = queueItemIndex(index)
+                playingIndex = itemIndex
                 val nextIdx = index + 1
                 if (nextIdx < total) {
-                    prefetchItem?.let { pf -> launch { runCatching { pf(nextIdx) } } }
+                    val nextItemIndex = queueItemIndex(nextIdx)
+                    prefetchItem?.let { pf -> launch { runCatching { pf(nextItemIndex) } } }
                 }
-                body(index)
+                body(itemIndex)
                 index++
             }
             teardown()
         }
     }
+
+    private fun queueItemIndex(queueIndex: Int): Int =
+        if (itemTotal <= 0) queueIndex else queueIndex % itemTotal
 
     // --- primitives the playItem lambda uses (pause/stop-aware) ---
 
@@ -207,7 +214,8 @@ class StudyQueuePlayer(
     fun parkCurrentForInterruption() {
         if (!hasQueue) return
         cancelForRetain()
-        playingIndex = index.coerceIn(0, (total - 1).coerceAtLeast(0))
+        val parkedQueueIndex = index.coerceIn(0, (total - 1).coerceAtLeast(0))
+        playingIndex = queueItemIndex(parkedQueueIndex)
         updatePaused(true)
         publishParked?.invoke(playingIndex)
     }
@@ -221,9 +229,9 @@ class StudyQueuePlayer(
     }
 
     private fun parkAt(i: Int) {
-        playingIndex = i
+        playingIndex = queueItemIndex(i)
         updatePaused(true)
-        publishParked?.invoke(i)
+        publishParked?.invoke(playingIndex)
     }
 
     private fun cancelForRetain() {

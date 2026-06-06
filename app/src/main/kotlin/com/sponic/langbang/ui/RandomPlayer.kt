@@ -196,7 +196,7 @@ internal class RandomPlayerState(
         job = null
         app.audioPlayer.stop()
         currentIndex = (currentIndex - 1).coerceAtLeast(0)
-        position = currentIndex + 1
+        position = phraseIndexFor(currentIndex) + 1
         if (wasPlaying) {
             app.analytics.track(
                 name = "random_play_rewind",
@@ -222,12 +222,12 @@ internal class RandomPlayerState(
         job = null
         app.audioPlayer.stop()
         val nextIndex = currentIndex + 1
-        if (nextIndex >= phrases.size) {
+        if (nextIndex >= playbackTotal()) {
             stop()
             return
         }
         currentIndex = nextIndex
-        position = currentIndex + 1
+        position = phraseIndexFor(currentIndex) + 1
         app.analytics.track(
             name = "random_play_next",
             feature = "listening",
@@ -269,12 +269,19 @@ internal class RandomPlayerState(
     }
 
     private fun republishCurrent() {
-        val s = phrases.getOrNull(currentIndex) ?: return
+        val phraseIndex = phraseIndexFor(currentIndex)
+        val s = phrases.getOrNull(phraseIndex) ?: return
         NowVoicingBus.publish(
             NowVoicing(s.en, s.pl, s.literal, "en",
-                "${currentIndex + 1}/${phrases.size}", s.words)
+                "${phraseIndex + 1}/${phrases.size}", s.words)
         )
     }
+
+    private fun playbackTotal(): Int =
+        phrases.size * if (app.practicePrefs.loopPractice()) 4 else 1
+
+    private fun phraseIndexFor(queueIndex: Int): Int =
+        if (phrases.isEmpty()) queueIndex else queueIndex % phrases.size
 
     private fun launchFromCurrent() {
         playing = true
@@ -291,11 +298,13 @@ internal class RandomPlayerState(
             )
         )
         job = scope.launch {
-            while (currentIndex < phrases.size) {
+            val total = playbackTotal()
+            while (currentIndex < total) {
                 val i = currentIndex
-                val s = phrases[i]
-                position = i + 1
-                val pos = "${i + 1}/${phrases.size}"
+                val phraseIndex = phraseIndexFor(i)
+                val s = phrases[phraseIndex]
+                position = phraseIndex + 1
+                val pos = "${phraseIndex + 1}/${phrases.size}"
                 val speakEnglish = app.practicePrefs.speakEnglishFirst()
                 val slowFirst = app.practicePrefs.slowFirst()
                 val slowPlVoice = app.targetSlowVoice()
@@ -317,7 +326,7 @@ internal class RandomPlayerState(
                 if (currentIndex == i) {
                     currentIndex = i + 1
                     // Beat between items — user asked for a touch more breathing room.
-                    if (currentIndex < phrases.size) delay(1000)
+                    if (currentIndex < total) delay(1000)
                 }
             }
             // Natural completion only reaches here (cancellation exits via exception).
