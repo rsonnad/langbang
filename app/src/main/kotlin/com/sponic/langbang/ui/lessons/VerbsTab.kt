@@ -106,6 +106,12 @@ private val AwkwardVerbPhraseEnglishRegexes = listOf(
     Regex("\\b(well|quickly|fast|gladly|willingly) want\\b"),
     Regex("\\bwanted a (good|bad|big|small|new) (cat|dog)\\b"),
     Regex("\\bwant a (good|bad|big|small|new) (cat|dog)\\b"),
+    Regex("\\bwrit(e|es|ing|ten|wrote) a ready book\\b"),
+    Regex("\\bready (book|cat|dog|chair|phone|ticket)\\b"),
+    Regex("\\bremember(s|ed|ing)? a handsome (cat|dog)\\b"),
+    Regex("\\bhandsome (cat|dog|chair|book|phone|ticket)\\b"),
+    Regex("\\b(make|makes|making|made) a heavy chair\\b"),
+    Regex("\\bheavy (chair|book|cat|dog|ticket)\\b"),
     Regex("\\bcan to \\w+\\b"),
     Regex("\\bmust to \\w+\\b"),
     Regex("\\bfeel like to \\w+\\b")
@@ -210,6 +216,7 @@ internal class VerbsTabState(
         private set
     var phraseQualityNotice: String? by mutableStateOf(null)
         private set
+    private var phraseQualityNoticeVersion = 0
     var includedPresentKeys: Set<String> by mutableStateOf(
         app.pronounFilter.allIncluded(PERSON_KEYS, PronounFilterStore.TENSE_PRESENT)
     )
@@ -313,10 +320,9 @@ internal class VerbsTabState(
         return if (randomOrder) targets.shuffled() else targets
     }
 
-    fun targetPlayCount(allVerbs: List<VerbEntry>): Int {
+    fun targetPlayCount(allVerbs: List<VerbEntry>): Int? {
         val targetCount = resolveTargets(allVerbs).size
-        if (!wordTypeVariationsEnabled()) return targetCount
-        return targetCount * playLimit()
+        return if (wordTypeVariationsEnabled()) null else targetCount
     }
 
     fun wordTypeVariationsEnabled(): Boolean = selectedPhraseComponentCount() > 0
@@ -576,23 +582,49 @@ internal class VerbsTabState(
         val allowedForms = allowedFormsFor(verb, requirements)
         if (allowedForms.isEmpty() || limitPerType <= 0) return emptyList()
 
-        generateProgress = "Building phrase variants · ${verb.lemma}"
+        generateProgress = "Checking phrase variants · ${verb.lemma}"
+        val cached = matchingPhraseCandidates(
+            verb = verb,
+            candidates = phraseCandidateSentencesFor(verb),
+            allowedForms = allowedForms,
+            requirements = requirements
+        )
+        val local = if (cached.size < limitPerType) {
+            buildLocalPhraseSentences(verb, limitPerType - cached.size)
+        } else {
+            emptyList()
+        }
         var matching = mergePhraseCandidates(
-            existing = emptyList(),
-            local = buildLocalPhraseSentences(verb, limitPerType),
+            existing = cached,
+            local = local,
             randomOrder = requirements.randomOrder
         )
         if (matching.size < limitPerType) {
-            val cached = matchingPhraseCandidates(
-                verb = verb,
-                candidates = phraseCandidateSentencesFor(verb),
-                allowedForms = allowedForms,
-                requirements = requirements
+            app.sentenceRegen.startIfNeeded()
+            showPhraseGenerationNotice()
+        } else if (local.isNotEmpty()) {
+            showPhraseQualityNotice(
+                "Using temporary local phrase variants while richer examples are generated and validated."
             )
-            matching = mergePhraseCandidates(matching, cached, requirements.randomOrder)
         }
-        if (matching.size < limitPerType) app.sentenceRegen.startIfNeeded()
         return matching.take(limitPerType)
+    }
+
+    private fun showPhraseGenerationNotice() {
+        showPhraseQualityNotice(
+            "Generating, validating, and downloading more phrase variants. Estimate: 2–4 min for a small batch; 5–10 min for larger selections."
+        )
+    }
+
+    private fun showPhraseQualityNotice(message: String, durationMs: Long = 9_000L) {
+        phraseQualityNotice = message
+        val version = ++phraseQualityNoticeVersion
+        scope.launch {
+            delay(durationMs)
+            if (phraseQualityNoticeVersion == version) {
+                phraseQualityNotice = null
+            }
+        }
     }
 
     private suspend fun matchingPhraseCandidates(
@@ -685,7 +717,7 @@ internal class VerbsTabState(
             }
         }.distinctBy { it.pl }
         if (rejected > 0) {
-            phraseQualityNotice = "Skipped $rejected awkward phrase variant(s)."
+            showPhraseQualityNotice("Skipped $rejected awkward phrase variant(s).")
         }
         return candidates.take(limit)
     }
@@ -1446,7 +1478,8 @@ internal class VerbsTabState(
                     else -> built
                 }
                 if (items.isEmpty()) {
-                    error = "No phrases match the selected word types yet."
+                    error = null
+                    showPhraseGenerationNotice()
                     return@launch
                 } else {
                     error = null
@@ -1463,13 +1496,17 @@ internal class VerbsTabState(
         // Sentence playback doesn't set playingLemma (only the conjugation drill does), so
         // the per-verb sentence-list highlight stays scoped to the conjugation flow.
         playingLemma = null
+        val speakEnglish = quiz || app.practicePrefs.speakEnglishFirst()
+        val slowFirst = app.practicePrefs.slowFirst()
         val slowPlVoice = app.targetSlowVoice()
         player.start(
             total = items.size,
             publishParked = { i -> publishQuiz("pause", items[i], "${i + 1}/${items.size}", plHidden = quiz) },
             prefetchItem = { i ->
                 val s = items[i]
-                app.ensureCachedAudio(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                if (speakEnglish) {
+                    app.ensureCachedAudio(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                }
                 app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                 if (slowFirst && !quiz) app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, slowPlVoice)
             },
@@ -1488,16 +1525,15 @@ internal class VerbsTabState(
                 reveal(delayMs)
                 publishQuiz("pl", s, position, plHidden = false)
                 say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
-            } else if (slowFirst) {
-                setLang("en", s, position)
-                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
-                setLang("pl-slow", s, position)
-                say(s.pl, app.targetAudioVoice().locale, slowPlVoice)
-                setLang("pl", s, position)
-                say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             } else {
-                setLang("en", s, position)
-                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                if (speakEnglish) {
+                    setLang("en", s, position)
+                    say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                }
+                if (slowFirst) {
+                    setLang("pl-slow", s, position)
+                    say(s.pl, app.targetAudioVoice().locale, slowPlVoice)
+                }
                 setLang("pl", s, position)
                 say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             }
@@ -1586,13 +1622,17 @@ internal class VerbsTabState(
 
     private fun startConjugationQueue(cues: List<ConjugationCue>, mode: String) {
         val quiz = mode != "play"
+        val speakEnglish = quiz || app.practicePrefs.speakEnglishFirst()
+        val slowFirst = app.practicePrefs.slowFirst()
         val slowPlVoice = app.targetSlowVoice()
         player.start(
             total = cues.size,
             publishParked = { i -> publishConjugation(cues[i], i, cues.size, mode, "pause", plHidden = quiz) },
             prefetchItem = { i ->
                 val cue = cues[i]
-                app.ensureCachedAudio(cue.englishGloss, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                if (speakEnglish) {
+                    app.ensureCachedAudio(cue.englishGloss, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                }
                 app.ensureCachedAudio(cue.combined, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                 if (slowFirst && !quiz) app.ensureCachedAudio(cue.combined, app.targetAudioVoice().locale, slowPlVoice)
             },
@@ -1612,8 +1652,10 @@ internal class VerbsTabState(
                     say(cue.combined, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                 }
                 else -> {
-                    publishConjugation(cue, i, total, mode, "en", plHidden = false)
-                    say(cue.englishGloss, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                    if (speakEnglish) {
+                        publishConjugation(cue, i, total, mode, "en", plHidden = false)
+                        say(cue.englishGloss, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                    }
                     if (slowFirst) {
                         publishConjugation(cue, i, total, mode, "pl-slow", plHidden = false)
                         say(cue.combined, app.targetAudioVoice().locale, slowPlVoice)
@@ -1764,7 +1806,7 @@ private fun TopBar(
                             onCheckedChange = { state.updateIncludePronouns(it) }
                         )
                         PhraseCategoryToggle(
-                            label = "Hlp verb",
+                            label = "helper",
                             checked = state.includeHelperVerb,
                             enabled = !state.playing,
                             onCheckedChange = { state.updateIncludeHelperVerb(it) }
@@ -1787,26 +1829,19 @@ private fun TopBar(
                             enabled = !state.playing,
                             onCheckedChange = { state.updateIncludeNouns(it) }
                         )
-                        if (!state.playing) {
-                            LbButton.Ghost("Conj quiz", onClick = { state.playAllConjugations(allVerbs, mode = "conjQuiz") })
-                        }
                     }
                 }
                 if (showControls) {
                     Spacer(Modifier.width(8.dp))
-                    PhraseCategoryToggle(
-                        label = "+ Slow",
-                        checked = state.slowFirst,
-                        enabled = !state.playing,
-                        onCheckedChange = { state.updateSlowFirst(it) }
-                    )
                     if (state.preparingPlayback) {
                         Spacer(Modifier.width(8.dp))
                         LbButton.Ghost("Generating", onClick = {}, enabled = false)
                     } else if (!state.playing) {
                         Spacer(Modifier.width(8.dp))
+                        val playCount = state.targetPlayCount(allVerbs)
                         VerbPlayButton(
-                            count = state.targetPlayCount(allVerbs),
+                            count = playCount,
+                            playLabel = if (playCount == null) "Play phrases" else null,
                             onPlay = {
                                 if (state.wordTypeVariationsEnabled()) {
                                     state.playAll(allVerbs, includeWordTypeVariations = true)
@@ -1873,11 +1908,12 @@ private fun PhraseCategoryToggle(
 
 @Composable
 private fun VerbPlayButton(
-    count: Int,
+    count: Int?,
     onPlay: () -> Unit,
     playLabel: String? = null
 ) {
     val label = playLabel ?: "Play $count"
+    val contentDescription = count?.let { "Play $it" } ?: label
     Surface(
         color = LbColors.Audio,
         shape = RoundedCornerShape(10.dp),
@@ -1893,7 +1929,7 @@ private fun VerbPlayButton(
         ) {
             Icon(
                 imageVector = Icons.Default.PlayArrow,
-                contentDescription = "Play $count",
+                contentDescription = contentDescription,
                 tint = Color.White,
                 modifier = Modifier.size(14.dp)
             )

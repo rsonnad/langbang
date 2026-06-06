@@ -25,8 +25,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.School
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,20 +53,23 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
+import com.sponic.langbang.data.PracticePrefsStore
 import com.sponic.langbang.data.model.ExampleWord
 import com.sponic.langbang.data.model.PhonemeEntry
 import com.sponic.langbang.data.model.TokenPair
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
-import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.ensureCachedAudio
+import com.sponic.langbang.domain.sourceAudioVoice
 import com.sponic.langbang.domain.targetAudioVoice
+import com.sponic.langbang.domain.targetSlowVoice
 import com.sponic.langbang.ui.common.CompactLessonListCard
 import com.sponic.langbang.ui.common.CompactLessonListDefaults
 import com.sponic.langbang.ui.common.SelectionNavButtons
-import kotlinx.coroutines.suspendCancellableCoroutine
-import java.io.File
-import kotlin.coroutines.resume
+import com.sponic.langbang.ui.common.StudyQueuePlayer
+import com.sponic.langbang.ui.common.SubtleCheckbox
+import com.sponic.langbang.ui.common.WordListPlaybackHeader
+import com.sponic.langbang.ui.common.WordPlayLimitControl
 import com.sponic.langbang.integrations.PronunciationScore
 import kotlinx.coroutines.launch
 
@@ -78,8 +79,92 @@ fun PronunciationScreen(app: LangbangApplication) {
     val labels = cloudState.bootstrap?.labels.orEmpty()
     val data = remember { app.lessonRepo.pronunciation() }
     var selected by remember { mutableStateOf(data.phonemes.firstOrNull()) }
-    var quizOpen by remember { mutableStateOf(false) }
     val online by app.network.online.collectAsState()
+    val scope = rememberCoroutineScope()
+    val player = remember { StudyQueuePlayer(app, scope) }
+    val allKeys = remember(data.phonemes) { data.phonemes.map { it.letter } }
+    var checkedKeys by remember {
+        mutableStateOf(
+            app.practicePrefs.checkedWordLemmas(PracticePrefsStore.CATEGORY_PRONUNCIATION)
+                .ifEmpty { allKeys.toSet() }
+        )
+    }
+    var randomOrder by remember {
+        mutableStateOf(app.practicePrefs.wordPlayRandom(PracticePrefsStore.CATEGORY_PRONUNCIATION))
+    }
+    var playLimitText by remember {
+        mutableStateOf(app.practicePrefs.wordPlayLimit(PracticePrefsStore.CATEGORY_PRONUNCIATION).toString())
+    }
+    var playingWord by remember { mutableStateOf<String?>(null) }
+    val playLimit = playLimitText.toIntOrNull()
+        ?.coerceIn(PracticePrefsStore.MIN_WORD_PLAY_LIMIT, PracticePrefsStore.MAX_WORD_PLAY_LIMIT)
+        ?: PracticePrefsStore.DEFAULT_WORD_PLAY_LIMIT
+
+    fun setChecked(next: Set<String>) {
+        checkedKeys = next
+        app.practicePrefs.setCheckedWordLemmas(PracticePrefsStore.CATEGORY_PRONUNCIATION, next)
+    }
+
+    fun practiceItems(): List<PronunciationPracticeItem> {
+        val pool = data.phonemes.filter { it.letter in checkedKeys }
+            .flatMap { ph ->
+                val examples = if (randomOrder) ph.examples.shuffled() else ph.examples
+                examples.take(playLimit).map { ex -> PronunciationPracticeItem(ph, ex) }
+            }
+        return if (randomOrder) pool.shuffled() else pool
+    }
+
+    fun publishItem(item: PronunciationPracticeItem, lang: String, position: String) {
+        NowVoicingBus.publish(
+            NowVoicing(
+                en = item.example.en,
+                pl = item.example.pl,
+                literal = null,
+                lang = lang,
+                position = position,
+                words = listOf(TokenPair(item.example.pl, item.example.en))
+            )
+        )
+    }
+
+    fun startPractice() {
+        val items = practiceItems()
+        if (items.isEmpty()) return
+        val speakEnglish = app.practicePrefs.speakEnglishFirst()
+        val slowFirst = app.practicePrefs.slowFirst()
+        val source = app.sourceAudioVoice()
+        val target = app.targetAudioVoice()
+        val slow = app.targetSlowVoice()
+        player.start(
+            total = items.size,
+            publishParked = { i -> publishItem(items[i], "pause", "${i + 1}/${items.size}") },
+            prefetchItem = { i ->
+                val item = items[i]
+                if (speakEnglish) {
+                    app.ensureCachedAudio(item.example.en, source.locale, source.voice)
+                }
+                if (slowFirst) app.ensureCachedAudio(item.example.pl, target.locale, slow)
+                app.ensureCachedAudio(item.example.pl, target.locale, target.voice)
+            }
+        ) { i ->
+            val item = items[i]
+            val position = "${i + 1}/${items.size}"
+            selected = item.phoneme
+            playingWord = item.example.pl
+            if (speakEnglish) {
+                publishItem(item, "en", position)
+                say(item.example.en, source.locale, source.voice)
+            }
+            if (slowFirst) {
+                publishItem(item, "pl-slow", position)
+                say(item.example.pl, target.locale, slow)
+            }
+            publishItem(item, "pl", position)
+            say(item.example.pl, target.locale, target.voice)
+            playingWord = null
+            if (i < items.size - 1) reveal(300L)
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(modifier = Modifier.fillMaxSize()) {
@@ -87,6 +172,17 @@ fun PronunciationScreen(app: LangbangApplication) {
                 phonemes = data.phonemes,
                 selected = selected,
                 onSelect = { selected = it },
+                checkedKeys = checkedKeys,
+                onTogglePhoneme = { key, checked ->
+                    setChecked(if (checked) checkedKeys + key else checkedKeys - key)
+                },
+                onToggleAll = { checked -> setChecked(if (checked) allKeys.toSet() else emptySet()) },
+                randomOrder = randomOrder,
+                onRandomOrderChange = {
+                    randomOrder = it
+                    app.practicePrefs.setWordPlayRandom(PracticePrefsStore.CATEGORY_PRONUNCIATION, it)
+                },
+                enabled = !player.hasQueue,
                 modifier = Modifier
                     .width(360.dp)
                     .fillMaxHeight()
@@ -101,27 +197,49 @@ fun PronunciationScreen(app: LangbangApplication) {
                         labels = labels,
                         online = online,
                         onSelectPhoneme = { selected = it },
-                        onStartQuiz = { quizOpen = true }
+                        playingWord = playingWord,
+                        practiceCount = practiceItems().size,
+                        practiceActive = player.hasQueue,
+                        playLimitText = playLimitText,
+                        onPlayLimitTextChange = {
+                            playLimitText = it
+                            it.toIntOrNull()?.let { n ->
+                                app.practicePrefs.setWordPlayLimit(
+                                    PracticePrefsStore.CATEGORY_PRONUNCIATION,
+                                    n
+                                )
+                            }
+                        },
+                        onStartPractice = { startPractice() }
                     )
                 }
             }
         }
     }
 
-    if (quizOpen) {
-        PhonemeQuiz(
-            app = app,
-            phonemes = data.phonemes,
-            onDismiss = { quizOpen = false }
-        )
+    DisposableEffect(Unit) {
+        onDispose {
+            player.stop()
+        }
     }
 }
+
+private data class PronunciationPracticeItem(
+    val phoneme: PhonemeEntry,
+    val example: ExampleWord
+)
 
 @Composable
 private fun PhonemeList(
     phonemes: List<PhonemeEntry>,
     selected: PhonemeEntry?,
     onSelect: (PhonemeEntry) -> Unit,
+    checkedKeys: Set<String>,
+    onTogglePhoneme: (String, Boolean) -> Unit,
+    onToggleAll: (Boolean) -> Unit,
+    randomOrder: Boolean,
+    onRandomOrderChange: (Boolean) -> Unit,
+    enabled: Boolean,
     modifier: Modifier = Modifier
 ) {
     // Flashcard-quiz button moved out of here to the detail header (left of "Play
@@ -131,50 +249,73 @@ private fun PhonemeList(
         contentPadding = CompactLessonListDefaults.ContentPadding,
         verticalArrangement = Arrangement.spacedBy(CompactLessonListDefaults.ItemGap)
     ) {
+        item(key = "all-phonemes-master") {
+            val allKeys = phonemes.map { it.letter }
+            WordListPlaybackHeader(
+                allChecked = allKeys.isNotEmpty() && checkedKeys.containsAll(allKeys),
+                onAllCheckedChange = onToggleAll,
+                random = randomOrder,
+                onRandomChange = onRandomOrderChange,
+                enabled = enabled
+            )
+        }
         itemsIndexed(phonemes) { index, ph ->
             val isSelected = ph == selected
-            CompactLessonListCard(
-                selected = isSelected,
-                onClick = { onSelect(ph) },
-                alternate = index % 2 == 1,
-                contentPadding = CompactLessonListDefaults.MultiLineItemPadding
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                val glyphColor = if (isSelected) Color.White else LbColors.Primary
-                val ipaColor = if (isSelected) Color.White.copy(alpha = 0.9f)
-                else LbColors.TextSecondary
-                val hintColor = if (isSelected) Color.White.copy(alpha = 0.85f)
-                else LbColors.TextMuted
-                Text(
-                    text = buildAnnotatedString {
-                        withStyle(
-                            SpanStyle(
-                                color = glyphColor,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        ) {
-                            append(ph.letter)
-                        }
-                        append("  ")
-                        withStyle(
-                            SpanStyle(
-                                color = ipaColor,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        ) {
-                            append(ph.ipa)
-                        }
-                        append("  ")
-                        withStyle(SpanStyle(color = hintColor)) {
-                            append(ph.englishApproximation)
-                        }
-                    },
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp,
-                    color = hintColor,
-                    modifier = Modifier.fillMaxWidth()
+                SubtleCheckbox(
+                    checked = ph.letter in checkedKeys,
+                    onCheckedChange = { onTogglePhoneme(ph.letter, it) },
+                    enabled = enabled,
+                    modifier = Modifier.size(18.dp)
                 )
+                Spacer(Modifier.width(6.dp))
+                CompactLessonListCard(
+                    selected = isSelected,
+                    onClick = { onSelect(ph) },
+                    modifier = Modifier.weight(1f),
+                    alternate = index % 2 == 1,
+                    contentPadding = CompactLessonListDefaults.MultiLineItemPadding
+                ) {
+                    val glyphColor = if (isSelected) Color.White else LbColors.Primary
+                    val ipaColor = if (isSelected) Color.White.copy(alpha = 0.9f)
+                    else LbColors.TextSecondary
+                    val hintColor = if (isSelected) Color.White.copy(alpha = 0.85f)
+                    else LbColors.TextMuted
+                    Text(
+                        text = buildAnnotatedString {
+                            withStyle(
+                                SpanStyle(
+                                    color = glyphColor,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            ) {
+                                append(ph.letter)
+                            }
+                            append("  ")
+                            withStyle(
+                                SpanStyle(
+                                    color = ipaColor,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            ) {
+                                append(ph.ipa)
+                            }
+                            append("  ")
+                            withStyle(SpanStyle(color = hintColor)) {
+                                append(ph.englishApproximation)
+                            }
+                        },
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        color = hintColor,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
     }
@@ -188,7 +329,12 @@ private fun PhonemeDetail(
     labels: Map<String, String>,
     online: Boolean,
     onSelectPhoneme: (PhonemeEntry) -> Unit,
-    onStartQuiz: () -> Unit
+    playingWord: String?,
+    practiceCount: Int,
+    practiceActive: Boolean,
+    playLimitText: String,
+    onPlayLimitTextChange: (String) -> Unit,
+    onStartPractice: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val targetVoice = app.targetAudioVoice()
@@ -201,15 +347,6 @@ private fun PhonemeDetail(
     // Latest score by Polish word, cleared when the user switches phonemes.
     val scores = remember(phoneme) { mutableStateOf(mapOf<String, PronunciationScore>()) }
     var error by remember(phoneme) { mutableStateOf<String?>(null) }
-    // Play-all queue state. `playingAll` drives the button label/icon; `playingWord`
-    // highlights whichever row is currently being voiced. Switching phonemes (the
-    // `remember(phoneme)` keys) cancels the previous queue via job.cancel below.
-    var playingAll by remember(phoneme) { mutableStateOf(false) }
-    var playingWord by remember(phoneme) { mutableStateOf<String?>(null) }
-    var playAllJob by remember(phoneme) {
-        mutableStateOf<kotlinx.coroutines.Job?>(null)
-    }
-
     fun publishExample(ex: ExampleWord) {
         NowVoicingBus.publish(
             NowVoicing(
@@ -222,52 +359,11 @@ private fun PhonemeDetail(
         )
     }
 
-    fun stopPronunciationPlayback() {
-        playAllJob?.cancel()
-        playAllJob = null
-        playingAll = false
-        playingWord = null
-        app.audioPlayer.stop()
-        NowVoicingBus.clear()
-        PlaybackController.unregister()
-    }
-
-    fun startPronunciationPlayback() {
-        playingAll = true
-        PlaybackController.register { stopPronunciationPlayback() }
-        playAllJob = scope.launch {
-            try {
-                phoneme.examples.forEach { ex ->
-                    playingWord = ex.pl
-                    publishExample(ex)
-                    val f = app.ensureCachedAudio(ex.pl, targetVoice.locale, targetVoice.voice)
-                    if (f != null) playFileAndAwait(app, f)
-                    kotlinx.coroutines.delay(220)
-                }
-            } finally {
-                playingAll = false
-                playingWord = null
-                NowVoicingBus.clear()
-                PlaybackController.unregister()
-            }
-        }
-    }
-
     fun playSingleExample(ex: ExampleWord) {
-        stopPronunciationPlayback()
-        playingWord = ex.pl
         scope.launch {
+            publishExample(ex)
             val f = app.ensureCachedAudio(ex.pl, targetVoice.locale, targetVoice.voice) ?: return@launch
-            app.audioPlayer.play(f) {
-                if (playingWord == ex.pl) playingWord = null
-            }
-        }
-    }
-
-    // Stop any in-flight queue when the user navigates to a different phoneme.
-    DisposableEffect(phoneme) {
-        onDispose {
-            stopPronunciationPlayback()
+            app.audioPlayer.play(f) {}
         }
     }
 
@@ -299,38 +395,24 @@ private fun PhonemeDetail(
                 )
             }
             Spacer(Modifier.weight(1f))
-            // Flashcard quiz — relocated here from the top of the left list and made
-            // compact, sitting just to the LEFT of the play queue control.
-            CompactPronHeaderButton(
-                label = label(labels, "pronunciation.flashcard_quiz", "Flashcard quiz"),
-                onClick = onStartQuiz,
-                icon = Icons.Default.School,
-                containerColor = MaterialTheme.colorScheme.secondary
-            )
-            Spacer(Modifier.width(6.dp))
-            // Play queue at the TOP next to the phoneme — was buried beside "Common
-            // words" further down, easy to miss / below the fold (reported 2026-05-30).
-            CompactPronHeaderButton(
-                label = if (playingAll) {
-                    label(labels, "pronunciation.stop", "Stop")
-                } else {
-                    "${label(labels, "pronunciation.play", "Play")} ${phoneme.examples.size}"
-                },
-                onClick = {
-                    if (playingAll) {
-                        stopPronunciationPlayback()
-                    } else {
-                        startPronunciationPlayback()
-                    }
-                },
-                icon = if (playingAll) Icons.Default.Stop else Icons.Default.PlayArrow,
-                contentDescription = if (playingAll) {
-                    label(labels, "pronunciation.stop_playback", "Stop playback")
-                } else {
-                    "${label(labels, "pronunciation.play", "Play")} ${phoneme.examples.size}"
-                },
-                containerColor = if (playingAll) LbColors.Danger else MaterialTheme.colorScheme.primary
-            )
+            if (!practiceActive) {
+                CompactPronHeaderButton(
+                    label = "${label(labels, "pronunciation.play", "Play")} $practiceCount",
+                    onClick = onStartPractice,
+                    icon = Icons.Default.PlayArrow,
+                    contentDescription = "${label(labels, "pronunciation.play", "Play")} $practiceCount",
+                    containerColor = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(6.dp))
+                WordPlayLimitControl(
+                    limitText = playLimitText,
+                    onLimitTextChange = onPlayLimitTextChange,
+                    leadingLabel = "with",
+                    trailingLabel = "vars"
+                )
+            } else {
+                Text("Playing", fontSize = 12.sp, color = LbColors.TextMuted)
+            }
             Spacer(Modifier.width(8.dp))
             SelectionNavButtons(
                 items = phonemes,
@@ -601,19 +683,5 @@ private fun ScoreChip(accuracy: Int) {
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
         )
-    }
-}
-
-/**
- * Suspends until [file] finishes playing. If the file is missing AudioPlayer.play
- * silently no-ops without firing onDone — checking up front avoids hanging the
- * Play-all queue. Cancellation stops playback so navigating away during a queue
- * doesn't keep audio bleeding into the next phoneme.
- */
-private suspend fun playFileAndAwait(app: LangbangApplication, file: File) {
-    if (!file.exists()) return
-    suspendCancellableCoroutine<Unit> { cont ->
-        app.audioPlayer.play(file) { if (cont.isActive) cont.resume(Unit) }
-        cont.invokeOnCancellation { app.audioPlayer.stop() }
     }
 }

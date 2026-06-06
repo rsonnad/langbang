@@ -46,7 +46,7 @@ fun WordListPlaybackHeader(
             enabled = enabled,
             modifier = Modifier.size(20.dp)
         )
-        Spacer(Modifier.width(4.dp))
+        Spacer(Modifier.width(2.dp))
         Text(
             allLabel,
             fontSize = 11.sp,
@@ -95,7 +95,7 @@ fun WordPlayLimitControl(
             maxValue = maxValue
         )
         trailingLabel?.let {
-            Spacer(Modifier.width(4.dp))
+            Spacer(Modifier.width(2.dp))
             Text(
                 it,
                 fontSize = 11.sp,
@@ -118,7 +118,7 @@ private fun CompactStepper(
         shape = LbShapes.Button,
         border = BorderStroke(1.dp, LbColors.Line),
         modifier = Modifier
-            .width(82.dp)
+            .width(68.dp)
             .height(30.dp)
     ) {
         Row(
@@ -134,7 +134,7 @@ private fun CompactStepper(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = if (enabled) LbColors.TextPrimary else LbColors.TextMuted,
-                modifier = Modifier.width(26.dp),
+                modifier = Modifier.width(24.dp),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             StepperArrow(
@@ -156,7 +156,7 @@ private fun StepperArrow(
         color = androidx.compose.ui.graphics.Color.Transparent,
         shape = LbShapes.Button,
         modifier = Modifier
-            .width(28.dp)
+            .width(22.dp)
             .height(30.dp)
             .clip(LbShapes.Button)
             .clickable(enabled = enabled, onClick = onClick)

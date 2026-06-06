@@ -286,6 +286,7 @@ internal class RandomPlayerState(
                 next = { next() },
                 restart = { restart() },
                 pauseResume = { if (playing) pause() else resume() },
+                parkCurrent = { parkCurrentForInterruption() },
                 isPaused = { paused }
             )
         )
@@ -295,14 +296,17 @@ internal class RandomPlayerState(
                 val s = phrases[i]
                 position = i + 1
                 val pos = "${i + 1}/${phrases.size}"
+                val speakEnglish = app.practicePrefs.speakEnglishFirst()
                 val slowFirst = app.practicePrefs.slowFirst()
                 val slowPlVoice = app.targetSlowVoice()
                 if (slowFirst) {
                     app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, slowPlVoice)
                 }
                 app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
-                pub(s, "en", pos)
-                playAndAwait(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                if (speakEnglish) {
+                    pub(s, "en", pos)
+                    playAndAwait(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                }
                 if (slowFirst) {
                     pub(s, "pl-slow", pos)
                     playAndAwait(s.pl, app.targetAudioVoice().locale, slowPlVoice)
@@ -328,6 +332,17 @@ internal class RandomPlayerState(
             NowVoicingBus.clear()
             PlaybackController.unregister()
         }
+    }
+
+    private fun parkCurrentForInterruption() {
+        if (phrases.isEmpty()) return
+        job?.cancel()
+        job = null
+        app.audioPlayer.stop()
+        playing = false
+        paused = true
+        republishCurrent()
+        PlaybackController.setPaused(true)
     }
 
     private fun pub(s: SentenceExample, lang: String, pos: String) {

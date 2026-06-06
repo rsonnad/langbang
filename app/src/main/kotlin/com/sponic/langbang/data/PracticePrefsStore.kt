@@ -12,6 +12,12 @@ class PracticePrefsStore(context: Context) {
         prefs.edit().putBoolean(KEY_SLOW_FIRST, enabled).apply()
     }
 
+    fun speakEnglishFirst(): Boolean = prefs.getBoolean(KEY_SPEAK_ENGLISH_FIRST, true)
+
+    fun setSpeakEnglishFirst(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SPEAK_ENGLISH_FIRST, enabled).apply()
+    }
+
     /**
      * Sticky set of verb lemmas the learner has ticked in the Verbs list. These are the
      * verbs included (in random order) when Play / the quizzes run across multiple
@@ -98,6 +104,7 @@ class PracticePrefsStore(context: Context) {
 
     companion object {
         private const val KEY_SLOW_FIRST = "slow-first"
+        private const val KEY_SPEAK_ENGLISH_FIRST = "speak-english-first"
         private const val KEY_CHECKED_VERBS = "checked-verbs"
         private const val KEY_VERB_PHRASE_INCLUDE_PRONOUNS = "verb-phrase-include-pronouns"
         private const val KEY_VERB_PHRASE_INCLUDE_HELPER_VERB = "verb-phrase-include-helper-verb"
@@ -109,6 +116,8 @@ class PracticePrefsStore(context: Context) {
         const val CATEGORY_ADJECTIVES = "adjectives"
         const val CATEGORY_ADVERBS = "adverbs"
         const val CATEGORY_NOUNS = "nouns"
+        const val CATEGORY_PRONUNCIATION = "pronunciation"
+        const val CATEGORY_NUMBERS = "numbers"
         const val DEFAULT_WORD_PLAY_LIMIT = 3
         const val MIN_WORD_PLAY_LIMIT = 1
         const val MAX_WORD_PLAY_LIMIT = 99

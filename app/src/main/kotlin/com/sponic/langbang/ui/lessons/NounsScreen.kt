@@ -333,6 +333,7 @@ internal class NounsScreenState(
     }
 
     private fun startQueue(items: List<SentenceExample>, quiz: Boolean) {
+        val speakEnglish = quiz || app.practicePrefs.speakEnglishFirst()
         val slowFirst = app.practicePrefs.slowFirst()
         val slowPlVoice = app.targetSlowVoice()
         player.start(
@@ -349,7 +350,9 @@ internal class NounsScreenState(
             },
             prefetchItem = { i ->
                 val s = items[i]
-                app.ensureCachedAudio(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                if (speakEnglish) {
+                    app.ensureCachedAudio(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                }
                 app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                 if (slowFirst && !quiz) app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, slowPlVoice)
             },
@@ -374,16 +377,15 @@ internal class NounsScreenState(
                 reveal(2000L)
                 pub("pl", plHidden = false)
                 say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
-            } else if (slowFirst) {
-                pub("en")
-                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
-                pub("pl-slow")
-                say(s.pl, app.targetAudioVoice().locale, slowPlVoice)
-                pub("pl")
-                say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             } else {
-                pub("en")
-                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                if (speakEnglish) {
+                    pub("en")
+                    say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                }
+                if (slowFirst) {
+                    pub("pl-slow")
+                    say(s.pl, app.targetAudioVoice().locale, slowPlVoice)
+                }
                 pub("pl")
                 say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             }
@@ -496,20 +498,6 @@ private fun ExamplesControls(state: NounsScreenState, nouns: List<NounEntry>) {
                 label = if (filtersExpanded) "Hide filters" else "Filters",
                 onClick = { filtersExpanded = !filtersExpanded }
             )
-            if (!state.playing) {
-                LbButton.Ghost(
-                    label = "Recall quiz",
-                    onClick = { state.recallQuiz() }
-                )
-                if (state.sentences.isNotEmpty()) {
-                    LbButton.Ghost(
-                        label = "Sent. quiz",
-                        icon = Icons.Default.PlayArrow,
-                        enabled = playCount > 0,
-                        onClick = { state.playAll(nouns, quiz = true) }
-                    )
-                }
-            }
             if (state.busy || state.sentences.isEmpty()) {
                 LbButton.Ghost(
                     label = if (state.busy) "Generating" else "Generate examples",
@@ -519,9 +507,7 @@ private fun ExamplesControls(state: NounsScreenState, nouns: List<NounEntry>) {
                 )
             }
             Spacer(Modifier.weight(1f))
-            if (state.playing) {
-                LbButton.Stop("Stop", onClick = { state.stop() }, icon = Icons.Default.Stop)
-            } else {
+            if (!state.playing) {
                 LbButton.Ghost(
                     label = "Forms",
                     count = formCount,
@@ -695,26 +681,29 @@ private fun NounParadigm(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 5.dp),
+            .padding(horizontal = 16.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Bottom
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(noun.lemma, fontSize = 26.sp, fontWeight = FontWeight.Bold,
+            Text(noun.lemma, fontSize = 22.sp, fontWeight = FontWeight.Bold,
                 color = LbColors.Primary)
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(10.dp))
             DelayedEnglishTranslation(
                 text = "${noun.en}  ·  ${genderName(noun.gender)}",
                 fontSize = 14.sp, color = LbColors.TextSecondary,
-                modifier = Modifier.padding(bottom = 4.dp)
+                modifier = Modifier.padding(top = 1.dp)
             )
             Spacer(Modifier.weight(1f))
             SelectionNavButtons(
                 items = nouns,
                 selected = noun,
                 onSelect = { state.select(it) },
+                buttonSize = 34.dp,
+                iconSize = 23.dp,
+                gap = 10.dp,
                 previousContentDescription = "Previous noun",
                 nextContentDescription = "Next noun"
             )

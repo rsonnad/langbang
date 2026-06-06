@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,6 +25,7 @@ import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -35,21 +38,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
-import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.awaitAudioPlayback
 import com.sponic.langbang.domain.ensureCachedAudio
-import com.sponic.langbang.domain.sourceAudioVoice
 import com.sponic.langbang.domain.targetAudioVoice
 import com.sponic.langbang.domain.targetSlowVoice
-import com.sponic.langbang.integrations.AzureTtsClient
 import com.sponic.langbang.ui.theme.LbColors
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.coroutines.coroutineContext
 
@@ -80,7 +81,6 @@ fun NowVoicingPanel(
     val effectiveLive = remember(live, paused) { if (paused) live?.copy(lang = "pause") else live }
     val scope = rememberCoroutineScope()
     var wordDrillJob by remember { mutableStateOf<Job?>(null) }
-    var phraseReplayJob by remember { mutableStateOf<Job?>(null) }
     val visibleWords = remember(pinned?.pl, pinned?.words) {
         pinned.nowVoicingPolishWords()
     }
@@ -97,13 +97,14 @@ fun NowVoicingPanel(
         val item = pinned
         if (word.isNotEmpty() && item != null) {
             val currentTransport = transport
-            if (currentTransport?.pauseResume != null && !currentTransport.isPaused()) {
+            if (currentTransport?.parkCurrent != null) {
+                PlaybackController.parkCurrent()
+            } else if (currentTransport?.pauseResume != null && !currentTransport.isPaused()) {
                 PlaybackController.pauseResume()
             } else {
                 app.audioPlayer.stop()
             }
             wordDrillJob?.cancel()
-            phraseReplayJob?.cancel()
             wordDrillJob = scope.launch {
                 val thisJob = coroutineContext[Job]
                 try {
@@ -115,35 +116,6 @@ fun NowVoicingPanel(
                 } finally {
                     if (wordDrillJob == thisJob) {
                         wordDrillJob = null
-                    }
-                }
-            }
-        }
-    }
-    val replayPinnedPhrase: () -> Unit = {
-        val item = pinned
-        if (item != null) {
-            PlaybackController.stop()
-            wordDrillJob?.cancel()
-            phraseReplayJob?.cancel()
-            phraseReplayJob = scope.launch {
-                val thisJob = coroutineContext[Job]
-                delay(40L)
-                PlaybackController.register(
-                    PlaybackTransport(
-                        stop = {
-                            phraseReplayJob?.cancel()
-                            phraseReplayJob = null
-                            app.audioPlayer.stop()
-                        }
-                    )
-                )
-                try {
-                    app.replayNowVoicingPhrase(item)
-                } finally {
-                    if (phraseReplayJob == thisJob) {
-                        phraseReplayJob = null
-                        PlaybackController.unregister()
                     }
                 }
             }
@@ -177,19 +149,22 @@ fun NowVoicingPanel(
                     syllableShading = syllableShading,
                     modifier = Modifier
                         .weight(1f)
-                        .padding(start = 8.dp, end = 16.dp)
+                        .padding(start = 8.dp, end = 16.dp, bottom = 24.dp)
                 )
                 Column(
                     modifier = Modifier.width(40.dp),
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    NowVoicingTransport(
-                        canReplayPhrase = pinned != null,
-                        onReplayPhrase = replayPinnedPhrase
-                    )
+                    NowVoicingTransport()
                 }
             }
+            NowVoicingPlaybackOptions(
+                app = app,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 56.dp, bottom = 8.dp)
+            )
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
@@ -210,6 +185,62 @@ fun NowVoicingPanel(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun NowVoicingPlaybackOptions(
+    app: LangbangApplication,
+    modifier: Modifier = Modifier
+) {
+    var speakEnglish by remember { mutableStateOf(app.practicePrefs.speakEnglishFirst()) }
+    var slowFirst by remember { mutableStateOf(app.practicePrefs.slowFirst()) }
+    Row(
+        modifier = modifier.height(24.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        NowVoicingOptionCheckbox(
+            label = "English",
+            checked = speakEnglish,
+            onCheckedChange = {
+                speakEnglish = it
+                app.practicePrefs.setSpeakEnglishFirst(it)
+            }
+        )
+        NowVoicingOptionCheckbox(
+            label = "Slow",
+            checked = slowFirst,
+            onCheckedChange = {
+                slowFirst = it
+                app.practicePrefs.setSlowFirst(it)
+            }
+        )
+    }
+}
+
+@Composable
+private fun NowVoicingOptionCheckbox(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.clickable { onCheckedChange(!checked) }
+    ) {
+        SubtleCheckbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(1.dp))
+        Text(
+            label,
+            color = LbColors.TextSecondary,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 
@@ -239,19 +270,6 @@ private suspend fun LangbangApplication.playCachedFirst(
     readyFile?.let { awaitAudioPlayback(it) }
 }
 
-private suspend fun LangbangApplication.replayNowVoicingPhrase(item: NowVoicing) {
-    val slowFirst = practicePrefs.slowFirst()
-    val slowVoice = targetSlowVoice()
-    NowVoicingBus.publish(item.copy(lang = "en", plHidden = false))
-    playCachedFirst(item.en, sourceAudioVoice().locale, sourceAudioVoice().voice)
-    if (slowFirst) {
-        NowVoicingBus.publish(item.copy(lang = "pl-slow", plHidden = false))
-        playCachedFirst(item.pl, targetAudioVoice().locale, slowVoice)
-    }
-    NowVoicingBus.publish(item.copy(lang = "pl", plHidden = false))
-    playCachedFirst(item.pl, targetAudioVoice().locale, targetAudioVoice().voice)
-}
-
 private fun nowVoicingStatus(pinned: NowVoicing?, live: NowVoicing?): String {
     val activeLang = live?.lang
     val tag = when (activeLang) {
@@ -270,10 +288,7 @@ private fun nowVoicingStatus(pinned: NowVoicing?, live: NowVoicing?): String {
 }
 
 @Composable
-private fun NowVoicingTransport(
-    canReplayPhrase: Boolean,
-    onReplayPhrase: () -> Unit
-) {
+private fun NowVoicingTransport() {
     val transport by PlaybackController.transport.collectAsState()
     val anyPlaying by PlaybackController.playing.collectAsState()
     val pausedSignal by PlaybackController.paused.collectAsState()
@@ -291,12 +306,6 @@ private fun NowVoicingTransport(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.padding(4.dp)
         ) {
-            TransportIcon(
-                icon = Icons.Filled.PlayArrow,
-                label = "Play phrase again",
-                enabled = canReplayPhrase,
-                onClick = onReplayPhrase
-            )
             TransportIcon(
                 icon = Icons.Filled.SkipPrevious,
                 label = "Rewind",

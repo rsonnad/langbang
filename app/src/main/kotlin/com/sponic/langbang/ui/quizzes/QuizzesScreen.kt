@@ -56,8 +56,8 @@ import com.sponic.langbang.ui.lessons.VerbsTabState
 /**
  * Tab-root for the new tap-to-answer quiz section. Lists the available drill modes
  * as Cards; selecting one swaps the body for [MultipleChoiceQuiz] until the user
- * exits. Separate from the existing audio "Conj quiz" button in
- * VerbsTab — those drive playback; this is silent, fast, tablet-on-couch friendly.
+ * exits. The quiz page owns quiz entry points, while lesson screens stay focused
+ * on practice playback.
  *
  * Current modes:
  *   1. Practice (self-graded production recall)
