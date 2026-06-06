@@ -18,6 +18,7 @@ data class PlaybackTransport(
     val next: (() -> Unit)? = null,
     val restart: (() -> Unit)? = null,
     val pauseResume: (() -> Unit)? = null,
+    val parkCurrent: (() -> Unit)? = null,
     /** Source supplies a callback the panel can poll to decide Pause vs Resume icon. */
     val isPaused: () -> Boolean = { false },
 )
@@ -79,6 +80,12 @@ object PlaybackController {
     fun pauseResume() {
         val t = transport.value ?: return
         t.pauseResume?.invoke()
+        paused.value = t.isPaused()
+    }
+
+    fun parkCurrent() {
+        val t = transport.value ?: return
+        t.parkCurrent?.invoke()
         paused.value = t.isPaused()
     }
 }

@@ -440,14 +440,28 @@ private fun AppHeader(
             Row(
                 modifier = Modifier.fillMaxWidth()
                     .border(0.dp, Color.Transparent)
-                    .padding(start = 10.dp, end = 12.dp, top = 6.dp),
+                    .padding(start = 6.dp, end = 12.dp, top = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                IconButton(
+                    onClick = onToggleSettings,
+                    modifier = Modifier.size(34.dp),
+                    colors = IconButtonDefaults.iconButtonColors(
+                        contentColor = if (section == Section.Settings) LbColors.AudioBright
+                        else LbColors.OnDark
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = label(labels, "tabs.settings", "Settings"),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .clickable(onClick = onTitleClick)
-                        .padding(start = 2.dp, end = 13.dp)
+                        .padding(start = 4.dp, end = 13.dp)
                 ) {
                     Image(
                         painter = painterResource(R.drawable.langbang_logo_square),
@@ -497,20 +511,6 @@ private fun AppHeader(
                         labels = labels,
                         onSelect = onSelect,
                         modifier = Modifier.height(50.dp)
-                    )
-                }
-                IconButton(
-                    onClick = onToggleSettings,
-                    modifier = Modifier.size(34.dp),
-                    colors = IconButtonDefaults.iconButtonColors(
-                        contentColor = if (section == Section.Settings) LbColors.AudioBright
-                        else LbColors.OnDark
-                    )
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Settings,
-                        contentDescription = label(labels, "tabs.settings", "Settings"),
-                        modifier = Modifier.size(20.dp)
                     )
                 }
                 // Top bar stays single-row tall. The CacheBadge ("audio 9667/10054")

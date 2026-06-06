@@ -42,6 +42,27 @@
           ]
         },
         {
+          "pl": "Są ludzie, którzy mówią, że jestem francuskim pieskiem, ale tak naprawdę jestem uczciwym człowiekiem.",
+          "en": "There are people who say I'm a French poodle, but actually I am an honest man.",
+          "literal": "There-are people, who say, that I-am French little-dog, but so really I-am honest man.",
+          "words": [
+            {"pl": "Są",             "en": "there-are"},
+            {"pl": "ludzie,",        "en": "people,"},
+            {"pl": "którzy",         "en": "who"},
+            {"pl": "mówią,",         "en": "say,"},
+            {"pl": "że",             "en": "that"},
+            {"pl": "jestem",         "en": "I-am"},
+            {"pl": "francuskim",     "en": "French"},
+            {"pl": "pieskiem,",      "en": "little-dog,"},
+            {"pl": "ale",            "en": "but"},
+            {"pl": "tak",            "en": "so"},
+            {"pl": "naprawdę",       "en": "really"},
+            {"pl": "jestem",         "en": "I-am"},
+            {"pl": "uczciwym",       "en": "honest"},
+            {"pl": "człowiekiem.",   "en": "man."}
+          ]
+        },
+        {
           "pl": "Jestem z Austin, w Teksasie.",
           "en": "I am from Austin, Texas.",
           "literal": "I-am from Austin, in Texas.",

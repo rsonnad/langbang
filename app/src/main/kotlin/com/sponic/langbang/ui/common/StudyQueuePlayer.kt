@@ -102,6 +102,7 @@ class StudyQueuePlayer(
                 next = if (nextable) ::next else null,
                 restart = if (restartable) ::restart else null,
                 pauseResume = ::pauseResume,
+                parkCurrent = ::parkCurrentForInterruption,
                 isPaused = { isPaused },
             )
         )
@@ -201,6 +202,14 @@ class StudyQueuePlayer(
         cancelForRetain()
         index = 0
         launchLoop()
+    }
+
+    fun parkCurrentForInterruption() {
+        if (!hasQueue) return
+        cancelForRetain()
+        playingIndex = index.coerceIn(0, (total - 1).coerceAtLeast(0))
+        updatePaused(true)
+        publishParked?.invoke(playingIndex)
     }
 
     fun stop() {

@@ -365,6 +365,7 @@ internal class AdverbsScreenState(
     }
 
     private fun startQueue(items: List<SentenceExample>, quiz: Boolean) {
+        val speakEnglish = quiz || app.practicePrefs.speakEnglishFirst()
         val slowFirst = app.practicePrefs.slowFirst()
         val slowPlVoice = app.targetSlowVoice()
         player.start(
@@ -381,7 +382,9 @@ internal class AdverbsScreenState(
             },
             prefetchItem = { i ->
                 val s = items[i]
-                app.ensureCachedAudio(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                if (speakEnglish) {
+                    app.ensureCachedAudio(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                }
                 app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                 if (slowFirst && !quiz) app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, slowPlVoice)
             },
@@ -406,16 +409,15 @@ internal class AdverbsScreenState(
                 reveal(2000L)
                 pub("pl", plHidden = false)
                 say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
-            } else if (slowFirst) {
-                pub("en")
-                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
-                pub("pl-slow")
-                say(s.pl, app.targetAudioVoice().locale, slowPlVoice)
-                pub("pl")
-                say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             } else {
-                pub("en")
-                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                if (speakEnglish) {
+                    pub("en")
+                    say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                }
+                if (slowFirst) {
+                    pub("pl-slow")
+                    say(s.pl, app.targetAudioVoice().locale, slowPlVoice)
+                }
                 pub("pl")
                 say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             }
@@ -581,9 +583,7 @@ private fun AdvExamplesControls(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (state.playing) {
-                LbButton.Stop("Stop", onClick = { state.stop() }, icon = Icons.Default.Stop)
-            } else {
+            if (!state.playing) {
                 LbButton.Audio(
                     "Play",
                     onClick = { state.playAll(adverbs, quiz = false) },
@@ -596,9 +596,6 @@ private fun AdvExamplesControls(
                     leadingLabel = "with",
                     trailingLabel = "vars"
                 )
-            }
-            if (state.sentences.isNotEmpty() && !state.playing) {
-                LbButton.Ghost("Sent. quiz", onClick = { state.playAll(adverbs, quiz = true) }, icon = Icons.Default.PlayArrow)
             }
             if (state.busy) {
                 CircularProgressIndicator(
@@ -701,23 +698,26 @@ private fun AdverbSentences(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+            .padding(horizontal = 16.dp, vertical = 3.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Bottom
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(adv.lemma, fontSize = 26.sp, fontWeight = FontWeight.Bold,
+            Text(adv.lemma, fontSize = 22.sp, fontWeight = FontWeight.Bold,
                 color = LbColors.Primary)
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(10.dp))
             DelayedEnglishTranslation(text = adv.en, fontSize = 14.sp, color = LbColors.TextSecondary,
-                modifier = Modifier.padding(bottom = 4.dp))
+                modifier = Modifier.padding(top = 1.dp))
             Spacer(Modifier.weight(1f))
             SelectionNavButtons(
                 items = adverbs,
                 selected = adv,
                 onSelect = { state.select(it) },
+                buttonSize = 34.dp,
+                iconSize = 23.dp,
+                gap = 10.dp,
                 previousContentDescription = "Previous adverb",
                 nextContentDescription = "Next adverb"
             )

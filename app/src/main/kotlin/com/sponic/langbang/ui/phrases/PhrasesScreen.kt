@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Quiz
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -480,7 +479,8 @@ private fun PhraseDetail(
         if (items.isEmpty()) return
         player.stop()
         val slowPlVoice = app.targetSlowVoice()
-        val slow = slowFirst
+        val slow = app.practicePrefs.slowFirst()
+        val speakEnglish = quiz || app.practicePrefs.speakEnglishFirst()
         player.start(
             total = items.size,
             publishParked = { i ->
@@ -488,7 +488,9 @@ private fun PhraseDetail(
             },
             prefetchItem = { i ->
                 val s = items[i]
-                app.ensureCachedAudio(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                if (speakEnglish) {
+                    app.ensureCachedAudio(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                }
                 app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                 if (slow) app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, slowPlVoice)
             },
@@ -507,8 +509,10 @@ private fun PhraseDetail(
                 publishNV(s, "pl", pos, plHidden = false, quiz = true)
                 say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             } else {
-                publishNV(s, "en", pos)
-                say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                if (speakEnglish) {
+                    publishNV(s, "en", pos)
+                    say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
+                }
                 if (slow) {
                     publishNV(s, "pl-slow", pos)
                     say(s.pl, app.targetAudioVoice().locale, slowPlVoice)
@@ -580,13 +584,7 @@ private fun PhraseDetail(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                if (playing) {
-                    LbButton.Stop(
-                        label = "Stop",
-                        icon = Icons.Default.Stop,
-                        onClick = { player.stop() }
-                    )
-                } else {
+                if (!playing) {
                     LbButton.Audio(
                         label = "Play",
                         count = group.sentences.size,
@@ -595,29 +593,6 @@ private fun PhraseDetail(
                         }
                     )
                 }
-                if (!playing) {
-                    LbButton.Ghost(
-                        label = "Quiz",
-                        icon = Icons.Default.Quiz,
-                        onClick = {
-                            val pool: List<SentenceExample> =
-                                if (starredOnly) {
-                                    app.lessonRepo.lesson5().groups
-                                        .flatMap { it.sentences }
-                                        .filter { it.pl in starred }
-                                } else group.sentences
-                            if (pool.isNotEmpty()) {
-                                startPlayback(pool, quiz = true)
-                            }
-                        }
-                    )
-                }
-                PhraseToggle(
-                    label = "Slow first",
-                    checked = slowFirst,
-                    enabled = !playing,
-                    onCheckedChange = setSlowFirst
-                )
                 Surface(
                     color = if (starredOnly) LbColors.PrimarySoft else Color.White,
                     shape = LbShapes.Button,
