@@ -93,8 +93,23 @@ import com.sponic.langbang.ui.common.WordPlayLimitControl
 import com.sponic.langbang.ui.common.variableEndForPolishForm
 import com.sponic.langbang.ui.common.variableStartForPolishForm
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+private val WhitespaceRegex = Regex("\\s+")
+private val NonLetterRegex = Regex("[^\\p{L}]+")
+private val NonAlphaNumericRegex = Regex("[^\\p{L}\\p{N}]+")
+private val AwkwardVerbPhraseEnglishRegexes = listOf(
+    Regex("\\b(well|quickly|fast|gladly|willingly) wanted\\b"),
+    Regex("\\b(well|quickly|fast|gladly|willingly) want\\b"),
+    Regex("\\bwanted a (good|bad|big|small|new) (cat|dog)\\b"),
+    Regex("\\bwant a (good|bad|big|small|new) (cat|dog)\\b"),
+    Regex("\\bcan to \\w+\\b"),
+    Regex("\\bmust to \\w+\\b"),
+    Regex("\\bfeel like to \\w+\\b")
+)
 
 private data class ConjugationCue(
     val lemma: String,
@@ -121,6 +136,23 @@ private data class HelperPhrasePart(
     val words: List<TokenPair>,
     val en: String,
     val literal: String
+)
+
+private data class PhraseRequirementSnapshot(
+    val includePronouns: Boolean,
+    val includeHelperVerb: Boolean,
+    val includeAdjectives: Boolean,
+    val includeAdverbs: Boolean,
+    val includeNouns: Boolean,
+    val minimumWordCount: Int,
+    val pronounTokens: Set<String>,
+    val adjectiveTokens: Set<String>,
+    val adverbTokens: Set<String>,
+    val nounTokens: Set<String>,
+    val helperForms: Set<String>,
+    val knownInfinitives: Set<String>,
+    val rejectedQualityKeys: Set<String>,
+    val randomOrder: Boolean
 )
 
 private enum class EnglishComplementStyle {
@@ -464,7 +496,7 @@ internal class VerbsTabState(
     }
 
     private fun tokenCountOf(s: String): Int =
-        s.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
+        s.trim().split(WhitespaceRegex).count { it.isNotEmpty() }
 
     /**
      * Quiz uses [sentences] (present+past combined) by default — but if the user has
@@ -485,7 +517,7 @@ internal class VerbsTabState(
         val pastForms = verb.past_forms.orEmpty().values
             .filter { it.isNotBlank() }.map { it.lowercase() }.toSet()
         return list.filter { s ->
-            val tokens = s.pl.lowercase().split(Regex("[^\\p{L}]+"))
+            val tokens = s.pl.lowercase().split(NonLetterRegex)
                 .filter { it.isNotEmpty() }
             val hitsPresent = tokens.any { it in presentForms }
             val hitsPast = tokens.any { it in pastForms }
@@ -540,26 +572,57 @@ internal class VerbsTabState(
         verb: VerbEntry,
         limitPerType: Int
     ): List<SentenceExample> {
-        val allowedForms = allowedFormsFor(verb)
+        val requirements = phraseRequirementSnapshot()
+        val allowedForms = allowedFormsFor(verb, requirements)
         if (allowedForms.isEmpty() || limitPerType <= 0) return emptyList()
 
-        fun matches(): List<SentenceExample> =
-            phraseCandidateSentencesFor(verb)
-                .filter { sentenceMatchesPhraseRequirements(it, allowedForms) }
-                .filter { sentencePassesCommonUsageGate(verb, it) }
-                .distinctBy { it.pl }
-                .let { if (randomOrder) it.shuffled() else it }
-
-        var matching = matches()
+        generateProgress = "Building phrase variants · ${verb.lemma}"
+        var matching = mergePhraseCandidates(
+            existing = emptyList(),
+            local = buildLocalPhraseSentences(verb, limitPerType),
+            randomOrder = requirements.randomOrder
+        )
         if (matching.size < limitPerType) {
-            generateProgress = "Building phrase variants · ${verb.lemma}"
-            val local = buildLocalPhraseSentences(verb, limitPerType)
-            matching = (matching + local)
-                .distinctBy { it.pl }
-                .let { if (randomOrder) it.shuffled() else it }
+            val cached = matchingPhraseCandidates(
+                verb = verb,
+                candidates = phraseCandidateSentencesFor(verb),
+                allowedForms = allowedForms,
+                requirements = requirements
+            )
+            matching = mergePhraseCandidates(matching, cached, requirements.randomOrder)
         }
         if (matching.size < limitPerType) app.sentenceRegen.startIfNeeded()
         return matching.take(limitPerType)
+    }
+
+    private suspend fun matchingPhraseCandidates(
+        verb: VerbEntry,
+        candidates: List<SentenceExample>,
+        allowedForms: Set<String>,
+        requirements: PhraseRequirementSnapshot
+    ): List<SentenceExample> = withContext(Dispatchers.Default) {
+        candidates.asSequence()
+            .map { sentence -> sentence to sentence.pl.lessonPolishTokens().toSet() }
+            .filter { (_, tokens) ->
+                sentenceMatchesPhraseRequirements(allowedForms, requirements, tokens)
+            }
+            .filter { (sentence, tokens) ->
+                sentencePassesCommonUsageGate(verb, sentence, allowedForms, requirements, tokens)
+            }
+            .map { (sentence, _) -> sentence }
+            .distinctBy { it.pl }
+            .toList()
+            .let { if (requirements.randomOrder) it.shuffled() else it }
+    }
+
+    private suspend fun mergePhraseCandidates(
+        existing: List<SentenceExample>,
+        local: List<SentenceExample>,
+        randomOrder: Boolean
+    ): List<SentenceExample> = withContext(Dispatchers.Default) {
+        (existing + local)
+            .distinctBy { it.pl }
+            .let { if (randomOrder) it.shuffled() else it }
     }
 
     private fun phraseCandidateSentencesFor(verb: VerbEntry): List<SentenceExample> {
@@ -1109,7 +1172,7 @@ internal class VerbsTabState(
         val objectPhrase = englishObjectPhrase(adjective, adverb, noun, adverbModifiesAdjective)
         return listOfNotNull(subject, beforeVerb, verb, objectPhrase)
             .joinToString(" ")
-            .replace(Regex("\\s+"), " ")
+            .replace(WhitespaceRegex, " ")
             .trim()
     }
 
@@ -1172,21 +1235,43 @@ internal class VerbsTabState(
         return nouns.filter { it.lemma in selected }
     }
 
+    private fun phraseRequirementSnapshot(): PhraseRequirementSnapshot =
+        PhraseRequirementSnapshot(
+            includePronouns = includePronouns,
+            includeHelperVerb = includeHelperVerb,
+            includeAdjectives = includeAdjectives,
+            includeAdverbs = includeAdverbs,
+            includeNouns = includeNouns,
+            minimumWordCount = minimumPhraseWordCount(),
+            pronounTokens = if (includePronouns) selectedPronounTokens() else emptySet(),
+            adjectiveTokens = if (includeAdjectives) selectedAdjectiveTokens() else emptySet(),
+            adverbTokens = if (includeAdverbs) selectedAdverbTokens() else emptySet(),
+            nounTokens = if (includeNouns) selectedNounTokens() else emptySet(),
+            helperForms = if (includeHelperVerb) helperVerbPolishForms() else emptySet(),
+            knownInfinitives = if (includeHelperVerb) {
+                app.lessonRepo.lesson2().verbs.map { it.lemma.lowercase() }.toSet()
+            } else {
+                emptySet()
+            },
+            rejectedQualityKeys = app.practicePrefs.rejectedVerbPhraseKeys(),
+            randomOrder = randomOrder
+        )
+
     private fun sentenceMatchesPhraseRequirements(
-        sentence: SentenceExample,
-        allowedForms: Set<String>
+        allowedForms: Set<String>,
+        requirements: PhraseRequirementSnapshot,
+        tokens: Set<String>
     ): Boolean {
-        if (!sentenceContainsAllowedForm(sentence, allowedForms)) return false
-        val tokens = sentence.pl.lessonPolishTokens().toSet()
-        if (tokens.size < minimumPhraseWordCount()) return false
-        if (includePronouns && tokens.none { it in selectedPronounTokens() }) return false
-        if (includeHelperVerb &&
-            helperStructurePossibleFor(sentence, allowedForms) &&
-            !sentenceHasHelperStructure(sentence, allowedForms)
+        if (tokens.none { it in allowedForms }) return false
+        if (tokens.size < requirements.minimumWordCount) return false
+        if (requirements.includePronouns && tokens.none { it in requirements.pronounTokens }) return false
+        if (requirements.includeHelperVerb &&
+            helperStructurePossibleFor(tokens, allowedForms, requirements) &&
+            !sentenceHasHelperStructure(tokens, allowedForms, requirements)
         ) return false
-        if (includeAdjectives && tokens.none { it in selectedAdjectiveTokens() }) return false
-        if (includeAdverbs && tokens.none { it in selectedAdverbTokens() }) return false
-        if (includeNouns && tokens.none { it in selectedNounTokens() }) return false
+        if (requirements.includeAdjectives && tokens.none { it in requirements.adjectiveTokens }) return false
+        if (requirements.includeAdverbs && tokens.none { it in requirements.adverbTokens }) return false
+        if (requirements.includeNouns && tokens.none { it in requirements.nounTokens }) return false
         return true
     }
 
@@ -1234,7 +1319,10 @@ internal class VerbsTabState(
         return app.practicePrefs.checkedWordLemmas(category).intersect(all)
     }
 
-    private fun allowedFormsFor(verb: VerbEntry): Set<String> {
+    private fun allowedFormsFor(
+        verb: VerbEntry,
+        requirements: PhraseRequirementSnapshot
+    ): Set<String> {
         val forms = mutableSetOf<String>()
         verb.forms.filterKeys { it in includedPresentKeys }.values.forEach {
             if (it.isNotBlank()) forms += it.lowercase()
@@ -1242,7 +1330,7 @@ internal class VerbsTabState(
         verb.past_forms.orEmpty().filterKeys { it in includedPastKeys }.values.forEach {
             if (it.isNotBlank()) forms += it.lowercase()
         }
-        if (includeHelperVerb) forms += verb.lemma.lowercase()
+        if (requirements.includeHelperVerb) forms += verb.lemma.lowercase()
         return forms
     }
 
@@ -1250,23 +1338,32 @@ internal class VerbsTabState(
         verb: VerbEntry,
         sentence: SentenceExample
     ): Boolean {
-        if (sentence.qualityKey() in app.practicePrefs.rejectedVerbPhraseKeys()) return false
-        val en = sentence.en.normalizedQualityText()
+        val requirements = phraseRequirementSnapshot()
+        val allowedForms = allowedFormsFor(verb, requirements)
         val plTokens = sentence.pl.lessonPolishTokens().toSet()
-        if (includeHelperVerb &&
-            verb.lemma != "być" &&
-            !sentenceHasHelperStructure(sentence, allowedFormsFor(verb))
-        ) return false
-        val awkwardEnglish = listOf(
-            Regex("\\b(well|quickly|fast|gladly|willingly) wanted\\b"),
-            Regex("\\b(well|quickly|fast|gladly|willingly) want\\b"),
-            Regex("\\bwanted a (good|bad|big|small|new) (cat|dog)\\b"),
-            Regex("\\bwant a (good|bad|big|small|new) (cat|dog)\\b"),
-            Regex("\\bcan to \\w+\\b"),
-            Regex("\\bmust to \\w+\\b"),
-            Regex("\\bfeel like to \\w+\\b")
+        return sentencePassesCommonUsageGate(
+            verb = verb,
+            sentence = sentence,
+            allowedForms = allowedForms,
+            requirements = requirements,
+            plTokens = plTokens
         )
-        if (awkwardEnglish.any { it.containsMatchIn(en) }) return false
+    }
+
+    private fun sentencePassesCommonUsageGate(
+        verb: VerbEntry,
+        sentence: SentenceExample,
+        allowedForms: Set<String>,
+        requirements: PhraseRequirementSnapshot,
+        plTokens: Set<String>
+    ): Boolean {
+        if (sentence.qualityKey() in requirements.rejectedQualityKeys) return false
+        val en = sentence.en.normalizedQualityText()
+        if (requirements.includeHelperVerb &&
+            verb.lemma != "być" &&
+            !sentenceHasHelperStructure(plTokens, allowedForms, requirements)
+        ) return false
+        if (AwkwardVerbPhraseEnglishRegexes.any { it.containsMatchIn(en) }) return false
         if (verb.lemma == "chcieć" &&
             plTokens.any { it in setOf("dobrze", "szybko", "chętnie") }
         ) return false
@@ -1279,23 +1376,21 @@ internal class VerbsTabState(
     }
 
     private fun helperStructurePossibleFor(
-        sentence: SentenceExample,
-        allowedForms: Set<String>
+        tokens: Set<String>,
+        allowedForms: Set<String>,
+        requirements: PhraseRequirementSnapshot
     ): Boolean {
-        if (!includeHelperVerb) return false
-        val tokens = sentence.pl.lessonPolishTokens().toSet()
-        return tokens.any { it in allowedForms } || tokens.any { it in helperVerbPolishForms() }
+        if (!requirements.includeHelperVerb) return false
+        return tokens.any { it in allowedForms } || tokens.any { it in requirements.helperForms }
     }
 
     private fun sentenceHasHelperStructure(
-        sentence: SentenceExample,
-        allowedForms: Set<String>
+        tokens: Set<String>,
+        allowedForms: Set<String>,
+        requirements: PhraseRequirementSnapshot
     ): Boolean {
-        val tokens = sentence.pl.lessonPolishTokens().toSet()
-        val helperForms = helperVerbPolishForms()
-        val knownInfinitives = app.lessonRepo.lesson2().verbs
-            .map { it.lemma.lowercase() }
-            .toSet()
+        val helperForms = requirements.helperForms
+        val knownInfinitives = requirements.knownInfinitives
         val hasSelected = tokens.any { it in allowedForms }
         val hasHelper = tokens.any { it in helperForms } ||
             ("ochotę" in tokens && tokens.any { it in setOf("mam", "masz", "ma", "mamy", "macie", "mają", "miałem", "miałeś", "miał", "mieliśmy", "mieliście", "mieli") })
@@ -1312,13 +1407,6 @@ internal class VerbsTabState(
             .filter { it.isNotBlank() }
             .map { it.lowercase() }
             .toSet() + "ochotę"
-
-    private fun sentenceContainsAllowedForm(
-        sentence: SentenceExample,
-        allowedForms: Set<String>
-    ): Boolean = sentence.pl.lowercase()
-        .split(Regex("[^\\p{L}]+"))
-        .any { it.isNotEmpty() && it in allowedForms }
 
     fun playAll(
         allVerbs: List<VerbEntry>,
@@ -2291,9 +2379,9 @@ private fun SentenceExample.qualityKey(): String =
 
 private fun String.normalizedQualityText(): String =
     lowercase()
-        .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+        .replace(NonAlphaNumericRegex, " ")
         .trim()
-        .replace(Regex("\\s+"), " ")
+        .replace(WhitespaceRegex, " ")
 
 /** Short English subject pronoun for NV panel gloss. */
 private fun englishSubjectFor(personKey: String): String = when (personKey) {

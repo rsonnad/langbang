@@ -21,6 +21,8 @@ internal fun nowVoicingAdverb(nowVoicing: NowVoicing?, adverbs: List<AdverbEntry
 internal fun nowVoicingNoun(nowVoicing: NowVoicing?, nouns: List<NounEntry>): NounEntry? =
     findNowVoicingEntry(nowVoicing, nouns) { it.polishNounTokens() }
 
+private val LessonPolishTokenSeparator = Regex("[^\\p{L}]+")
+
 private fun <T> findNowVoicingEntry(
     nowVoicing: NowVoicing?,
     entries: List<T>,
@@ -65,5 +67,5 @@ internal fun NowVoicing.polishTokensInOrder(): List<String> {
 
 internal fun String.lessonPolishTokens(): List<String> =
     lowercase()
-        .split(Regex("[^\\p{L}]+"))
+        .split(LessonPolishTokenSeparator)
         .filter { it.isNotBlank() }
