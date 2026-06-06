@@ -14,6 +14,13 @@ const DEFAULT_SESSION_TTL_DAYS = 90;
 const MAX_SYNC_GROUPS = 200;
 const MAX_SYNC_SENTENCES_PER_GROUP = 300;
 const MAX_SYNC_STARS = 2000;
+const DEFAULT_AGENT_DAILY_LIMIT = 100;
+const MAX_AGENT_BODY_CHARS = 64 * 1024;
+const MAX_AGENT_LABEL_CHARS = 80;
+const DEFAULT_AI_PHRASE_QUOTA = 50;
+const MAX_AI_PHRASE_PROMPT_CHARS = 1200;
+const MAX_AI_PHRASES_PER_REQUEST = 10;
+const DEFAULT_AI_PHRASE_QUOTA_EMAIL = "rahulioson@gmail.com";
 const MAX_ANALYTICS_EVENTS_PER_BATCH = 100;
 const MAX_ANALYTICS_PROPERTIES_CHARS = 4000;
 const DEFAULT_ANALYTICS_ADMIN_EMAIL = "rahulioson@gmail.com";
@@ -30,6 +37,9 @@ export default {
     try {
       if (request.method === "GET" && path === "/health") {
         return json({ ok: true, service: "langbangml-api" });
+      }
+      if (request.method === "GET" && (path === "/agent" || path === "/agent/instructions")) {
+        return agentInstructionsPage(env);
       }
       if (request.method === "GET" && path === "/admin/analytics") {
         return analyticsAdminPage(env);
@@ -73,9 +83,38 @@ export default {
         const user = await requireUser(request, env);
         return json({ user: publicUser(user) });
       }
+      if (request.method === "POST" && path === "/v1/me/agent-token") {
+        const user = await requireUser(request, env);
+        return await createAgentToken(request, env, user);
+      }
+      if (path === "/v1/me/content") {
+        const user = await requireUser(request, env);
+        return await userContent(request, env, user);
+      }
+      if (path === "/v1/me/phrases/ai-generate") {
+        const user = await requireUser(request, env);
+        return await userAiPhraseGenerate(request, env, user);
+      }
+      if (path === "/v1/me/phrases/ai-quota-request") {
+        const user = await requireUser(request, env);
+        return await userAiPhraseQuotaRequest(request, env, user);
+      }
+      if (request.method === "GET" && path === "/v1/me/phrases/ai-quota") {
+        const user = await requireUser(request, env);
+        return await userAiPhraseQuota(request, env, user);
+      }
       if (path === "/v1/me/phrases") {
         const user = await requireUser(request, env);
         return await userPhrases(request, env, user);
+      }
+      if (request.method === "GET" && path === "/v1/agent/status") {
+        return await agentApiRequest(request, env, "status", agentStatus);
+      }
+      if (path === "/v1/agent/phrases") {
+        return await agentApiRequest(request, env, "phrases", agentPhrases);
+      }
+      if (path === "/v1/agent/words") {
+        return await agentApiRequest(request, env, "words", agentWords);
       }
       const adminAudioWarmMatch = path.match(/^\/v1\/admin\/content\/([^/]+)\/audio\/warm-missing$/);
       if (request.method === "POST" && adminAudioWarmMatch) {
@@ -262,6 +301,42 @@ async function signOut(request, env, user) {
   return json({ ok: true });
 }
 
+async function createAgentToken(request, env, user) {
+  const body = await readOptionalJson(request);
+  const revokeExisting = body.revokeExisting === true || body.rotate === true;
+  const label = boundedString(body.label || "Claude/Codex", "label", MAX_AGENT_LABEL_CHARS, true) || "Claude/Codex";
+  const defaultInstanceId = normalizeInstanceId(body.instanceId || "langbangml-en-pl");
+  if (revokeExisting) {
+    await env.DB.prepare(`
+      UPDATE user_agent_tokens
+      SET revoked_at = datetime('now')
+      WHERE user_id = ? AND revoked_at IS NULL
+    `).bind(user.user_id).run();
+  }
+
+  const token = `lba_${randomBase64Url(32)}`;
+  const id = crypto.randomUUID();
+  const tokenHash = await sha256Hex(token);
+  const tokenPrefix = token.slice(0, 12);
+  await env.DB.prepare(`
+    INSERT INTO user_agent_tokens
+      (id, user_id, token_hash, token_prefix, label, default_instance_id)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).bind(id, user.user_id, tokenHash, tokenPrefix, label, defaultInstanceId).run();
+
+  return json({
+    ok: true,
+    token,
+    tokenPrefix,
+    label,
+    defaultInstanceId,
+    dailyLimit: agentDailyLimit(env),
+    apiBase: publicApiBase(env),
+    instructionsUrl: `${publicApiBase(env)}/agent`,
+    createdAt: new Date().toISOString(),
+  });
+}
+
 async function userPhrases(request, env, user) {
   if (request.method === "GET") {
     const instanceId = new URL(request.url).searchParams.get("instanceId") || "";
@@ -336,6 +411,140 @@ async function userPhrases(request, env, user) {
   return json({ error: "method not allowed" }, 405);
 }
 
+async function userContent(request, env, user) {
+  if (request.method !== "GET") {
+    return json({ error: "method not allowed" }, 405);
+  }
+  const instanceId = new URL(request.url).searchParams.get("instanceId") || "";
+  return json(await loadUserContent(env, user.user_id, normalizeInstanceId(instanceId)));
+}
+
+async function userAiPhraseQuota(request, env, user) {
+  const quota = await loadAiPhraseQuota(env, user.user_id);
+  return json({ ok: true, quota });
+}
+
+async function userAiPhraseQuotaRequest(request, env, user) {
+  if (request.method !== "POST") {
+    return json({ error: "method not allowed" }, 405);
+  }
+  const body = await readOptionalJson(request);
+  const instanceId = body.instanceId ? normalizeInstanceId(body.instanceId) : null;
+  const message = boundedString(body.message || "", "message", 1200, true);
+  const quota = await loadAiPhraseQuota(env, user.user_id);
+  const sent = await sendAiPhraseQuotaEmail(env, {
+    email: user.email,
+    displayName: user.display_name || "",
+    userId: user.user_id,
+    instanceId,
+    quota,
+    message,
+  });
+  await env.DB.prepare(`
+    INSERT INTO user_ai_phrase_quota_requests
+      (id, user_id, email, instance_id, current_quota, generated_count, message, sent)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    crypto.randomUUID(),
+    user.user_id,
+    user.email,
+    instanceId,
+    quota.limit,
+    quota.used,
+    message,
+    sent ? 1 : 0,
+  ).run();
+  return json({ ok: true, sent, quota });
+}
+
+async function userAiPhraseGenerate(request, env, user) {
+  if (request.method !== "POST") {
+    return json({ error: "method not allowed" }, 405);
+  }
+  const body = await readJsonLimited(request, MAX_AGENT_BODY_CHARS);
+  const instanceId = normalizeInstanceId(body.instanceId || "langbangml-en-pl");
+  const groupId = normalizePhraseGroupId(body.groupId || "ai-phrases");
+  const groupTitle = boundedString(body.groupTitle || "AI phrases", "groupTitle", 200, true) || "AI phrases";
+  const groupSubtitle = boundedString(body.groupSubtitle || "Generated phrase practice", "groupSubtitle", 400, true);
+  const prompt = boundedString(body.prompt || body.topic || "", "prompt", MAX_AI_PHRASE_PROMPT_CHARS);
+  const parsedCount = Number(body.count || 5);
+  const requestedCount = Number.isFinite(parsedCount)
+    ? Math.max(1, Math.min(MAX_AI_PHRASES_PER_REQUEST, Math.trunc(parsedCount)))
+    : 5;
+  const quota = await loadAiPhraseQuota(env, user.user_id);
+  if (quota.remaining <= 0) {
+    throw new HttpError(429, "AI phrase quota reached", {
+      quota,
+      canRequestMore: true,
+      requestEndpoint: "/v1/me/phrases/ai-quota-request",
+    });
+  }
+  const count = Math.min(requestedCount, quota.remaining);
+  const content = await loadContentForInstance(env, instanceId);
+  const generated = await generateAiPhraseBatch(env, {
+    prompt,
+    count,
+    pair: content.languagePair,
+  });
+  const current = await loadUserPhrases(env, user.user_id, instanceId);
+  const groups = current.groups.slice();
+  const index = groups.findIndex((group) => group.id.toLowerCase() === groupId.toLowerCase());
+  const existing = index >= 0
+    ? groups[index]
+    : { id: groupId, title: groupTitle, subtitle: groupSubtitle, sentences: [] };
+  const sentences = Array.isArray(existing.sentences) ? existing.sentences.slice() : [];
+  for (const sentence of generated) {
+    const key = sentenceKey(sentence);
+    if (!sentences.some((candidate) => sentenceKey(candidate) === key)) {
+      sentences.push(sentence);
+    }
+  }
+  const updated = {
+    ...existing,
+    title: existing.title || groupTitle,
+    subtitle: existing.subtitle || groupSubtitle,
+    sentences,
+  };
+  await upsertUserPhraseGroup(env, user.user_id, instanceId, updated, index >= 0 ? index : 0);
+  const updatedQuota = await addAiPhraseUsage(env, user.user_id, generated.length);
+  return json({
+    ok: true,
+    instanceId,
+    group: updated,
+    phrases: generated,
+    quota: updatedQuota,
+  });
+}
+
+async function loadAiPhraseQuota(env, userId) {
+  await env.DB.prepare(`
+    INSERT OR IGNORE INTO user_ai_phrase_quotas (user_id, quota)
+    VALUES (?, ?)
+  `).bind(userId, DEFAULT_AI_PHRASE_QUOTA).run();
+  const row = await env.DB.prepare(`
+    SELECT quota, generated_count
+    FROM user_ai_phrase_quotas
+    WHERE user_id = ?
+  `).bind(userId).first();
+  const limit = Math.max(0, Number(row?.quota || DEFAULT_AI_PHRASE_QUOTA));
+  const used = Math.max(0, Number(row?.generated_count || 0));
+  return {
+    limit,
+    used,
+    remaining: Math.max(0, limit - used),
+  };
+}
+
+async function addAiPhraseUsage(env, userId, count) {
+  await env.DB.prepare(`
+    UPDATE user_ai_phrase_quotas
+    SET generated_count = generated_count + ?,
+        updated_at = datetime('now')
+    WHERE user_id = ?
+  `).bind(Math.max(0, Number(count) || 0), userId).run();
+  return loadAiPhraseQuota(env, userId);
+}
+
 async function loadUserPhrases(env, userId, instanceId) {
   const [groupRows, starRows] = await Promise.all([
     env.DB.prepare(`
@@ -357,6 +566,412 @@ async function loadUserPhrases(env, userId, instanceId) {
     starredPhrases: starRows.results.map((row) => row.phrase_key),
     syncedAt: new Date().toISOString(),
   };
+}
+
+async function loadUserContent(env, userId, instanceId) {
+  const [phrases, words, meta] = await Promise.all([
+    loadUserPhrases(env, userId, instanceId),
+    loadUserWords(env, userId, instanceId),
+    userContentMeta(env, userId, instanceId),
+  ]);
+  return {
+    ...phrases,
+    words,
+    hasRemoteContent: meta.rows > 0,
+    hasRemotePhrases: meta.phraseRows > 0 || meta.starRows > 0,
+    hasRemoteWords: meta.wordRows > 0,
+  };
+}
+
+async function userContentMeta(env, userId, instanceId) {
+  const [groups, stars, words] = await Promise.all([
+    env.DB.prepare(`
+      SELECT COUNT(*) AS rows
+      FROM user_phrase_groups
+      WHERE user_id = ? AND instance_id = ?
+    `).bind(userId, instanceId).first(),
+    env.DB.prepare(`
+      SELECT COUNT(*) AS rows
+      FROM user_starred_phrases
+      WHERE user_id = ? AND instance_id = ?
+    `).bind(userId, instanceId).first(),
+    env.DB.prepare(`
+      SELECT COUNT(*) AS rows
+      FROM user_custom_words
+      WHERE user_id = ? AND instance_id = ?
+    `).bind(userId, instanceId).first(),
+  ]);
+  return {
+    phraseRows: Number(groups?.rows || 0),
+    starRows: Number(stars?.rows || 0),
+    wordRows: Number(words?.rows || 0),
+    rows: Number(groups?.rows || 0) + Number(stars?.rows || 0) + Number(words?.rows || 0),
+  };
+}
+
+async function loadUserWords(env, userId, instanceId) {
+  const rows = await env.DB.prepare(`
+    SELECT word_type, item_json
+    FROM user_custom_words
+    WHERE user_id = ? AND instance_id = ? AND deleted_at IS NULL
+    ORDER BY word_type, updated_at ASC
+  `).bind(userId, instanceId).all();
+  const words = emptyWordBuckets();
+  for (const row of rows.results || []) {
+    const bucket = wordBucketName(row.word_type);
+    if (!bucket) continue;
+    const item = parseJson(row.item_json, null);
+    if (item) words[bucket].push(item);
+  }
+  return words;
+}
+
+async function agentApiRequest(request, env, operation, handler) {
+  const agent = await requireAgentToken(request, env);
+  let quota;
+  try {
+    quota = await consumeAgentQuota(env, agent);
+  } catch (error) {
+    await recordAgentApiCall(env, agent, request, operation, error instanceof HttpError ? error.status : 500);
+    throw error;
+  }
+  try {
+    const response = await handler(request, env, agent, quota);
+    await recordAgentApiCall(env, agent, request, operation, response.status);
+    return response;
+  } catch (error) {
+    await recordAgentApiCall(env, agent, request, operation, error instanceof HttpError ? error.status : 500);
+    throw error;
+  }
+}
+
+async function requireAgentToken(request, env) {
+  const auth = request.headers.get("Authorization") || "";
+  const token = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  if (!token) throw new HttpError(401, "agent token required");
+  const tokenHash = await sha256Hex(token);
+  const row = await env.DB.prepare(`
+    SELECT t.id AS token_id, t.user_id, t.token_prefix, t.default_instance_id,
+           u.email, u.display_name
+    FROM user_agent_tokens t
+    JOIN users u ON u.id = t.user_id
+    WHERE t.token_hash = ?
+      AND t.revoked_at IS NULL
+      AND (t.expires_at IS NULL OR t.expires_at > datetime('now'))
+  `).bind(tokenHash).first();
+  if (!row) throw new HttpError(401, "invalid or revoked agent token");
+  await env.DB.prepare(`
+    UPDATE user_agent_tokens
+    SET last_used_at = datetime('now')
+    WHERE id = ?
+  `).bind(row.token_id).run();
+  return row;
+}
+
+async function consumeAgentQuota(env, agent) {
+  const day = new Date().toISOString().slice(0, 10);
+  const limit = agentDailyLimit(env);
+  await env.DB.prepare(`
+    INSERT INTO user_agent_token_usage (token_id, day, call_count, updated_at)
+    VALUES (?, ?, 1, datetime('now'))
+    ON CONFLICT(token_id, day) DO UPDATE SET
+      call_count = call_count + 1,
+      updated_at = datetime('now')
+  `).bind(agent.token_id, day).run();
+  const row = await env.DB.prepare(`
+    SELECT call_count
+    FROM user_agent_token_usage
+    WHERE token_id = ? AND day = ?
+  `).bind(agent.token_id, day).first();
+  const used = Number(row?.call_count || 0);
+  if (used > limit) {
+    throw new HttpError(429, "daily agent API limit reached", {
+      limit,
+      used,
+      remaining: 0,
+      resetsAt: `${day}T23:59:59.999Z`,
+    });
+  }
+  return {
+    day,
+    limit,
+    used,
+    remaining: Math.max(0, limit - used),
+    resetsAt: `${day}T23:59:59.999Z`,
+  };
+}
+
+async function recordAgentApiCall(env, agent, request, operation, status, instanceId = null) {
+  try {
+    const url = new URL(request.url);
+    await env.DB.prepare(`
+      INSERT INTO user_agent_api_call_events
+        (id, token_id, user_id, instance_id, method, route, operation, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      crypto.randomUUID(),
+      agent?.token_id || null,
+      agent?.user_id || null,
+      instanceId,
+      request.method,
+      url.pathname,
+      operation,
+      status,
+    ).run();
+  } catch {
+    // Agent API audit logging must not block the user's content edit.
+  }
+}
+
+async function agentStatus(request, env, agent, quota) {
+  return json({
+    ok: true,
+    user: {
+      id: agent.user_id,
+      email: agent.email,
+      displayName: agent.display_name || "",
+    },
+    tokenPrefix: agent.token_prefix,
+    defaultInstanceId: agent.default_instance_id,
+    apiBase: publicApiBase(env),
+    instructionsUrl: `${publicApiBase(env)}/agent`,
+    quota,
+  });
+}
+
+async function agentPhrases(request, env, agent, quota) {
+  if (request.method === "GET") {
+    const instanceId = normalizeAgentInstanceId(new URL(request.url).searchParams.get("instanceId"), agent);
+    return json({ ok: true, ...(await loadUserPhrases(env, agent.user_id, instanceId)), quota });
+  }
+  if (request.method === "POST") {
+    const body = await readJsonLimited(request, MAX_AGENT_BODY_CHARS);
+    const instanceId = normalizeAgentInstanceId(body.instanceId, agent);
+    const groupId = normalizePhraseGroupId(body.groupId || body.group?.id || body.groupTitle || "agent-phrases");
+    const groupTitle = boundedString(body.groupTitle || body.group?.title || groupId, "groupTitle", 200, true) || groupId;
+    const groupSubtitle = boundedString(body.groupSubtitle || body.group?.subtitle || "", "groupSubtitle", 400, true);
+    const sentence = normalizeSentenceExample(body.phrase || body.sentence || body.item || body);
+    const current = await loadUserPhrases(env, agent.user_id, instanceId);
+    const groups = current.groups.slice();
+    const index = groups.findIndex((group) => group.id.toLowerCase() === groupId.toLowerCase());
+    const existing = index >= 0
+      ? groups[index]
+      : { id: groupId, title: groupTitle, subtitle: groupSubtitle, sentences: [] };
+    const sentences = Array.isArray(existing.sentences) ? existing.sentences.slice() : [];
+    const key = sentenceKey(sentence);
+    const existingSentenceIndex = sentences.findIndex((item) => sentenceKey(item) === key);
+    if (existingSentenceIndex >= 0) {
+      sentences[existingSentenceIndex] = sentence;
+    } else {
+      sentences.push(sentence);
+    }
+    const updated = {
+      ...existing,
+      title: existing.title || groupTitle,
+      subtitle: existing.subtitle || groupSubtitle,
+      sentences,
+    };
+    if (index >= 0) groups[index] = updated;
+    else groups.unshift(updated);
+    await upsertUserPhraseGroup(env, agent.user_id, instanceId, updated, index >= 0 ? index : 0);
+    return json({
+      ok: true,
+      action: existingSentenceIndex >= 0 ? "replace_phrase" : "add_phrase",
+      instanceId,
+      group: updated,
+      phrase: sentence,
+      quota,
+    });
+  }
+  if (request.method === "DELETE") {
+    const body = await readOptionalJson(request);
+    const instanceId = normalizeAgentInstanceId(body.instanceId || new URL(request.url).searchParams.get("instanceId"), agent);
+    const groupId = normalizePhraseGroupId(body.groupId || new URL(request.url).searchParams.get("groupId"));
+    const phraseKey = cleanString(body.phraseKey || body.key || new URL(request.url).searchParams.get("phraseKey"));
+    const pl = cleanString(body.pl || body.target || new URL(request.url).searchParams.get("pl"));
+    const en = cleanString(body.en || body.source || new URL(request.url).searchParams.get("en"));
+    if (!phraseKey && !pl && !en) {
+      await env.DB.prepare(`
+        UPDATE user_phrase_groups
+        SET deleted_at = datetime('now'), updated_at = datetime('now')
+        WHERE user_id = ? AND instance_id = ? AND group_id = ? AND deleted_at IS NULL
+      `).bind(agent.user_id, instanceId, groupId).run();
+      return json({ ok: true, action: "delete_phrase_group", instanceId, groupId, quota });
+    }
+    const current = await loadUserPhrases(env, agent.user_id, instanceId);
+    const group = current.groups.find((candidate) => candidate.id.toLowerCase() === groupId.toLowerCase());
+    if (!group) throw new HttpError(404, "phrase group not found", { groupId });
+    const before = Array.isArray(group.sentences) ? group.sentences : [];
+    const after = before.filter((sentence) => !sentenceMatchesDelete(sentence, { phraseKey, pl, en }));
+    if (after.length === before.length) throw new HttpError(404, "phrase not found", { groupId, phraseKey, pl, en });
+    const updated = { ...group, sentences: after };
+    await upsertUserPhraseGroup(env, agent.user_id, instanceId, updated, 0);
+    return json({
+      ok: true,
+      action: "delete_phrase",
+      instanceId,
+      groupId,
+      removed: before.length - after.length,
+      quota,
+    });
+  }
+  return json({ error: "method not allowed" }, 405);
+}
+
+async function agentWords(request, env, agent, quota) {
+  if (request.method === "GET") {
+    const instanceId = normalizeAgentInstanceId(new URL(request.url).searchParams.get("instanceId"), agent);
+    return json({ ok: true, instanceId, words: await loadUserWords(env, agent.user_id, instanceId), quota });
+  }
+  if (request.method === "POST") {
+    const body = await readJsonLimited(request, MAX_AGENT_BODY_CHARS);
+    const instanceId = normalizeAgentInstanceId(body.instanceId, agent);
+    const wordType = normalizeWordType(body.type || body.wordType || body.section);
+    const item = normalizeAgentWordItem(wordType, body.item || body.word || body);
+    await upsertUserWord(env, agent.user_id, instanceId, wordType, item);
+    return json({ ok: true, action: "upsert_word", instanceId, type: wordType, item, quota });
+  }
+  if (request.method === "DELETE") {
+    const body = await readOptionalJson(request);
+    const params = new URL(request.url).searchParams;
+    const instanceId = normalizeAgentInstanceId(body.instanceId || params.get("instanceId"), agent);
+    const wordType = normalizeWordType(body.type || body.wordType || body.section || params.get("type"));
+    const lemma = boundedString(body.lemma || params.get("lemma"), "lemma", 200);
+    await env.DB.prepare(`
+      UPDATE user_custom_words
+      SET deleted_at = datetime('now'), updated_at = datetime('now')
+      WHERE user_id = ? AND instance_id = ? AND word_type = ? AND lower(lemma) = lower(?)
+    `).bind(agent.user_id, instanceId, wordType, lemma).run();
+    return json({ ok: true, action: "delete_word", instanceId, type: wordType, lemma, quota });
+  }
+  return json({ error: "method not allowed" }, 405);
+}
+
+async function upsertUserPhraseGroup(env, userId, instanceId, group, sortOrder) {
+  await env.DB.prepare(`
+    INSERT INTO user_phrase_groups
+      (user_id, instance_id, group_id, sort_order, group_json, updated_at, deleted_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'), NULL)
+    ON CONFLICT(user_id, instance_id, group_id) DO UPDATE SET
+      sort_order = excluded.sort_order,
+      group_json = excluded.group_json,
+      updated_at = datetime('now'),
+      deleted_at = NULL
+  `).bind(userId, instanceId, group.id, sortOrder, JSON.stringify(group)).run();
+}
+
+async function upsertUserWord(env, userId, instanceId, wordType, item) {
+  await env.DB.prepare(`
+    INSERT INTO user_custom_words
+      (user_id, instance_id, word_type, lemma, item_json, updated_at, deleted_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'), NULL)
+    ON CONFLICT(user_id, instance_id, word_type, lemma) DO UPDATE SET
+      item_json = excluded.item_json,
+      updated_at = datetime('now'),
+      deleted_at = NULL
+  `).bind(userId, instanceId, wordType, item.lemma, JSON.stringify(item)).run();
+}
+
+function normalizeAgentInstanceId(value, agent) {
+  return normalizeInstanceId(value || agent.default_instance_id || "langbangml-en-pl");
+}
+
+function normalizePhraseGroupId(value) {
+  const id = cleanString(value);
+  if (!/^[A-Za-z0-9._-]{1,120}$/.test(id)) {
+    throw new HttpError(400, "valid groupId is required");
+  }
+  return id;
+}
+
+function sentenceKey(sentence) {
+  return `${cleanString(sentence.pl).toLowerCase()}|${cleanString(sentence.en).toLowerCase()}`;
+}
+
+function sentenceMatchesDelete(sentence, query) {
+  if (query.phraseKey && sentenceKey(sentence) === query.phraseKey.toLowerCase()) return true;
+  const sentencePl = cleanString(sentence.pl).toLowerCase();
+  const sentenceEn = cleanString(sentence.en).toLowerCase();
+  const pl = cleanString(query.pl).toLowerCase();
+  const en = cleanString(query.en).toLowerCase();
+  if (pl && en) return sentencePl === pl && sentenceEn === en;
+  if (pl) return sentencePl === pl;
+  if (en) return sentenceEn === en;
+  return false;
+}
+
+function emptyWordBuckets() {
+  return { verbs: [], nouns: [], adjectives: [], adverbs: [] };
+}
+
+function wordBucketName(wordType) {
+  if (wordType === "verb") return "verbs";
+  if (wordType === "noun") return "nouns";
+  if (wordType === "adjective") return "adjectives";
+  if (wordType === "adverb") return "adverbs";
+  return null;
+}
+
+function normalizeWordType(value) {
+  const raw = cleanString(value).toLowerCase();
+  if (["verb", "verbs", "v"].includes(raw)) return "verb";
+  if (["noun", "nouns", "n"].includes(raw)) return "noun";
+  if (["adjective", "adjectives", "adj"].includes(raw)) return "adjective";
+  if (["adverb", "adverbs", "adv"].includes(raw)) return "adverb";
+  throw new HttpError(400, "type must be verb, noun, adjective, or adverb");
+}
+
+function normalizeAgentWordItem(wordType, raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new HttpError(400, "word item object is required");
+  }
+  const item = structuredClone(raw);
+  item.lemma = boundedString(item.lemma, "lemma", 200);
+  item.en = boundedString(item.en || item.gloss || item.meaning, "en", 400);
+  delete item.type;
+  delete item.wordType;
+  delete item.section;
+  delete item.item;
+  delete item.word;
+
+  if (wordType === "verb") {
+    item.forms = normalizeStringMap(item.forms, "forms", true);
+    if (item.pastForms && !item.past_forms) item.past_forms = item.pastForms;
+    delete item.pastForms;
+    if (item.past_forms !== undefined) item.past_forms = normalizeStringMap(item.past_forms, "past_forms", false);
+  } else if (wordType === "noun") {
+    item.gender = boundedString(item.gender, "gender", 20).toLowerCase();
+    item.nom = normalizeStringMap(item.nom, "nom", true);
+    item.acc = normalizeStringMap(item.acc, "acc", true);
+    item.gen = normalizeStringMap(item.gen, "gen", true);
+  } else if (wordType === "adjective") {
+    item.nom = normalizeStringMap(item.nom, "nom", true);
+    item.acc = normalizeStringMap(item.acc, "acc", true);
+  }
+  return item;
+}
+
+function normalizeStringMap(value, label, required) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    if (required) throw new HttpError(400, `${label} object is required`);
+    return undefined;
+  }
+  const out = {};
+  for (const [key, raw] of Object.entries(value)) {
+    const cleanedKey = cleanString(key);
+    const cleanedValue = cleanString(raw);
+    if (cleanedKey && cleanedValue) out[cleanedKey] = cleanedValue;
+  }
+  if (required && Object.keys(out).length === 0) {
+    throw new HttpError(400, `${label} object cannot be empty`);
+  }
+  return out;
+}
+
+function agentDailyLimit(env) {
+  const parsed = Number(env.AGENT_API_DAILY_LIMIT || DEFAULT_AGENT_DAILY_LIMIT);
+  if (!Number.isFinite(parsed)) return DEFAULT_AGENT_DAILY_LIMIT;
+  return Math.max(1, Math.min(1000, Math.trunc(parsed)));
 }
 
 function authResponse(user, session) {
@@ -615,6 +1230,41 @@ async function sendLoginEmail(env, email, code) {
   if (!response.ok) {
     const body = await response.text();
     throw new HttpError(502, `email send failed: ${body.slice(0, 180)}`);
+  }
+  return true;
+}
+
+async function sendAiPhraseQuotaEmail(env, details) {
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return false;
+  const to = env.AI_PHRASE_QUOTA_EMAIL || DEFAULT_AI_PHRASE_QUOTA_EMAIL;
+  const lines = [
+    "LangBang AI phrase quota request",
+    "",
+    `User: ${details.displayName || "(no display name)"}`,
+    `Email: ${details.email}`,
+    `User ID: ${details.userId}`,
+    `Instance: ${details.instanceId || "(not provided)"}`,
+    `Quota: ${details.quota.used}/${details.quota.limit}`,
+    "",
+    "Message:",
+    details.message || "(none)",
+  ];
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${env.RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: env.EMAIL_FROM,
+      to,
+      subject: `LangBang AI phrase quota request: ${details.email}`,
+      text: lines.join("\n"),
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new HttpError(502, `quota email send failed: ${body.slice(0, 180)}`);
   }
   return true;
 }
@@ -998,7 +1648,7 @@ async function adminAnalyticsSummary(request, env) {
   const days = Math.max(1, Math.min(365, Number(url.searchParams.get("days") || 30)));
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
-  const [totals, daily, features, profiles, versions, instances] = await Promise.all([
+  const [totals, daily, features, profiles, versions, instances, agentApi, aiPhrases] = await Promise.all([
     env.DB.prepare(`
       SELECT COUNT(*) AS events,
              COUNT(DISTINCT profile_id) AS profiles,
@@ -1074,6 +1724,18 @@ async function adminAnalyticsSummary(request, env) {
       GROUP BY instanceId
       ORDER BY events DESC
     `).bind(since).all(),
+    env.DB.prepare(`
+      SELECT COUNT(*) AS calls,
+             COUNT(DISTINCT user_id) AS users,
+             COUNT(DISTINCT token_id) AS tokens
+      FROM user_agent_api_call_events
+      WHERE created_at >= ?
+    `).bind(since).first(),
+    env.DB.prepare(`
+      SELECT COALESCE(SUM(generated_count), 0) AS generated,
+             COUNT(*) AS users
+      FROM user_ai_phrase_quotas
+    `).first(),
   ]);
 
   return json({
@@ -1086,6 +1748,11 @@ async function adminAnalyticsSummary(request, env) {
       installations: Number(totals?.installations || 0),
       sessions: Number(totals?.sessions || 0),
       durationMs: Number(totals?.durationMs || 0),
+      agentApiCalls: Number(agentApi?.calls || 0),
+      agentApiUsers: Number(agentApi?.users || 0),
+      agentApiTokens: Number(agentApi?.tokens || 0),
+      aiPhrasesGenerated: Number(aiPhrases?.generated || 0),
+      aiPhraseUsers: Number(aiPhrases?.users || 0),
     },
     daily: daily.results || [],
     features: features.results || [],
@@ -1223,6 +1890,18 @@ async function completePhrase(request, env) {
   ));
 }
 
+async function generateAiPhraseBatch(env, { prompt, count, pair }) {
+  const text = await geminiGenerateText(
+    env,
+    buildAiPhraseGenerationPrompt({ prompt, count, pair }),
+    DEFAULT_GEMINI_MODEL,
+  );
+  const parsed = parseGeminiJsonText(text);
+  const phrases = Array.isArray(parsed?.phrases) ? parsed.phrases : Array.isArray(parsed) ? parsed : [];
+  if (phrases.length === 0) throw new HttpError(502, "Gemini returned no phrases");
+  return phrases.slice(0, count).map(normalizeSentenceExample);
+}
+
 async function geminiGenerateText(env, prompt, model = DEFAULT_GEMINI_MODEL) {
   return geminiTextFromRaw(await geminiGenerateRaw(env, prompt, model));
 }
@@ -1289,6 +1968,27 @@ function buildPhraseCompletionPrompt({ sourceText, targetText, literalText, sour
     "Return ONLY one JSON object, no markdown, with this exact shape: " +
     "{\"consistent\":true,\"issue\":\"\",\"source\":\"...\",\"target\":\"...\"," +
     "\"literal\":\"...\",\"words\":[{\"pl\":\"target-token\",\"en\":\"source-gloss\"}]}.";
+}
+
+function buildAiPhraseGenerationPrompt({ prompt, count, pair }) {
+  const sourceLanguage = pair?.sourceLanguage || "English";
+  const targetLanguage = pair?.targetLanguage || "Polish";
+  return "Generate useful LangBang custom study phrases for one learner. " +
+    `Create exactly ${count} short, natural phrases. ` +
+    `The source cue language is ${sourceLanguage}. The target answer language is ${targetLanguage}. ` +
+    `The user's requested topic or goal is: ${JSON.stringify(prompt)}. ` +
+    "Make the phrases common, practical, and easy to reuse in real conversation. " +
+    "Reject contrived coverage phrases, awkward literal translations, rare expressions, and inside jokes. " +
+    "Each phrase should be one sentence or short utterance, not a paragraph. " +
+    "The Android app uses historical JSON field names: put the target-language answer in \"pl\" " +
+    "and the source-language cue in \"en\", even when the target language is not Polish. " +
+    "Include literal as a word-for-word gloss of the target answer, preserving target word order. " +
+    "Include words: one object per whitespace-separated target token, in target order; put the " +
+    "target token in pl and the source gloss in en. If the target language is Polish and a token " +
+    "is a noun, pronoun, or adjective, include gender (m/f/n) and caseKey (nom/acc/gen/dat/inst/loc/voc) when known. " +
+    "Return ONLY JSON, no markdown, with this exact shape: " +
+    "{\"phrases\":[{\"pl\":\"target answer\",\"en\":\"source cue\",\"literal\":\"target-order gloss\"," +
+    "\"words\":[{\"pl\":\"target-token\",\"en\":\"source-gloss\"}]}]}.";
 }
 
 function parseGeminiJsonText(text) {
@@ -1724,6 +2424,31 @@ async function loadContentVersion(env, contentVersionId) {
   };
 }
 
+async function loadContentForInstance(env, instanceId) {
+  const row = await env.DB.prepare(`
+    SELECT i.content_version_id, p.id AS language_pair_id, p.source_language, p.target_language,
+           p.source_locale, p.target_locale, p.source_voice, p.target_voice,
+           p.target_slow_voices_json
+    FROM app_instances i
+    JOIN language_pairs p ON p.id = i.language_pair_id
+    WHERE i.id = ? AND i.active = 1 AND p.active = 1
+  `).bind(instanceId).first();
+  if (!row) throw new HttpError(404, "instance not found", { instanceId });
+  return {
+    contentVersionId: row.content_version_id,
+    languagePair: {
+      id: row.language_pair_id,
+      sourceLanguage: row.source_language,
+      targetLanguage: row.target_language,
+      sourceLocale: row.source_locale,
+      targetLocale: row.target_locale,
+      sourceVoice: row.source_voice,
+      targetVoice: row.target_voice,
+      targetSlowVoices: parseJson(row.target_slow_voices_json, []),
+    },
+  };
+}
+
 async function persistAndRespond(env, lesson, eventType, eventPayload) {
   const payloadJson = JSON.stringify(lesson.payload);
   await env.DB.prepare(`
@@ -2144,6 +2869,14 @@ function publicUrl(env, key) {
   return `${String(env.PUBLIC_R2_BASE || "").replace(/\/+$/, "")}/${key}`;
 }
 
+function publicApiBase(env) {
+  return env.PUBLIC_API_BASE || "https://langbangml-api.langbangml.workers.dev";
+}
+
+function sourceCodeUrl(env) {
+  return env.SOURCE_CODE_URL || "https://github.com/rsonnad/langbang/tree/codex/langbangml";
+}
+
 function parseJson(raw, fallback) {
   try {
     return JSON.parse(raw || "");
@@ -2152,9 +2885,157 @@ function parseJson(raw, fallback) {
   }
 }
 
+function agentInstructionsPage(env) {
+  const apiBase = publicApiBase(env);
+  const sourceUrl = sourceCodeUrl(env);
+  const addPhrase = JSON.stringify({
+    instanceId: "langbangml-en-pl",
+    groupId: "my-phrases",
+    groupTitle: "My phrases",
+    phrase: {
+      pl: "Lubię uczyć się polskiego.",
+      en: "I like learning Polish.",
+      literal: "I-like to-learn self Polish.",
+    },
+  }, null, 2);
+  const addNoun = JSON.stringify({
+    instanceId: "langbangml-en-pl",
+    type: "noun",
+    item: {
+      lemma: "ogród",
+      en: "garden",
+      gender: "m",
+      nom: { sg: "ogród", pl: "ogrody" },
+      acc: { sg: "ogród", pl: "ogrody" },
+      gen: { sg: "ogrodu", pl: "ogrodów" },
+    },
+  }, null, 2);
+  const addVerb = JSON.stringify({
+    instanceId: "langbangml-en-pl",
+    type: "verb",
+    item: {
+      lemma: "uczyć się",
+      en: "to learn",
+      forms: {
+        "1sg": "uczę się",
+        "2sg": "uczysz się",
+        "3sg": "uczy się",
+        "1pl": "uczymy się",
+        "2pl": "uczycie się",
+        "3pl": "uczą się",
+      },
+    },
+  }, null, 2);
+  return new Response(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LangBangML Agent API</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #f7f4ee; color: #1f2933; line-height: 1.5; }
+    header { background: #1f3d34; color: white; padding: 24px 28px; }
+    main { max-width: 980px; margin: 0 auto; padding: 24px 28px 48px; }
+    section { background: white; border: 1px solid #e3ded3; border-radius: 8px; padding: 16px; margin: 0 0 16px; }
+    h1 { margin: 0; font-size: 24px; letter-spacing: 0; }
+    h2 { margin: 0 0 8px; font-size: 18px; }
+    h3 { margin: 16px 0 6px; font-size: 15px; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    code { background: #f3f0ea; border-radius: 4px; padding: 1px 4px; }
+    pre { overflow-x: auto; background: #1f2933; color: #f8fafc; border-radius: 8px; padding: 12px; font-size: 12px; }
+    .muted { color: #687785; }
+    .warn { border-color: #f3d199; background: #fff9ed; }
+    ul, ol { padding-left: 20px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>LangBangML Agent API</h1>
+    <p class="muted">Use this with the personal token copied from the Android Settings screen.</p>
+  </header>
+  <main>
+    <section class="warn">
+      <h2>Agent Setup Prompt</h2>
+      <p>Paste this into Claude, Codex, or another coding agent together with the token from the app:</p>
+      <pre>Use the LangBangML Agent API to edit my personal study content.
+API base: ${escapeHtml(apiBase)}
+Instructions: ${escapeHtml(apiBase)}/agent
+Token: PASTE_TOKEN_HERE
+
+Use Authorization: Bearer PASTE_TOKEN_HERE on every /v1/agent request.
+Do not print or store the token in project files, git commits, logs, or screenshots.
+Daily limit: ${agentDailyLimit(env)} authenticated agent API calls per token.
+Use app-native JSON fields: phrases use pl/en/literal; words use lemma/en and the type-specific forms below.
+Never ask for the LangBangML admin content token.</pre>
+    </section>
+    <section>
+      <h2>Source Code And License</h2>
+      <p>LangBangML is released under the <code>AGPL-3.0</code> license.</p>
+      <p>Source code: <a href="${escapeHtml(sourceUrl)}">${escapeHtml(sourceUrl)}</a></p>
+    </section>
+    <section>
+      <h2>Endpoints</h2>
+      <ul>
+        <li><code>GET /v1/agent/status</code> checks the token, default instance, and remaining daily quota.</li>
+        <li><code>POST /v1/agent/phrases</code> adds or replaces one phrase sentence in a personal phrase group.</li>
+        <li><code>DELETE /v1/agent/phrases</code> deletes a phrase sentence, or deletes a group when no phrase is provided.</li>
+        <li><code>POST /v1/agent/words</code> adds or replaces a personal word in Verbs, Nouns, Adj, or Adv.</li>
+        <li><code>DELETE /v1/agent/words</code> deletes a personal word by type and lemma.</li>
+      </ul>
+      <p class="muted">All edits are user-owned content tied to the signed-in app account. They do not mutate global LangBangML lessons.</p>
+    </section>
+    <section>
+      <h2>In-App AI Phrase Generation</h2>
+      <p>The Android app also has a built-in AI phrase generator under Phrases +. It uses the same Worker-side Gemini Flash path, so a learner does not need Claude, Codex, or their own API key for simple phrase creation.</p>
+      <p>Default account quota: <code>${DEFAULT_AI_PHRASE_QUOTA}</code> generated custom phrases. When that quota is reached, the app can send a quota request email to <code>${escapeHtml(env.AI_PHRASE_QUOTA_EMAIL || DEFAULT_AI_PHRASE_QUOTA_EMAIL)}</code>.</p>
+    </section>
+    <section>
+      <h2>Examples</h2>
+      <h3>Add A Phrase</h3>
+      <pre>curl -sS ${escapeHtml(apiBase)}/v1/agent/phrases \\
+  -H "Authorization: Bearer $LANGBANGML_AGENT_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '${escapeHtml(addPhrase)}'</pre>
+      <h3>Delete A Phrase</h3>
+      <pre>curl -sS -X DELETE ${escapeHtml(apiBase)}/v1/agent/phrases \\
+  -H "Authorization: Bearer $LANGBANGML_AGENT_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"instanceId":"langbangml-en-pl","groupId":"my-phrases","pl":"Lubię uczyć się polskiego."}'</pre>
+      <h3>Add A Noun</h3>
+      <pre>curl -sS ${escapeHtml(apiBase)}/v1/agent/words \\
+  -H "Authorization: Bearer $LANGBANGML_AGENT_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '${escapeHtml(addNoun)}'</pre>
+      <h3>Add A Verb</h3>
+      <pre>curl -sS ${escapeHtml(apiBase)}/v1/agent/words \\
+  -H "Authorization: Bearer $LANGBANGML_AGENT_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '${escapeHtml(addVerb)}'</pre>
+      <h3>Delete A Word</h3>
+      <pre>curl -sS -X DELETE "${escapeHtml(apiBase)}/v1/agent/words?instanceId=langbangml-en-pl&type=noun&lemma=ogr%C3%B3d" \\
+  -H "Authorization: Bearer $LANGBANGML_AGENT_TOKEN"</pre>
+    </section>
+    <section>
+      <h2>Word Shapes</h2>
+      <ul>
+        <li><code>type:"verb"</code>: <code>lemma</code>, <code>en</code>, <code>forms</code>, optional <code>past_forms</code>. Form keys are usually <code>1sg</code>, <code>2sg</code>, <code>3sg</code>, <code>1pl</code>, <code>2pl</code>, <code>3pl</code>.</li>
+        <li><code>type:"noun"</code>: <code>lemma</code>, <code>en</code>, <code>gender</code>, and case maps <code>nom</code>, <code>acc</code>, <code>gen</code> with <code>sg</code>/<code>pl</code>.</li>
+        <li><code>type:"adjective"</code>: <code>lemma</code>, <code>en</code>, <code>nom</code>, and <code>acc</code> maps.</li>
+        <li><code>type:"adverb"</code>: <code>lemma</code> and <code>en</code>.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>`, {
+    status: 200,
+    headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders() },
+  });
+}
+
 function analyticsAdminPage(env) {
   const clientId = env.GOOGLE_CLIENT_ID || env.GOOGLE_WEB_CLIENT_ID || env.ADMIN_GOOGLE_CLIENT_ID || "";
-  const apiBase = env.PUBLIC_API_BASE || "https://langbangml-api.langbangml.workers.dev";
+  const apiBase = publicApiBase(env);
   const adminEmails = [...analyticsAdminEmails(env)].join(", ") || DEFAULT_ANALYTICS_ADMIN_EMAIL;
   const authBlock = clientId
     ? `<div class="login-option">
@@ -2346,6 +3227,8 @@ function analyticsAdminPage(env) {
       const t = data.totals || {};
       document.getElementById("metrics").innerHTML =
         metric("Events", t.events || 0) +
+        metric("Agent API Calls", t.agentApiCalls || 0) +
+        metric("AI Phrases", t.aiPhrasesGenerated || 0) +
         metric("Profiles", t.profiles || 0) +
         metric("Sessions", t.sessions || 0) +
         metric("Hours", (((t.durationMs || 0) / 3600000).toFixed(1)));

@@ -117,6 +117,36 @@ class CloudBackendClient(
         }
     }
 
+    suspend fun createAgentToken(
+        sessionToken: String,
+        instanceId: String,
+        rotate: Boolean = false
+    ): Result<CloudAgentTokenResponse> = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = CloudAgentTokenRequest(
+                instanceId = instanceId,
+                rotate = rotate
+            )
+            val body = post(
+                "/v1/me/agent-token",
+                json.encodeToString(CloudAgentTokenRequest.serializer(), request),
+                bearerToken = sessionToken
+            )
+            json.decodeFromString(CloudAgentTokenResponse.serializer(), body)
+        }
+    }
+
+    suspend fun fetchUserContent(
+        sessionToken: String,
+        instanceId: String
+    ): Result<CloudUserContentResponse> = withContext(Dispatchers.IO) {
+        runCatching {
+            val encoded = URLEncoder.encode(instanceId, "UTF-8")
+            val body = get("/v1/me/content?instanceId=$encoded", bearerToken = sessionToken)
+            json.decodeFromString(CloudUserContentResponse.serializer(), body)
+        }
+    }
+
     suspend fun fetchUserPhrases(
         sessionToken: String,
         instanceId: String
@@ -148,6 +178,52 @@ class CloudBackendClient(
                 bearerToken = sessionToken
             )
             json.decodeFromString(CloudUserPhrasesResponse.serializer(), body)
+        }
+    }
+
+    suspend fun generateAiPhrases(
+        sessionToken: String,
+        instanceId: String,
+        groupId: String,
+        groupTitle: String,
+        groupSubtitle: String,
+        prompt: String,
+        count: Int
+    ): Result<CloudAiPhraseGenerateResponse> = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = CloudAiPhraseGenerateRequest(
+                instanceId = instanceId,
+                groupId = groupId,
+                groupTitle = groupTitle,
+                groupSubtitle = groupSubtitle,
+                prompt = prompt,
+                count = count
+            )
+            val body = post(
+                "/v1/me/phrases/ai-generate",
+                json.encodeToString(CloudAiPhraseGenerateRequest.serializer(), request),
+                bearerToken = sessionToken
+            )
+            json.decodeFromString(CloudAiPhraseGenerateResponse.serializer(), body)
+        }
+    }
+
+    suspend fun requestAiPhraseQuota(
+        sessionToken: String,
+        instanceId: String,
+        message: String
+    ): Result<CloudAiPhraseQuotaResponse> = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = CloudAiPhraseQuotaRequest(
+                instanceId = instanceId,
+                message = message
+            )
+            val body = post(
+                "/v1/me/phrases/ai-quota-request",
+                json.encodeToString(CloudAiPhraseQuotaRequest.serializer(), request),
+                bearerToken = sessionToken
+            )
+            json.decodeFromString(CloudAiPhraseQuotaResponse.serializer(), body)
         }
     }
 

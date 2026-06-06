@@ -3,6 +3,7 @@ package com.sponic.langbang.data
 import android.content.Context
 import com.sponic.langbang.cloud.CloudConfigStore
 import com.sponic.langbang.cloud.CloudLanguagePair
+import com.sponic.langbang.cloud.CloudUserWords
 import com.sponic.langbang.data.model.AdjectiveEntry
 import com.sponic.langbang.data.model.AdjectiveLesson
 import com.sponic.langbang.data.model.AdverbEntry
@@ -90,6 +91,13 @@ class LessonRepository(
         userVerbs.add(verb)
     }
 
+    fun userVerbEntries(): List<VerbEntry> =
+        userVerbs.load()
+
+    fun replaceUserVerbEntries(verbs: List<VerbEntry>) {
+        userVerbs.replaceAll(verbs)
+    }
+
     fun sentencesFor(
         lemma: String,
         tense: String = VerbSentenceStore.TENSE_PRESENT
@@ -167,6 +175,13 @@ class LessonRepository(
         userAdjectives.add(adj)
     }
 
+    fun userAdjectiveEntries(): List<AdjectiveEntry> =
+        userAdjectives.load()
+
+    fun replaceUserAdjectiveEntries(adjectives: List<AdjectiveEntry>) {
+        userAdjectives.replaceAll(adjectives)
+    }
+
     fun adjectiveSentencesFor(lemma: String): List<SentenceExample> =
         adjectiveSentences.get(lemma).map(::scrubSentenceExample)
 
@@ -190,6 +205,13 @@ class LessonRepository(
         userAdverbs.add(adv)
     }
 
+    fun userAdverbEntries(): List<AdverbEntry> =
+        userAdverbs.load()
+
+    fun replaceUserAdverbEntries(adverbs: List<AdverbEntry>) {
+        userAdverbs.replaceAll(adverbs)
+    }
+
     fun adverbSentencesFor(lemma: String): List<SentenceExample> =
         adverbSentences.get(lemma).map(::scrubSentenceExample)
 
@@ -211,6 +233,29 @@ class LessonRepository(
 
     fun addUserNoun(noun: NounEntry) {
         userNouns.add(noun)
+    }
+
+    fun userNounEntries(): List<NounEntry> =
+        userNouns.load()
+
+    fun replaceUserNounEntries(nouns: List<NounEntry>) {
+        userNouns.replaceAll(nouns)
+    }
+
+    fun userWords(): CloudUserWords =
+        CloudUserWords(
+            verbs = userVerbEntries(),
+            nouns = userNounEntries(),
+            adjectives = userAdjectiveEntries(),
+            adverbs = userAdverbEntries()
+        )
+
+    fun replaceUserWords(words: CloudUserWords) {
+        replaceUserVerbEntries(words.verbs)
+        replaceUserNounEntries(words.nouns)
+        replaceUserAdjectiveEntries(words.adjectives)
+        replaceUserAdverbEntries(words.adverbs)
+        clearCloudBackedBaseCache()
     }
 
     fun nounSentencesFor(lemma: String): List<SentenceExample> =

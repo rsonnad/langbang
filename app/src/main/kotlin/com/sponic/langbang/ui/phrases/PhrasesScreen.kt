@@ -60,11 +60,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sponic.langbang.BuildConfig
 import com.sponic.langbang.LangbangApplication
+import com.sponic.langbang.cloud.CloudAiPhraseQuota
 import com.sponic.langbang.cloud.CloudAuthResponse
 import com.sponic.langbang.cloud.GoogleSignInHelper
 import com.sponic.langbang.data.model.PhraseGroup
@@ -391,10 +393,10 @@ private fun PhraseDetail(
     var showAddPhrase by remember(group.id) { mutableStateOf(false) }
     var addPhraseBusy by remember(group.id) { mutableStateOf(false) }
     var addPhraseError by remember(group.id) { mutableStateOf<String?>(null) }
-    val setSlowFirst: (Boolean) -> Unit = { enabled ->
-        slowFirst = enabled
-        app.practicePrefs.setSlowFirst(enabled)
-    }
+    var aiPhraseBusy by remember(group.id) { mutableStateOf(false) }
+    var aiPhraseStatus by remember(group.id) { mutableStateOf<String?>(null) }
+    var aiPhraseError by remember(group.id) { mutableStateOf<String?>(null) }
+    var aiPhraseQuota by remember(group.id) { mutableStateOf<CloudAiPhraseQuota?>(null) }
     fun requestAddPhrase() {
         if (auth.customItemGateSatisfied) {
             showAddPhrase = true
@@ -424,10 +426,17 @@ private fun PhraseDetail(
             targetLabel = app.targetLanguageLabel(),
             busy = addPhraseBusy,
             error = addPhraseError,
+            signedIn = auth.signedIn,
+            aiBusy = aiPhraseBusy,
+            aiStatus = aiPhraseStatus,
+            aiError = aiPhraseError,
+            aiQuota = aiPhraseQuota,
             onDismiss = {
-                if (!addPhraseBusy) {
+                if (!addPhraseBusy && !aiPhraseBusy) {
                     showAddPhrase = false
                     addPhraseError = null
+                    aiPhraseStatus = null
+                    aiPhraseError = null
                 }
             },
             onCreate = { sourceText, targetText, literal ->
@@ -457,6 +466,69 @@ private fun PhraseDetail(
                             }
                         )
                         addPhraseBusy = false
+                    }
+                }
+            },
+            onGenerateAi = { prompt, count ->
+                if (!aiPhraseBusy) {
+                    if (!auth.signedIn) {
+                        aiPhraseError = "Sign in first to use AI phrase generation."
+                    } else {
+                        scope.launch {
+                            aiPhraseBusy = true
+                            aiPhraseStatus = null
+                            aiPhraseError = null
+                            app.cloudBackend.generateAiPhrases(
+                                sessionToken = auth.sessionToken,
+                                instanceId = app.cloudConfig.state.value.selectedInstanceId,
+                                groupId = group.id,
+                                groupTitle = group.title,
+                                groupSubtitle = group.subtitle,
+                                prompt = prompt,
+                                count = count
+                            ).fold(
+                                onSuccess = { response ->
+                                    response.group?.let { app.lessonRepo.addUserPhraseGroup(it) }
+                                    if (response.phrases.isNotEmpty()) {
+                                        response.phrases.forEach(onPhraseAdded)
+                                    }
+                                    aiPhraseQuota = response.quota
+                                    aiPhraseStatus = "Generated ${response.phrases.size} phrase(s). ${response.quota.remaining} left."
+                                    app.phraseSync.syncNow()
+                                },
+                                onFailure = { t ->
+                                    aiPhraseError = t.message ?: t.javaClass.simpleName
+                                }
+                            )
+                            aiPhraseBusy = false
+                        }
+                    }
+                }
+            },
+            onRequestAiQuota = { message ->
+                if (!aiPhraseBusy && auth.signedIn) {
+                    scope.launch {
+                        aiPhraseBusy = true
+                        aiPhraseStatus = null
+                        aiPhraseError = null
+                        app.cloudBackend.requestAiPhraseQuota(
+                            sessionToken = auth.sessionToken,
+                            instanceId = app.cloudConfig.state.value.selectedInstanceId,
+                            message = message
+                        ).fold(
+                            onSuccess = { response ->
+                                aiPhraseQuota = response.quota
+                                aiPhraseStatus = if (response.sent) {
+                                    "Quota request sent."
+                                } else {
+                                    "Quota request recorded; email sender is not configured."
+                                }
+                            },
+                            onFailure = { t ->
+                                aiPhraseError = "Quota request failed: ${t.message ?: t.javaClass.simpleName}"
+                            }
+                        )
+                        aiPhraseBusy = false
                     }
                 }
             }
@@ -877,20 +949,39 @@ private fun AddPhraseDialog(
     targetLabel: String,
     busy: Boolean,
     error: String?,
+    signedIn: Boolean,
+    aiBusy: Boolean,
+    aiStatus: String?,
+    aiError: String?,
+    aiQuota: CloudAiPhraseQuota?,
     onDismiss: () -> Unit,
-    onCreate: (String, String, String) -> Unit
+    onCreate: (String, String, String) -> Unit,
+    onGenerateAi: (String, Int) -> Unit,
+    onRequestAiQuota: (String) -> Unit
 ) {
     var source by remember { mutableStateOf("") }
     var target by remember { mutableStateOf("") }
     var literal by remember { mutableStateOf("") }
+    var aiPrompt by remember { mutableStateOf("") }
+    var aiCount by remember { mutableStateOf(5) }
+    var quotaMessage by remember { mutableStateOf("") }
     val hasAnyField = source.trim().isNotEmpty() ||
         target.trim().isNotEmpty() ||
         literal.trim().isNotEmpty()
     AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
+        onDismissRequest = { if (!busy && !aiBusy) onDismiss() },
         title = { Text("New phrase") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    "Manual phrase",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = LbColors.TextMuted
+                )
                 OutlinedTextField(
                     value = source,
                     onValueChange = { source = it },
@@ -917,6 +1008,86 @@ private fun AddPhraseDialog(
                         fontWeight = FontWeight.Bold
                     )
                 }
+                Surface(
+                    color = LbColors.SurfaceTint,
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, LbColors.Line),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "AI phrase generation",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = LbColors.Primary
+                        )
+                        Text(
+                            aiQuota?.let { "Quota: ${it.remaining}/${it.limit} generated phrases left." }
+                                ?: "Generate up to 50 custom phrases before requesting more quota.",
+                            fontSize = 11.sp,
+                            color = LbColors.TextMuted
+                        )
+                        OutlinedTextField(
+                            value = aiPrompt,
+                            onValueChange = { aiPrompt = it },
+                            label = { Text("Topic or goal") },
+                            minLines = 2,
+                            enabled = !aiBusy
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Count", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(
+                                enabled = !aiBusy && aiCount > 1,
+                                onClick = { aiCount = (aiCount - 1).coerceAtLeast(1) }
+                            ) { Text("-") }
+                            Text(
+                                "$aiCount",
+                                fontSize = 14.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            )
+                            TextButton(
+                                enabled = !aiBusy && aiCount < 10,
+                                onClick = { aiCount = (aiCount + 1).coerceAtMost(10) }
+                            ) { Text("+") }
+                            Spacer(Modifier.weight(1f))
+                            TextButton(
+                                enabled = signedIn && !aiBusy && aiPrompt.trim().isNotEmpty(),
+                                onClick = { onGenerateAi(aiPrompt.trim(), aiCount) }
+                            ) {
+                                Text(if (aiBusy) "Generating..." else "Generate")
+                            }
+                        }
+                        if (!signedIn) {
+                            Text(
+                                "Sign in to use AI phrase generation.",
+                                fontSize = 11.sp,
+                                color = LbColors.Stop,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        aiStatus?.let {
+                            Text(it, fontSize = 11.sp, color = LbColors.Success, fontWeight = FontWeight.Bold)
+                        }
+                        aiError?.let {
+                            Text(it, fontSize = 11.sp, color = LbColors.Stop, fontWeight = FontWeight.Bold)
+                        }
+                        if ((aiQuota?.remaining == 0 || aiError?.contains("quota", ignoreCase = true) == true) && signedIn) {
+                            OutlinedTextField(
+                                value = quotaMessage,
+                                onValueChange = { quotaMessage = it },
+                                label = { Text("Quota request note") },
+                                minLines = 2,
+                                enabled = !aiBusy
+                            )
+                            TextButton(
+                                enabled = !aiBusy,
+                                onClick = { onRequestAiQuota(quotaMessage.trim()) }
+                            ) { Text("Request more quota") }
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
@@ -928,7 +1099,7 @@ private fun AddPhraseDialog(
             }
         },
         dismissButton = {
-            TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") }
+            TextButton(enabled = !busy && !aiBusy, onClick = onDismiss) { Text("Cancel") }
         }
     )
 }

@@ -12,6 +12,10 @@ data class AuthState(
     val skippedCustomSyncWarning: Boolean = false,
     val lastPhraseSyncMs: Long = 0L,
     val syncingPhrases: Boolean = false,
+    val agentToken: String = "",
+    val agentTokenPrefix: String = "",
+    val agentInstructionsUrl: String = "",
+    val agentDailyLimit: Int = 100,
     val error: String? = null
 ) {
     val signedIn: Boolean get() = user != null && sessionToken.isNotBlank()
@@ -70,6 +74,17 @@ class AuthStore(context: Context) {
         )
     }
 
+    fun saveAgentToken(response: CloudAgentTokenResponse) {
+        prefs.edit()
+            .putString(KEY_AGENT_TOKEN, response.token)
+            .putString(KEY_AGENT_TOKEN_PREFIX, response.tokenPrefix)
+            .putString(KEY_AGENT_INSTRUCTIONS_URL, response.instructionsUrl)
+            .putInt(KEY_AGENT_DAILY_LIMIT, response.dailyLimit)
+            .remove(KEY_ERROR)
+            .apply()
+        _state.value = load().copy(error = null)
+    }
+
     fun saveError(message: String) {
         prefs.edit().putString(KEY_ERROR, message).apply()
         _state.value = _state.value.copy(syncingPhrases = false, error = message)
@@ -97,6 +112,10 @@ class AuthStore(context: Context) {
             skippedCustomSyncWarning = prefs.getBoolean(KEY_SKIPPED_CUSTOM_SYNC_WARNING, false),
             lastPhraseSyncMs = prefs.getLong(KEY_LAST_PHRASE_SYNC_MS, 0L),
             syncingPhrases = false,
+            agentToken = prefs.getString(KEY_AGENT_TOKEN, "") ?: "",
+            agentTokenPrefix = prefs.getString(KEY_AGENT_TOKEN_PREFIX, "") ?: "",
+            agentInstructionsUrl = prefs.getString(KEY_AGENT_INSTRUCTIONS_URL, "") ?: "",
+            agentDailyLimit = prefs.getInt(KEY_AGENT_DAILY_LIMIT, 100),
             error = prefs.getString(KEY_ERROR, null)
         )
     }
@@ -111,6 +130,10 @@ class AuthStore(context: Context) {
         private const val KEY_SESSION_EXPIRES_AT = "session-expires-at"
         private const val KEY_SKIPPED_CUSTOM_SYNC_WARNING = "skipped-custom-sync-warning"
         private const val KEY_LAST_PHRASE_SYNC_MS = "last-phrase-sync-ms"
+        private const val KEY_AGENT_TOKEN = "agent-token"
+        private const val KEY_AGENT_TOKEN_PREFIX = "agent-token-prefix"
+        private const val KEY_AGENT_INSTRUCTIONS_URL = "agent-instructions-url"
+        private const val KEY_AGENT_DAILY_LIMIT = "agent-daily-limit"
         private const val KEY_ERROR = "error"
     }
 }

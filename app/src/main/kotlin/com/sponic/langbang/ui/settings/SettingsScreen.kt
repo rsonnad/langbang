@@ -86,6 +86,7 @@ fun SettingsScreen(app: LangbangApplication) {
             description = "Sign-in state and custom phrase persistence."
         )
         AccountSyncCard(app = app, scope = scope, context = context)
+        AgentApiCard(app = app, scope = scope, context = context)
         SettingsGroupHeader(
             title = "Practice",
             description = "Defaults used by drills, quizzes, and Now Voicing playback."
@@ -352,6 +353,149 @@ private suspend fun signInWithGoogle(
         app.phraseSync.syncNow()
     }
 }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AgentApiCard(
+    app: LangbangApplication,
+    scope: kotlinx.coroutines.CoroutineScope,
+    context: Context
+) {
+    val auth by app.authStore.state.collectAsState()
+    val instanceId = app.cloudConfig.state.value.selectedInstanceId
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
+    val instructionsUrl = auth.agentInstructionsUrl.ifBlank {
+        "${BuildConfig.LANGBANGML_API_BASE.trimEnd('/')}/agent"
+    }
+    val setupPrompt = remember(auth.agentToken, instructionsUrl, instanceId, auth.agentDailyLimit) {
+        buildAgentSetupPrompt(
+            token = auth.agentToken,
+            instructionsUrl = instructionsUrl,
+            instanceId = instanceId,
+            dailyLimit = auth.agentDailyLimit
+        )
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    SectionHeader("Claude/Codex API token")
+                    Text(
+                        if (auth.signedIn) {
+                            "Copy this token plus the setup instructions into a coding agent to add or delete your personal phrases and words."
+                        } else {
+                            "Sign in first to create a personal API token."
+                        },
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                }
+                if (busy) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            }
+            Text("Instructions", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
+            SelectionContainer {
+                Text(
+                    instructionsUrl,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            CloudRow("Daily API calls", "${auth.agentDailyLimit}")
+            if (auth.agentToken.isNotBlank()) {
+                SelectionContainer {
+                    Text(
+                        auth.agentToken,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    )
+                }
+            } else {
+                Text("No token created yet.", fontSize = 11.sp, color = LbColors.TextMuted)
+            }
+            status?.let {
+                Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+            }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Button(
+                    enabled = auth.signedIn && !busy,
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            app.cloudBackend.createAgentToken(
+                                sessionToken = auth.sessionToken,
+                                instanceId = instanceId,
+                                rotate = auth.agentToken.isNotBlank()
+                            ).fold(
+                                onSuccess = { response ->
+                                    app.authStore.saveAgentToken(response)
+                                    status = "Token ready"
+                                },
+                                onFailure = { t ->
+                                    status = "Token failed: ${t.message ?: t.javaClass.simpleName}"
+                                }
+                            )
+                            busy = false
+                        }
+                    }
+                ) {
+                    Text(if (auth.agentToken.isBlank()) "Create token" else "Rotate token")
+                }
+                OutlinedButton(
+                    enabled = auth.agentToken.isNotBlank(),
+                    onClick = {
+                        copyToClipboard(context, "LangBangML agent token", auth.agentToken)
+                        status = "Token copied"
+                    }
+                ) { Text("Copy token") }
+                OutlinedButton(
+                    enabled = auth.agentToken.isNotBlank(),
+                    onClick = {
+                        copyToClipboard(context, "LangBangML agent setup", setupPrompt)
+                        status = "Setup prompt copied"
+                    }
+                ) { Text("Copy setup") }
+                OutlinedButton(
+                    onClick = {
+                        copyToClipboard(context, "LangBangML API docs", instructionsUrl)
+                        status = "Instructions URL copied"
+                    }
+                ) { Text("Copy docs URL") }
+            }
+        }
+    }
+}
+
+private fun buildAgentSetupPrompt(
+    token: String,
+    instructionsUrl: String,
+    instanceId: String,
+    dailyLimit: Int
+): String =
+    """
+    Use the LangBangML Agent API to edit my personal study content.
+    Instructions: $instructionsUrl
+    Instance ID: $instanceId
+    Token: $token
+
+    Use Authorization: Bearer $token on every /v1/agent request.
+    Daily limit: $dailyLimit authenticated agent API calls.
+    Add/delete phrases and add/delete words in Verbs, Nouns, Adj, and Adv only through the personal agent endpoints.
+    Do not print or store the token in files, commits, logs, screenshots, or chat summaries.
+    Never ask for the LangBangML admin content token.
+    """.trimIndent()
 
 @Composable
 private fun SettingsGroupHeader(title: String, description: String) {
