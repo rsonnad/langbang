@@ -593,8 +593,8 @@ private fun AdvExamplesControls(
                 WordPlayLimitControl(
                     limitText = state.playLimitText,
                     onLimitTextChange = { state.updatePlayLimitText(it) },
-                    leadingLabel = "groups of",
-                    trailingLabel = null
+                    leadingLabel = "with",
+                    trailingLabel = "vars"
                 )
             }
             if (state.sentences.isNotEmpty() && !state.playing) {
