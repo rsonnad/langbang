@@ -15,7 +15,6 @@ import com.sponic.langbang.cloud.AuthStore
 import com.sponic.langbang.cloud.CloudBackendClient
 import com.sponic.langbang.cloud.CloudConfigStore
 import com.sponic.langbang.cloud.PhraseSyncService
-import com.sponic.langbang.data.AccountPrefsStore
 import com.sponic.langbang.data.AudioPrefsStore
 import com.sponic.langbang.data.LessonRepository
 import com.sponic.langbang.data.PracticePrefsStore
@@ -78,8 +77,6 @@ class LangbangApplication : Application() {
         private set
     lateinit var practicePrefs: PracticePrefsStore
         private set
-    lateinit var accountPrefs: AccountPrefsStore
-        private set
     lateinit var starredPhrases: StarredPhrasesStore
         private set
     lateinit var audioPrefs: AudioPrefsStore
@@ -114,7 +111,6 @@ class LangbangApplication : Application() {
         pronounFilter = PronounFilterStore(this)
         randomConfig = RandomConfigStore(this)
         practicePrefs = PracticePrefsStore(this)
-        accountPrefs = AccountPrefsStore(this)
         starredPhrases = StarredPhrasesStore(this)
         phraseSync = PhraseSyncService(cloudBackend, authStore, lessonRepo, starredPhrases, cloudConfig)
         audioPrefs = AudioPrefsStore(this)

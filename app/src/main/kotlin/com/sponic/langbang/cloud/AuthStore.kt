@@ -9,11 +9,13 @@ data class AuthState(
     val user: CloudAuthUser? = null,
     val sessionToken: String = "",
     val sessionExpiresAt: String = "",
+    val skippedCustomSyncWarning: Boolean = false,
     val lastPhraseSyncMs: Long = 0L,
     val syncingPhrases: Boolean = false,
     val error: String? = null
 ) {
     val signedIn: Boolean get() = user != null && sessionToken.isNotBlank()
+    val customItemGateSatisfied: Boolean get() = signedIn || skippedCustomSyncWarning
 }
 
 class AuthStore(context: Context) {
@@ -32,6 +34,7 @@ class AuthStore(context: Context) {
             .putString(KEY_PICTURE_URL, auth.user.pictureUrl)
             .putString(KEY_SESSION_TOKEN, auth.session.token)
             .putString(KEY_SESSION_EXPIRES_AT, auth.session.expiresAt)
+            .putBoolean(KEY_SKIPPED_CUSTOM_SYNC_WARNING, false)
             .remove(KEY_ERROR)
             .apply()
         _state.value = load().copy(error = null)
@@ -40,6 +43,14 @@ class AuthStore(context: Context) {
     fun clear() {
         prefs.edit().clear().apply()
         _state.value = AuthState()
+    }
+
+    fun skipCustomSyncWarning() {
+        prefs.edit()
+            .putBoolean(KEY_SKIPPED_CUSTOM_SYNC_WARNING, true)
+            .remove(KEY_ERROR)
+            .apply()
+        _state.value = load().copy(error = null)
     }
 
     fun markPhraseSyncing() {
@@ -83,6 +94,7 @@ class AuthStore(context: Context) {
             user = user,
             sessionToken = token,
             sessionExpiresAt = prefs.getString(KEY_SESSION_EXPIRES_AT, "") ?: "",
+            skippedCustomSyncWarning = prefs.getBoolean(KEY_SKIPPED_CUSTOM_SYNC_WARNING, false),
             lastPhraseSyncMs = prefs.getLong(KEY_LAST_PHRASE_SYNC_MS, 0L),
             syncingPhrases = false,
             error = prefs.getString(KEY_ERROR, null)
@@ -97,6 +109,7 @@ class AuthStore(context: Context) {
         private const val KEY_PICTURE_URL = "picture-url"
         private const val KEY_SESSION_TOKEN = "session-token"
         private const val KEY_SESSION_EXPIRES_AT = "session-expires-at"
+        private const val KEY_SKIPPED_CUSTOM_SYNC_WARNING = "skipped-custom-sync-warning"
         private const val KEY_LAST_PHRASE_SYNC_MS = "last-phrase-sync-ms"
         private const val KEY_ERROR = "error"
     }
