@@ -513,8 +513,8 @@ private fun ExamplesControls(
                 WordPlayLimitControl(
                     limitText = state.playLimitText,
                     onLimitTextChange = { state.updatePlayLimitText(it) },
-                    leadingLabel = "groups of",
-                    trailingLabel = null
+                    leadingLabel = "with",
+                    trailingLabel = "vars"
                 )
             }
             if (!state.playing) {
