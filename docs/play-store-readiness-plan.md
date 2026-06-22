@@ -141,4 +141,23 @@ Start REL-1 + REL-4 + LEGAL-6 on day 1 (wall-clock-bound, not effort-bound). The
 
 ## Status log
 
-- 2026-06-22: Plan created. Track A started (Phase 0 BE-0c + Phase 1 BE-1/BE-2).
+- 2026-06-22: Plan created.
+- 2026-06-22: Track A first patch **deployed to prod** — worker Version
+  `391bb926-0afb-4199-8b87-870b24e98e6c`; D1 migration `013_abuse_controls`
+  applied to remote. Live now: CORS origin allowlist (was `*`); per-IP +
+  per-user fixed-window rate limits on `/v1/gemini/generate`,
+  `/v1/phrases/complete`, `/v1/audio/manifest` (+100-phrase cap),
+  `/v1/auth/email/{start,verify}` (anti email-bomb / code brute-force) and
+  `/v1/analytics/events`; Gemini `safetySettings`; owner-tooling bypass via
+  `CONTENT_API_TOKEN`/`ADMIN_API_TOKEN`. Hard-auth flip `LLM_REQUIRE_AUTH`
+  staged **OFF** (backward compatible — verified app paths still 200 live).
+  - Confirmed an **edge Bot Fight Mode UA gate** in front of the worker
+    (non-browser UAs get CF 1010). Weak (UA-spoofable) — the new rate limits
+    are the real backstop.
+  - TODO before `LLM_REQUIRE_AUTH=true`: Track B updates app + web to send the
+    session token on these endpoints.
+  - TODO owner action: bulk-gen scripts (e.g. `/tmp/v7gen`) must send
+    `Authorization: Bearer <CONTENT_API_TOKEN>` to bypass the per-IP cap.
+  - TODO dashboard-only: BE-0a edge WAF rate-limit rules; BE-0b GCP/Azure
+    billing caps.
+  - Next code: BE-3 structured server-side prompts for `/v1/gemini/generate`.
