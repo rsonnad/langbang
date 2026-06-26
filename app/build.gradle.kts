@@ -113,6 +113,26 @@ android {
             "GOOGLE_WEB_CLIENT_ID",
             "\"${localProps.getProperty("GOOGLE_WEB_CLIENT_ID", "")}\""
         )
+        buildConfigField(
+            "String",
+            "FIREBASE_PROJECT_ID",
+            "\"${localProps.getProperty("FIREBASE_PROJECT_ID", "")}\""
+        )
+        buildConfigField(
+            "String",
+            "FIREBASE_API_KEY",
+            "\"${localProps.getProperty("FIREBASE_API_KEY", "")}\""
+        )
+        buildConfigField(
+            "String",
+            "FIREBASE_MESSAGING_SENDER_ID",
+            "\"${localProps.getProperty("FIREBASE_MESSAGING_SENDER_ID", "")}\""
+        )
+        buildConfigField(
+            "String",
+            "FIREBASE_APPLICATION_ID",
+            "\"${localProps.getProperty("FIREBASE_APPLICATION_ID", "")}\""
+        )
     }
 
     flavorDimensions += "direction"
@@ -127,6 +147,11 @@ android {
                 "LANGBANGML_UPDATE_MANIFEST_URL",
                 "\"https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev/langbang/builds/en-pl/latest.json\""
             )
+            buildConfigField(
+                "String",
+                "FIREBASE_APPLICATION_ID",
+                "\"${localProps.getProperty("FIREBASE_APPLICATION_ID_EN_PL", localProps.getProperty("FIREBASE_APPLICATION_ID", ""))}\""
+            )
         }
         create("plEn") {
             dimension = "direction"
@@ -137,6 +162,11 @@ android {
                 "String",
                 "LANGBANGML_UPDATE_MANIFEST_URL",
                 "\"https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev/langbang/builds/pl-en/latest.json\""
+            )
+            buildConfigField(
+                "String",
+                "FIREBASE_APPLICATION_ID",
+                "\"${localProps.getProperty("FIREBASE_APPLICATION_ID_PL_EN", localProps.getProperty("FIREBASE_APPLICATION_ID", ""))}\""
             )
         }
     }
@@ -211,6 +241,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+    implementation(platform("com.google.firebase:firebase-bom:34.15.0"))
+    implementation("com.google.firebase:firebase-messaging")
 
     // Azure Speech SDK (TTS + STT + Pronunciation Assessment)
     implementation("com.microsoft.cognitiveservices.speech:client-sdk:1.42.0")

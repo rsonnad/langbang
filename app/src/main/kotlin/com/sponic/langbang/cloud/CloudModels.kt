@@ -247,6 +247,33 @@ data class CloudAiPhraseQuotaResponse(
     val quota: CloudAiPhraseQuota = CloudAiPhraseQuota()
 )
 
+@Serializable
+data class CloudPushRegisterRequest(
+    val token: String,
+    val platform: String = "android",
+    val instanceId: String,
+    val installationId: String,
+    val appPackage: String,
+    val appVersionCode: Int,
+    val appVersionName: String,
+    val buildNumber: Int,
+    val locale: String
+)
+
+@Serializable
+data class CloudPushRegisterResponse(
+    val ok: Boolean = false,
+    val enabled: Boolean = false,
+    val instanceId: String = "",
+    val tokenHash: String = ""
+)
+
+@Serializable
+data class CloudPushUnregisterRequest(
+    val token: String,
+    val installationId: String
+)
+
 data class CloudSyncState(
     val bootstrap: CloudBootstrap? = null,
     val lastSyncMs: Long = 0L,

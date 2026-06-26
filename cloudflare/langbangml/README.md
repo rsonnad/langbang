@@ -22,6 +22,9 @@ Cloudflare is the only backend for LangBangML.
 - `GET /admin/analytics`
 - `GET /v1/admin/analytics/summary?days=30`
 - `GET /v1/admin/analytics/events?days=7&limit=200`
+- `POST /v1/push/register`
+- `POST /v1/push/unregister`
+- `POST /v1/admin/push/refresh`
 - `POST /v1/auth/google`
 - `POST /v1/auth/email/start`
 - `POST /v1/auth/email/verify`
@@ -80,6 +83,12 @@ The in-app Phrases + flow also has AI phrase generation backed by the same
 Worker-side Gemini Flash path. Default quota is 50 generated custom phrases per
 account; quota requests are emailed to `rahulioson@gmail.com`.
 
+Android push refresh uses FCM data messages, not visible notification UI. The APK
+registers an FCM token at app start when Firebase config is present, and the
+Worker sends `content_refresh` / `user_content_refresh` data payloads that
+enqueue a WorkManager sync. Manual sync buttons remain the fallback when Android
+delays or drops a background message.
+
 Required auth configuration:
 
 - `EMAIL_LOGIN_PEPPER`: Worker secret used to hash short-lived email codes.
@@ -89,6 +98,27 @@ Required auth configuration:
 - `RESEND_API_KEY`: Worker secret for Resend email-code delivery. Stored in
   Bitwarden item `Resend - LangBang Email API` under `devops-langbang`.
 - `EMAIL_FROM`: currently `LangBang <hello@langbang.org>`.
+- `FCM_SERVICE_ACCOUNT_EMAIL`: Firebase service-account email with permission to
+  send FCM HTTP v1 messages.
+- `FCM_SERVICE_ACCOUNT_PRIVATE_KEY`: matching PEM private key. Store as a Worker
+  secret; escaped `\n` line breaks are accepted.
+
+Android Firebase config is read from `local.properties` at build time:
+
+```properties
+FIREBASE_PROJECT_ID=langbang-498411
+FIREBASE_API_KEY=...
+FIREBASE_MESSAGING_SENDER_ID=...
+FIREBASE_APPLICATION_ID_EN_PL=...
+FIREBASE_APPLICATION_ID_PL_EN=...
+```
+
+Trigger a manual refresh push for an instance:
+
+```bash
+echo '{"instanceId":"langbangml-en-pl","type":"content_refresh","reason":"manual.content.refresh"}' \
+  | scripts/langbangml-content-api.sh POST /v1/admin/push/refresh -
+```
 
 ## Email Delivery
 

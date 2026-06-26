@@ -83,7 +83,7 @@ class ProductAnalytics(
     private val lock = Any()
     private var flushJob: Job? = null
     private var profile: ProductAnalyticsProfile? = loadProfile()
-    private val installationId: String = prefs.getString(KEY_INSTALLATION_ID, null)
+    val installationId: String = prefs.getString(KEY_INSTALLATION_ID, null)
         ?: UUID.randomUUID().toString().also {
             prefs.edit().putString(KEY_INSTALLATION_ID, it).apply()
         }

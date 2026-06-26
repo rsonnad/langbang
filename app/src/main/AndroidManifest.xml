@@ -53,6 +53,14 @@
             </intent-filter>
         </receiver>
 
+        <service
+            android:name=".push.LangbangMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
         <!-- Serves the downloaded update.apk to the system installer via a content:// URI
              (file:// URIs are blocked for installs on API 24+). -->
         <provider

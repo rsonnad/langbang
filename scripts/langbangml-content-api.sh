@@ -12,9 +12,10 @@ Usage:
   scripts/langbangml-content-api.sh METHOD /path [json-file|-]
 
 Examples:
-  scripts/langbangml-content-api.sh GET /v1/admin/content/en-pl-v1/lessons
-  scripts/langbangml-content-api.sh POST /v1/admin/content/en-pl-v1/lessons/lesson-05/items body.json
-  echo '{"dryRun":true,"limit":10}' | scripts/langbangml-content-api.sh POST /v1/admin/content/en-pl-v1/audio/warm-missing -
+	  scripts/langbangml-content-api.sh GET /v1/admin/content/en-pl-v1/lessons
+	  scripts/langbangml-content-api.sh POST /v1/admin/content/en-pl-v1/lessons/lesson-05/items body.json
+	  echo '{"dryRun":true,"limit":10}' | scripts/langbangml-content-api.sh POST /v1/admin/content/en-pl-v1/audio/warm-missing -
+	  echo '{"instanceId":"langbangml-en-pl","type":"content_refresh","reason":"manual.content.refresh"}' | scripts/langbangml-content-api.sh POST /v1/admin/push/refresh -
 
 Auth:
   Set LANGBANGML_CONTENT_TOKEN, or unlock Bitwarden so this script can read

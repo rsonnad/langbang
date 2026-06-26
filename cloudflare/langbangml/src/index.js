@@ -24,6 +24,14 @@ const DEFAULT_AI_PHRASE_QUOTA_EMAIL = "rahulioson@gmail.com";
 const MAX_ANALYTICS_EVENTS_PER_BATCH = 100;
 const MAX_ANALYTICS_PROPERTIES_CHARS = 4000;
 const DEFAULT_ANALYTICS_ADMIN_EMAIL = "rahulioson@gmail.com";
+const MAX_PUSH_TOKEN_CHARS = 4096;
+const MAX_PUSH_INSTALLATION_ID_CHARS = 160;
+const MAX_PUSH_APP_PACKAGE_CHARS = 160;
+const MAX_PUSH_VERSION_CHARS = 80;
+const MAX_PUSH_LOCALE_CHARS = 40;
+const MAX_PUSH_SEND_TOKENS = 500;
+
+let fcmAccessTokenCache = null;
 
 export default {
   async fetch(request, env) {
@@ -56,6 +64,18 @@ export default {
         const admin = await requireAnalyticsAdmin(request, env);
         await recordAnalyticsAdminAccess(env, admin.email, path, true);
         return await adminAnalyticsEvents(request, env);
+      }
+      if (request.method === "POST" && path === "/v1/push/register") {
+        const user = await optionalUser(request, env);
+        return await registerPushToken(request, env, user);
+      }
+      if (request.method === "POST" && path === "/v1/push/unregister") {
+        const user = await optionalUser(request, env);
+        return await unregisterPushToken(request, env, user);
+      }
+      if (request.method === "POST" && path === "/v1/admin/push/refresh") {
+        requireAdmin(request, env);
+        return await adminPushRefresh(request, env);
       }
       if (request.method === "GET" && path === "/v1/instances") {
         return await listInstances(env);
@@ -205,6 +225,16 @@ async function requireUser(request, env) {
   return row;
 }
 
+async function optionalUser(request, env) {
+  const auth = request.headers.get("Authorization") || "";
+  if (!/^Bearer\s+/i.test(auth)) return null;
+  try {
+    return await requireUser(request, env);
+  } catch (_) {
+    return null;
+  }
+}
+
 async function authGoogle(request, env) {
   const body = await request.json();
   const idToken = boundedString(body.idToken, "idToken", MAX_ID_TOKEN_CHARS);
@@ -299,6 +329,95 @@ async function signOut(request, env, user) {
     `).bind(await sha256Hex(token), user.user_id).run();
   }
   return json({ ok: true });
+}
+
+async function registerPushToken(request, env, user) {
+  const body = await readJsonLimited(request, 16 * 1024);
+  const token = boundedString(body.token, "token", MAX_PUSH_TOKEN_CHARS);
+  const tokenHash = await sha256Hex(token);
+  const instanceId = normalizeInstanceId(body.instanceId || "langbangml-en-pl");
+  const platform = boundedString(body.platform || "android", "platform", 40, true) || "android";
+  const installationId = boundedString(body.installationId || "", "installationId", MAX_PUSH_INSTALLATION_ID_CHARS, true);
+  const appPackage = boundedString(body.appPackage || "", "appPackage", MAX_PUSH_APP_PACKAGE_CHARS, true);
+  const appVersionCode = Number.isFinite(Number(body.appVersionCode)) ? Math.max(0, Math.trunc(Number(body.appVersionCode))) : 0;
+  const appVersionName = boundedString(body.appVersionName || "", "appVersionName", MAX_PUSH_VERSION_CHARS, true);
+  const buildNumber = Number.isFinite(Number(body.buildNumber)) ? Math.max(0, Math.trunc(Number(body.buildNumber))) : 0;
+  const locale = boundedString(body.locale || "", "locale", MAX_PUSH_LOCALE_CHARS, true);
+  await env.DB.prepare(`
+    INSERT INTO push_device_tokens
+      (token_hash, token, platform, user_id, instance_id, installation_id, app_package,
+       app_version_code, app_version_name, build_number, locale, enabled,
+       last_registered_at, last_seen_at, last_error)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'), NULL)
+    ON CONFLICT(token_hash) DO UPDATE SET
+      token = excluded.token,
+      platform = excluded.platform,
+      user_id = excluded.user_id,
+      instance_id = excluded.instance_id,
+      installation_id = excluded.installation_id,
+      app_package = excluded.app_package,
+      app_version_code = excluded.app_version_code,
+      app_version_name = excluded.app_version_name,
+      build_number = excluded.build_number,
+      locale = excluded.locale,
+      enabled = 1,
+      last_registered_at = datetime('now'),
+      last_seen_at = datetime('now'),
+      last_error = NULL
+  `).bind(
+    tokenHash,
+    token,
+    platform,
+    user?.user_id || null,
+    instanceId,
+    installationId,
+    appPackage,
+    appVersionCode,
+    appVersionName,
+    buildNumber,
+    locale,
+  ).run();
+  return json({ ok: true, enabled: true, instanceId, tokenHash });
+}
+
+async function unregisterPushToken(request, env, user) {
+  const body = await readOptionalJson(request);
+  const token = boundedString(body.token || "", "token", MAX_PUSH_TOKEN_CHARS, true);
+  const installationId = boundedString(body.installationId || "", "installationId", MAX_PUSH_INSTALLATION_ID_CHARS, true);
+  if (!token && !installationId) throw new HttpError(400, "token or installationId is required");
+  if (token) {
+    const tokenHash = await sha256Hex(token);
+    await env.DB.prepare(`
+      UPDATE push_device_tokens
+      SET enabled = 0, last_seen_at = datetime('now')
+      WHERE token_hash = ? AND (? IS NULL OR user_id = ?)
+    `).bind(tokenHash, user?.user_id || null, user?.user_id || null).run();
+  } else {
+    await env.DB.prepare(`
+      UPDATE push_device_tokens
+      SET enabled = 0, last_seen_at = datetime('now')
+      WHERE installation_id = ? AND (? IS NULL OR user_id = ?)
+    `).bind(installationId, user?.user_id || null, user?.user_id || null).run();
+  }
+  return json({ ok: true });
+}
+
+async function adminPushRefresh(request, env) {
+  const body = await readOptionalJson(request);
+  const instanceId = normalizeInstanceId(body.instanceId || "langbangml-en-pl");
+  const type = normalizePushType(body.type || (body.userId ? "user_content_refresh" : "content_refresh"));
+  const reason = boundedString(body.reason || "admin.push.refresh", "reason", 120, true) || "admin.push.refresh";
+  const dryRun = body.dryRun === true;
+  const result = await notifyContentRefresh(env, {
+    instanceId,
+    userId: cleanString(body.userId),
+    type,
+    reason,
+    contentVersionId: cleanString(body.contentVersionId),
+    dryRun,
+    limit: Number(body.limit || MAX_PUSH_SEND_TOKENS),
+  });
+  return json({ ok: true, ...result });
 }
 
 async function createAgentToken(request, env, user) {
@@ -405,9 +524,15 @@ async function userPhrases(request, env, user) {
       `user:${instanceId}`,
       "user.phrases.sync",
       JSON.stringify({ userId: user.user_id, groupCount: groups.length, starCount: starredPhrases.length, replace }),
-    ).run();
-    return json(await loadUserPhrases(env, user.user_id, instanceId));
-  }
+	    ).run();
+	    await safeNotifyContentRefresh(env, {
+	      instanceId,
+	      userId: user.user_id,
+	      type: "user_content_refresh",
+	      reason: "user.phrases.sync",
+	    });
+	    return json(await loadUserPhrases(env, user.user_id, instanceId));
+	  }
   return json({ error: "method not allowed" }, 405);
 }
 
@@ -507,6 +632,12 @@ async function userAiPhraseGenerate(request, env, user) {
   };
   await upsertUserPhraseGroup(env, user.user_id, instanceId, updated, index >= 0 ? index : 0);
   const updatedQuota = await addAiPhraseUsage(env, user.user_id, generated.length);
+  await safeNotifyContentRefresh(env, {
+    instanceId,
+    userId: user.user_id,
+    type: "user_content_refresh",
+    reason: "user.ai.phrases.generate",
+  });
   return json({
     ok: true,
     instanceId,
@@ -771,10 +902,16 @@ async function agentPhrases(request, env, agent, quota) {
       subtitle: existing.subtitle || groupSubtitle,
       sentences,
     };
-    if (index >= 0) groups[index] = updated;
-    else groups.unshift(updated);
-    await upsertUserPhraseGroup(env, agent.user_id, instanceId, updated, index >= 0 ? index : 0);
-    return json({
+	    if (index >= 0) groups[index] = updated;
+	    else groups.unshift(updated);
+	    await upsertUserPhraseGroup(env, agent.user_id, instanceId, updated, index >= 0 ? index : 0);
+	    await safeNotifyContentRefresh(env, {
+	      instanceId,
+	      userId: agent.user_id,
+	      type: "user_content_refresh",
+	      reason: "agent.phrases.upsert",
+	    });
+	    return json({
       ok: true,
       action: existingSentenceIndex >= 0 ? "replace_phrase" : "add_phrase",
       instanceId,
@@ -790,23 +927,35 @@ async function agentPhrases(request, env, agent, quota) {
     const phraseKey = cleanString(body.phraseKey || body.key || new URL(request.url).searchParams.get("phraseKey"));
     const pl = cleanString(body.pl || body.target || new URL(request.url).searchParams.get("pl"));
     const en = cleanString(body.en || body.source || new URL(request.url).searchParams.get("en"));
-    if (!phraseKey && !pl && !en) {
-      await env.DB.prepare(`
-        UPDATE user_phrase_groups
-        SET deleted_at = datetime('now'), updated_at = datetime('now')
-        WHERE user_id = ? AND instance_id = ? AND group_id = ? AND deleted_at IS NULL
-      `).bind(agent.user_id, instanceId, groupId).run();
-      return json({ ok: true, action: "delete_phrase_group", instanceId, groupId, quota });
-    }
+	    if (!phraseKey && !pl && !en) {
+	      await env.DB.prepare(`
+	        UPDATE user_phrase_groups
+	        SET deleted_at = datetime('now'), updated_at = datetime('now')
+	        WHERE user_id = ? AND instance_id = ? AND group_id = ? AND deleted_at IS NULL
+	      `).bind(agent.user_id, instanceId, groupId).run();
+	      await safeNotifyContentRefresh(env, {
+	        instanceId,
+	        userId: agent.user_id,
+	        type: "user_content_refresh",
+	        reason: "agent.phrases.delete_group",
+	      });
+	      return json({ ok: true, action: "delete_phrase_group", instanceId, groupId, quota });
+	    }
     const current = await loadUserPhrases(env, agent.user_id, instanceId);
     const group = current.groups.find((candidate) => candidate.id.toLowerCase() === groupId.toLowerCase());
     if (!group) throw new HttpError(404, "phrase group not found", { groupId });
     const before = Array.isArray(group.sentences) ? group.sentences : [];
     const after = before.filter((sentence) => !sentenceMatchesDelete(sentence, { phraseKey, pl, en }));
     if (after.length === before.length) throw new HttpError(404, "phrase not found", { groupId, phraseKey, pl, en });
-    const updated = { ...group, sentences: after };
-    await upsertUserPhraseGroup(env, agent.user_id, instanceId, updated, 0);
-    return json({
+	    const updated = { ...group, sentences: after };
+	    await upsertUserPhraseGroup(env, agent.user_id, instanceId, updated, 0);
+	    await safeNotifyContentRefresh(env, {
+	      instanceId,
+	      userId: agent.user_id,
+	      type: "user_content_refresh",
+	      reason: "agent.phrases.delete_phrase",
+	    });
+	    return json({
       ok: true,
       action: "delete_phrase",
       instanceId,
@@ -826,10 +975,16 @@ async function agentWords(request, env, agent, quota) {
   if (request.method === "POST") {
     const body = await readJsonLimited(request, MAX_AGENT_BODY_CHARS);
     const instanceId = normalizeAgentInstanceId(body.instanceId, agent);
-    const wordType = normalizeWordType(body.type || body.wordType || body.section);
-    const item = normalizeAgentWordItem(wordType, body.item || body.word || body);
-    await upsertUserWord(env, agent.user_id, instanceId, wordType, item);
-    return json({ ok: true, action: "upsert_word", instanceId, type: wordType, item, quota });
+	    const wordType = normalizeWordType(body.type || body.wordType || body.section);
+	    const item = normalizeAgentWordItem(wordType, body.item || body.word || body);
+	    await upsertUserWord(env, agent.user_id, instanceId, wordType, item);
+	    await safeNotifyContentRefresh(env, {
+	      instanceId,
+	      userId: agent.user_id,
+	      type: "user_content_refresh",
+	      reason: "agent.words.upsert",
+	    });
+	    return json({ ok: true, action: "upsert_word", instanceId, type: wordType, item, quota });
   }
   if (request.method === "DELETE") {
     const body = await readOptionalJson(request);
@@ -837,12 +992,18 @@ async function agentWords(request, env, agent, quota) {
     const instanceId = normalizeAgentInstanceId(body.instanceId || params.get("instanceId"), agent);
     const wordType = normalizeWordType(body.type || body.wordType || body.section || params.get("type"));
     const lemma = boundedString(body.lemma || params.get("lemma"), "lemma", 200);
-    await env.DB.prepare(`
-      UPDATE user_custom_words
-      SET deleted_at = datetime('now'), updated_at = datetime('now')
-      WHERE user_id = ? AND instance_id = ? AND word_type = ? AND lower(lemma) = lower(?)
-    `).bind(agent.user_id, instanceId, wordType, lemma).run();
-    return json({ ok: true, action: "delete_word", instanceId, type: wordType, lemma, quota });
+	    await env.DB.prepare(`
+	      UPDATE user_custom_words
+	      SET deleted_at = datetime('now'), updated_at = datetime('now')
+	      WHERE user_id = ? AND instance_id = ? AND word_type = ? AND lower(lemma) = lower(?)
+	    `).bind(agent.user_id, instanceId, wordType, lemma).run();
+	    await safeNotifyContentRefresh(env, {
+	      instanceId,
+	      userId: agent.user_id,
+	      type: "user_content_refresh",
+	      reason: "agent.words.delete",
+	    });
+	    return json({ ok: true, action: "delete_word", instanceId, type: wordType, lemma, quota });
   }
   return json({ error: "method not allowed" }, 405);
 }
@@ -1188,6 +1349,16 @@ function base64UrlToBytes(value) {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
+}
+
+function base64UrlEncodeJson(value) {
+  return base64UrlEncodeBytes(new TextEncoder().encode(JSON.stringify(value)));
+}
+
+function base64UrlEncodeBytes(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 function randomBase64Url(byteLength) {
@@ -2449,6 +2620,251 @@ async function loadContentForInstance(env, instanceId) {
   };
 }
 
+async function safeNotifyContentRefresh(env, options) {
+  try {
+    return await notifyContentRefresh(env, options);
+  } catch (_) {
+    return { ok: false, sent: 0 };
+  }
+}
+
+async function safeNotifyContentVersionRefresh(env, contentVersionId, options = {}) {
+  try {
+    const rows = await env.DB.prepare(`
+      SELECT id
+      FROM app_instances
+      WHERE content_version_id = ? AND active = 1
+    `).bind(contentVersionId).all();
+    const results = [];
+    for (const row of rows.results || []) {
+      results.push(await notifyContentRefresh(env, {
+        ...options,
+        instanceId: row.id,
+        type: "content_refresh",
+        contentVersionId,
+      }));
+    }
+    return { ok: true, results };
+  } catch (_) {
+    return { ok: false, results: [] };
+  }
+}
+
+async function notifyContentRefresh(env, {
+  instanceId,
+  userId = "",
+  type = "content_refresh",
+  reason = "content.refresh",
+  contentVersionId = "",
+  dryRun = false,
+  limit = MAX_PUSH_SEND_TOKENS,
+} = {}) {
+  const normalizedInstanceId = normalizeInstanceId(instanceId || "langbangml-en-pl");
+  const normalizedType = normalizePushType(type);
+  const boundedLimit = Math.max(1, Math.min(MAX_PUSH_SEND_TOKENS, Number.isFinite(limit) ? Math.trunc(limit) : MAX_PUSH_SEND_TOKENS));
+  const params = [normalizedInstanceId];
+  let userSql = "";
+  const cleanedUserId = cleanString(userId);
+  if (cleanedUserId) {
+    userSql = "AND user_id = ?";
+    params.push(cleanedUserId);
+  }
+  params.push(boundedLimit);
+  const rows = await env.DB.prepare(`
+    SELECT token_hash, token, user_id, instance_id
+    FROM push_device_tokens
+    WHERE enabled = 1
+      AND instance_id = ?
+      ${userSql}
+    ORDER BY last_seen_at DESC
+    LIMIT ?
+  `).bind(...params).all();
+  const tokens = rows.results || [];
+  const configured = fcmConfigured(env);
+  const data = {
+    type: normalizedType,
+    instanceId: normalizedInstanceId,
+    reason: boundedString(reason || "content.refresh", "reason", 120, true) || "content.refresh",
+    includeUserContent: String(normalizedType === "user_content_refresh"),
+    contentVersionId: cleanString(contentVersionId),
+  };
+  if (dryRun || !configured) {
+    return {
+      dryRun,
+      configured,
+      matched: tokens.length,
+      sent: 0,
+      skipped: tokens.length,
+      type: normalizedType,
+      instanceId: normalizedInstanceId,
+    };
+  }
+  let sent = 0;
+  let failed = 0;
+  let disabled = 0;
+  for (const token of tokens) {
+    const result = await sendFcmDataMessage(env, token.token, data);
+    if (result.ok) {
+      sent += 1;
+      await env.DB.prepare(`
+        UPDATE push_device_tokens
+        SET last_sent_at = datetime('now'), last_error = NULL
+        WHERE token_hash = ?
+      `).bind(token.token_hash).run();
+    } else {
+      failed += 1;
+      if (result.invalidToken) disabled += 1;
+      await env.DB.prepare(`
+        UPDATE push_device_tokens
+        SET enabled = CASE WHEN ? THEN 0 ELSE enabled END,
+            last_error = ?,
+            last_seen_at = datetime('now')
+        WHERE token_hash = ?
+      `).bind(result.invalidToken ? 1 : 0, result.error || `FCM HTTP ${result.status || 0}`, token.token_hash).run();
+    }
+    await recordPushSendEvent(env, token, data, result);
+  }
+  return {
+    configured,
+    matched: tokens.length,
+    sent,
+    failed,
+    disabled,
+    type: normalizedType,
+    instanceId: normalizedInstanceId,
+  };
+}
+
+function normalizePushType(value) {
+  const type = cleanString(value);
+  if (type === "user_content_refresh" || type === "content_refresh") return type;
+  throw new HttpError(400, "unsupported push type", { type });
+}
+
+function fcmConfigured(env) {
+  return Boolean(
+    cleanString(env.FCM_PROJECT_ID) &&
+    cleanString(env.FCM_SERVICE_ACCOUNT_EMAIL) &&
+    cleanString(env.FCM_SERVICE_ACCOUNT_PRIVATE_KEY)
+  );
+}
+
+async function sendFcmDataMessage(env, token, data) {
+  try {
+    const accessToken = await fcmAccessToken(env);
+    const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(env.FCM_PROJECT_ID)}/messages:send`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: {
+          token,
+          data: Object.fromEntries(
+            Object.entries(data)
+              .filter(([, value]) => value !== undefined && value !== null)
+              .map(([key, value]) => [key, String(value)])
+          ),
+          android: {
+            priority: "HIGH",
+            ttl: "3600s",
+          },
+        },
+      }),
+    });
+    const raw = await response.text();
+    if (response.ok) return { ok: true, status: response.status, response: raw.slice(0, 500) };
+    const invalidToken = response.status === 404 || /UNREGISTERED|INVALID_ARGUMENT|registration token/i.test(raw);
+    return { ok: false, status: response.status, error: raw.slice(0, 500), invalidToken };
+  } catch (error) {
+    return { ok: false, status: 0, error: error?.message || String(error), invalidToken: false };
+  }
+}
+
+async function fcmAccessToken(env) {
+  const nowMs = Date.now();
+  if (fcmAccessTokenCache && fcmAccessTokenCache.expiresAtMs > nowMs + 60000) {
+    return fcmAccessTokenCache.token;
+  }
+  if (!fcmConfigured(env)) throw new HttpError(503, "FCM service account is not configured");
+  const now = Math.floor(nowMs / 1000);
+  const header = base64UrlEncodeJson({ alg: "RS256", typ: "JWT" });
+  const claims = base64UrlEncodeJson({
+    iss: env.FCM_SERVICE_ACCOUNT_EMAIL,
+    scope: "https://www.googleapis.com/auth/firebase.messaging",
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600,
+  });
+  const signingInput = `${header}.${claims}`;
+  const signature = await signServiceAccountJwt(signingInput, env.FCM_SERVICE_ACCOUNT_PRIVATE_KEY);
+  const assertion = `${signingInput}.${signature}`;
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion,
+    }),
+  });
+  const raw = await response.text();
+  if (!response.ok) throw new HttpError(502, `FCM token exchange HTTP ${response.status}`, { body: raw.slice(0, 500) });
+  const parsed = JSON.parse(raw);
+  if (!parsed.access_token) throw new HttpError(502, "FCM token exchange returned no access_token");
+  fcmAccessTokenCache = {
+    token: parsed.access_token,
+    expiresAtMs: nowMs + Math.max(60, Number(parsed.expires_in || 3600) - 60) * 1000,
+  };
+  return fcmAccessTokenCache.token;
+}
+
+async function signServiceAccountJwt(input, privateKeyPem) {
+  const pem = String(privateKeyPem || "").replace(/\\n/g, "\n");
+  const base64 = pem
+    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
+    .replace(/-----END PRIVATE KEY-----/g, "")
+    .replace(/\s+/g, "");
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    bytes,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    key,
+    new TextEncoder().encode(input),
+  );
+  return base64UrlEncodeBytes(new Uint8Array(signature));
+}
+
+async function recordPushSendEvent(env, token, data, result) {
+  try {
+    await env.DB.prepare(`
+      INSERT INTO push_send_events
+        (id, token_hash, user_id, instance_id, push_type, reason, status, response_json, error)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      crypto.randomUUID(),
+      token.token_hash,
+      token.user_id || null,
+      token.instance_id,
+      data.type,
+      data.reason,
+      result.status || 0,
+      result.response || "",
+      result.ok ? "" : (result.error || ""),
+    ).run();
+  } catch (_) {
+    // Push audit logging must not block content sync.
+  }
+}
+
 async function persistAndRespond(env, lesson, eventType, eventPayload) {
   const payloadJson = JSON.stringify(lesson.payload);
   await env.DB.prepare(`
@@ -2465,14 +2881,18 @@ async function persistAndRespond(env, lesson, eventType, eventPayload) {
   await env.DB.prepare(`
     INSERT INTO sync_events (id, instance_id, event_type, payload_json)
     VALUES (?, ?, ?, ?)
-  `).bind(
-    crypto.randomUUID(),
-    `content:${lesson.contentVersionId}`,
-    eventType,
-    JSON.stringify({ lessonId: lesson.lessonId, ...eventPayload }),
-  ).run();
-  return adminLesson(env, lesson.contentVersionId, lesson.lessonId);
-}
+	  `).bind(
+	    crypto.randomUUID(),
+	    `content:${lesson.contentVersionId}`,
+	    eventType,
+	    JSON.stringify({ lessonId: lesson.lessonId, ...eventPayload }),
+	  ).run();
+	  await safeNotifyContentVersionRefresh(env, lesson.contentVersionId, {
+	    reason: eventType,
+	    lessonId: lesson.lessonId,
+	  });
+	  return adminLesson(env, lesson.contentVersionId, lesson.lessonId);
+	}
 
 function lessonResponse(lesson) {
   return {

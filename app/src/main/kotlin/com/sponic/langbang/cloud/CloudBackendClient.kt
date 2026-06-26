@@ -227,6 +227,34 @@ class CloudBackendClient(
         }
     }
 
+    suspend fun registerPushToken(
+        sessionToken: String?,
+        request: CloudPushRegisterRequest
+    ): Result<CloudPushRegisterResponse> = withContext(Dispatchers.IO) {
+        runCatching {
+            val body = post(
+                "/v1/push/register",
+                json.encodeToString(CloudPushRegisterRequest.serializer(), request),
+                bearerToken = sessionToken
+            )
+            json.decodeFromString(CloudPushRegisterResponse.serializer(), body)
+        }
+    }
+
+    suspend fun unregisterPushToken(
+        sessionToken: String?,
+        request: CloudPushUnregisterRequest
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            post(
+                "/v1/push/unregister",
+                json.encodeToString(CloudPushUnregisterRequest.serializer(), request),
+                bearerToken = sessionToken
+            )
+            Unit
+        }
+    }
+
     suspend fun signOut(sessionToken: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             post("/v1/auth/sign-out", "{}", bearerToken = sessionToken)

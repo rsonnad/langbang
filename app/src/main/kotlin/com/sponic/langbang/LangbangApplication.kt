@@ -34,6 +34,7 @@ import com.sponic.langbang.domain.UsageTracker
 import com.sponic.langbang.integrations.AzurePronunciationClient
 import com.sponic.langbang.integrations.AzureTtsClient
 import com.sponic.langbang.integrations.GeminiClient
+import com.sponic.langbang.push.PushManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -89,6 +90,8 @@ class LangbangApplication : Application() {
         private set
     lateinit var analytics: ProductAnalytics
         private set
+    lateinit var pushManager: PushManager
+        private set
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -124,6 +127,14 @@ class LangbangApplication : Application() {
         prefetch = PrefetchService(tts, audioCache, lessonRepo)
         r2Audio = R2AudioDownloader(audioCache, lessonRepo, network)
         updateChecker = UpdateChecker(this, network)
+        pushManager = PushManager(
+            context = this,
+            backend = cloudBackend,
+            authStore = authStore,
+            cloudConfig = cloudConfig,
+            installationId = analytics.installationId,
+            scope = appScope
+        )
 
         WorkManager.getInstance(this).enqueueUniqueWork(
             PrefetchWorker.UNIQUE_NAME,
@@ -143,6 +154,7 @@ class LangbangApplication : Application() {
         sentenceRegen.startIfNeeded()
         bindAuthProfileToAnalytics()
         analytics.trackSessionStart()
+        pushManager.start()
         syncCloudConfig()
         if (authStore.state.value.signedIn) {
             syncUserPhrases()
@@ -175,35 +187,41 @@ class LangbangApplication : Application() {
 
     fun syncCloudConfig() {
         analytics.track(name = "cloud_sync_requested", feature = "cloud", action = "sync")
-        cloudConfig.markSyncing()
         appScope.launch {
-            cloudBackend.fetchInstances()
-                .onSuccess { cloudConfig.saveInstances(it) }
-            cloudBackend.fetchBootstrap(cloudConfig.state.value.selectedInstanceId).fold(
-                onSuccess = { bootstrap ->
-                    cloudConfig.saveBootstrap(bootstrap)
-                    lessonRepo.clearCloudBackedBaseCache()
-                    analytics.track(
-                        name = "cloud_sync_succeeded",
-                        feature = "cloud",
-                        action = "sync",
-                        properties = mapOf(
-                            "contentVersionId" to (bootstrap.content.versionId ?: ""),
-                            "instanceId" to bootstrap.instance.id
-                        )
-                    )
-                },
-                onFailure = { t ->
-                    cloudConfig.saveError(t.message ?: t.javaClass.simpleName)
-                    analytics.track(
-                        name = "cloud_sync_failed",
-                        feature = "cloud",
-                        action = "sync",
-                        properties = mapOf("error" to (t.message ?: t.javaClass.simpleName))
-                    )
-                }
-            )
+            syncCloudConfigNow()
         }
+    }
+
+    suspend fun syncCloudConfigNow(): Boolean {
+        cloudConfig.markSyncing()
+        cloudBackend.fetchInstances()
+            .onSuccess { cloudConfig.saveInstances(it) }
+        return cloudBackend.fetchBootstrap(cloudConfig.state.value.selectedInstanceId).fold(
+            onSuccess = { bootstrap ->
+                cloudConfig.saveBootstrap(bootstrap)
+                lessonRepo.clearCloudBackedBaseCache()
+                analytics.track(
+                    name = "cloud_sync_succeeded",
+                    feature = "cloud",
+                    action = "sync",
+                    properties = mapOf(
+                        "contentVersionId" to (bootstrap.content.versionId ?: ""),
+                        "instanceId" to bootstrap.instance.id
+                    )
+                )
+                true
+            },
+            onFailure = { t ->
+                cloudConfig.saveError(t.message ?: t.javaClass.simpleName)
+                analytics.track(
+                    name = "cloud_sync_failed",
+                    feature = "cloud",
+                    action = "sync",
+                    properties = mapOf("error" to (t.message ?: t.javaClass.simpleName))
+                )
+                false
+            }
+        )
     }
 
     fun selectCloudInstance(instanceId: String) {
@@ -224,28 +242,52 @@ class LangbangApplication : Application() {
     fun syncUserPhrases() {
         analytics.track(name = "phrase_sync_requested", feature = "profile", action = "sync")
         appScope.launch {
-            phraseSync.syncNow().fold(
-                onSuccess = {
-                    analytics.track(
-                        name = "phrase_sync_succeeded",
-                        feature = "profile",
-                        action = "sync",
-                        properties = mapOf(
-                            "groupCount" to it.groups.size.toString(),
-                            "starCount" to it.starredPhrases.size.toString()
-                        )
-                    )
-                },
-                onFailure = { t ->
-                    analytics.track(
-                        name = "phrase_sync_failed",
-                        feature = "profile",
-                        action = "sync",
-                        properties = mapOf("error" to (t.message ?: t.javaClass.simpleName))
-                    )
-                }
-            )
+            syncUserPhrasesNow()
         }
+    }
+
+    suspend fun syncUserPhrasesNow(): Boolean =
+        phraseSync.syncNow().fold(
+            onSuccess = {
+                analytics.track(
+                    name = "phrase_sync_succeeded",
+                    feature = "profile",
+                    action = "sync",
+                    properties = mapOf(
+                        "groupCount" to it.groups.size.toString(),
+                        "starCount" to it.starredPhrases.size.toString()
+                    )
+                )
+                true
+            },
+            onFailure = { t ->
+                analytics.track(
+                    name = "phrase_sync_failed",
+                    feature = "profile",
+                    action = "sync",
+                    properties = mapOf("error" to (t.message ?: t.javaClass.simpleName))
+                )
+                false
+            }
+        )
+
+    suspend fun refreshFromPush(reason: String, includeUserContent: Boolean): Boolean {
+        analytics.track(
+            name = "push_refresh_requested",
+            feature = "cloud",
+            action = "push_refresh",
+            properties = mapOf(
+                "reason" to reason,
+                "includeUserContent" to includeUserContent.toString()
+            )
+        )
+        val cloudOk = syncCloudConfigNow()
+        val userOk = if (includeUserContent && authStore.state.value.signedIn) {
+            syncUserPhrasesNow()
+        } else {
+            true
+        }
+        return cloudOk && userOk
     }
 
     /**
