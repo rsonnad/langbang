@@ -27,7 +27,16 @@ fi
 
 TOKEN="${LANGBANGML_CONTENT_TOKEN:-}"
 if [ -z "$TOKEN" ]; then
-  if [ -z "${BW_SESSION:-}" ]; then
+  BW_CLI="${BW_CLI:-}"
+  if [ -z "$BW_CLI" ]; then
+    if [ -x /opt/homebrew/bin/bw ]; then
+      BW_CLI="/opt/homebrew/bin/bw"
+    else
+      BW_CLI="bw"
+    fi
+  fi
+
+  mint_bw_session() {
     BW_PASSWORD="$(security find-generic-password -a "rahulioson@gmail.com" -s "bitwarden-cli" -w 2>/dev/null || true)"
     if [ -z "$BW_PASSWORD" ]; then
       echo "Could not read Bitwarden CLI password from Keychain." >&2
@@ -35,21 +44,45 @@ if [ -z "$TOKEN" ]; then
       exit 1
     fi
     export BW_PASSWORD
-    BW_SESSION="$(bw unlock --passwordenv BW_PASSWORD --raw)"
-    export BW_SESSION
-  fi
-  TOKEN="$(
-    bw get item "Cloudflare — LangBangML Content API — New Account" --session "$BW_SESSION" </dev/null 2>/dev/null || true
-  )"
-  TOKEN="$(
-    printf '%s' "$TOKEN" \
-      | jq -r '.login.password // empty'
-  )"
-  if [ -z "$TOKEN" ]; then
-    TOKEN="$(bw get item "Cloudflare — LangBangML Content API" --session "$BW_SESSION" </dev/null | jq -r '.login.password')" || {
-      echo "Could not read Cloudflare — LangBangML Content API from Bitwarden." >&2
+    BW_SESSION="$("$BW_CLI" unlock --passwordenv BW_PASSWORD --raw </dev/null 2>/dev/null || true)"
+    unset BW_PASSWORD
+    if [ -z "$BW_SESSION" ]; then
+      echo "Could not unlock Bitwarden non-interactively." >&2
+      echo "Or set LANGBANGML_CONTENT_TOKEN directly." >&2
       exit 1
-    }
+    fi
+    export BW_SESSION
+  }
+
+  if [ -n "${BW_SESSION:-}" ]; then
+    if ! "$BW_CLI" status --session "$BW_SESSION" </dev/null 2>/dev/null | jq -e '.status == "unlocked"' >/dev/null 2>&1; then
+      unset BW_SESSION
+    fi
+  fi
+  if [ -z "${BW_SESSION:-}" ]; then
+    mint_bw_session
+  fi
+
+  for item_name in \
+    "Cloudflare — LangBangML Content API — New Account" \
+    "Cloudflare — LangBangML Content API"
+  do
+    TOKEN="$(
+      "$BW_CLI" list items --search "$item_name" --session "$BW_SESSION" </dev/null 2>/dev/null \
+        | jq -r --arg item_name "$item_name" '
+          [.[] | select(.name == $item_name)][0]
+          | .login.password // empty
+        '
+    )"
+    if [ -n "$TOKEN" ]; then
+      break
+    fi
+  done
+
+  if [ -z "$TOKEN" ]; then
+    echo "Could not read LangBangML content API token from Bitwarden." >&2
+    echo "Or set LANGBANGML_CONTENT_TOKEN directly." >&2
+    exit 1
   fi
 fi
 
