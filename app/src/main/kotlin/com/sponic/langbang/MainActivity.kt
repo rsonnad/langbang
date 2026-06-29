@@ -24,18 +24,12 @@ import com.sponic.langbang.ui.theme.LangbangTheme
 class MainActivity : ComponentActivity() {
     private lateinit var voicingMediaSession: VoicingMediaSession
 
-    private val requestMic = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { /* result available on next composition via permission state read */ }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestMic.launch(Manifest.permission.RECORD_AUDIO)
-        }
+        // Microphone permission is requested contextually when the user first enters a
+        // mic-backed feature (pronunciation / tap-to-speak), not at launch — see
+        // PhraseDetail + NowVoicingPanel. Requesting at launch is a Play UX flag.
 
         val app = application as LangbangApplication
         voicingMediaSession = VoicingMediaSession(this)

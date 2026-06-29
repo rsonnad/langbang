@@ -162,6 +162,11 @@ android {
             // Sign with the Play upload key when configured, else debug (so the
             // build never fails); only a release-keystore-signed AAB is uploadable.
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            // No provider secrets in the Play binary (plan AND-4): Azure uses a
+            // short-lived Worker token (/v1/azure/speech-token); the main app reaches
+            // Gemini only through the Worker proxy. Debug keeps the keys for fallback.
+            buildConfigField("String", "AZURE_SPEECH_KEY", "\"\"")
+            buildConfigField("String", "GEMINI_API_KEY", "\"\"")
         }
     }
 
