@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        AdbWifiKeeper.enableIfGranted(this, "activity resume")
+        if (BuildConfig.DEBUG) AdbWifiKeeper.enableIfGranted(this, "activity resume")
         (application as LangbangApplication).analytics.track(
             name = "app_resumed",
             feature = "app",
