@@ -251,7 +251,7 @@ class CloudBackendClient(
                 return conn.inputStream.bufferedReader().use { it.readText() }
             }
             val err = conn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            error("Cloudflare API HTTP $code: ${err.take(180)}")
+            error("API call error: ${err.take(500)}")
         } finally {
             conn.disconnect()
         }
@@ -285,7 +285,7 @@ class CloudBackendClient(
                 return conn.inputStream.bufferedReader().use { it.readText() }
             }
             val err = conn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            error("Cloudflare API HTTP $code: ${err.take(180)}")
+            error("API call error: ${err.take(500)}")
         } finally {
             conn.disconnect()
         }
