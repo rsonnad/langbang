@@ -5,6 +5,7 @@ const DEFAULT_AUDIO_WARM_LIMIT = 40;
 const MAX_AUDIO_WARM_LIMIT = 80;
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
 const MAX_GEMINI_PROMPT_CHARS = 20000;
+const MAX_G2_TRANSLATE_CHARS = 500;
 const MAX_PHRASE_FIELD_CHARS = 600;
 const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 const MAX_ID_TOKEN_CHARS = 12000;
@@ -17,6 +18,12 @@ const MAX_SYNC_STARS = 2000;
 const DEFAULT_AGENT_DAILY_LIMIT = 100;
 const MAX_AGENT_BODY_CHARS = 64 * 1024;
 const MAX_AGENT_LABEL_CHARS = 80;
+const MAX_AGENT_GROUP_TITLE_CHARS = 48;
+const MAX_AGENT_GROUP_SUBTITLE_CHARS = 120;
+const MAX_AGENT_PHRASE_INPUTS = 10;
+const MAX_AGENT_PHRASE_OUTPUTS = 25;
+const MAX_AGENT_PHRASE_TARGET_WORDS = 10;
+const MAX_AGENT_PHRASE_TARGET_CHARS = 90;
 const DEFAULT_AI_PHRASE_QUOTA = 50;
 const MAX_AI_PHRASE_PROMPT_CHARS = 1200;
 const MAX_AI_PHRASES_PER_REQUEST = 10;
@@ -25,16 +32,56 @@ const MAX_ANALYTICS_EVENTS_PER_BATCH = 100;
 const MAX_ANALYTICS_PROPERTIES_CHARS = 4000;
 const DEFAULT_ANALYTICS_ADMIN_EMAIL = "rahulioson@gmail.com";
 
+// --- Abuse controls (plan Phase 0 / BE-1 / BE-2) ---------------------------
+// Per-IP / per-user fixed-window limits, generous enough that normal app + web
+// usage never trips them but tight enough to cap cost-amplification abuse of the
+// paid Gemini / Azure backends. Edge WAF rules (plan BE-0a) are the first line
+// of defense; these are the application-layer backstop. Tune from real traffic.
+const RL = {
+  // LLM text-gen limits tripled for the owner's personal use (2026-06-29).
+  geminiIpPerHour: 180,
+  geminiUserPerDay: 1200,
+  completeIpPerHour: 180,
+  completeUserPerDay: 1200,
+  audioIpPerHour: 600,
+  emailStartIpPerHour: 20,
+  emailStartEmailPerHour: 5,
+  emailVerifyIpPerHour: 60,
+  emailVerifyEmailPer10Min: 10,
+  analyticsIpPerMin: 120,
+};
+// app batches audio at R2AudioDownloader.BATCH_SIZE (40); 100 = safe headroom.
+const MAX_AUDIO_MANIFEST_PHRASES = 100;
+// Browser origins allowed to call this API cross-origin. The web SPA normally
+// uses the same-origin langbang.org proxy, so this stays tight. Native apps and
+// curl ignore CORS. Override with the CORS_ALLOWED_ORIGINS var.
+const DEFAULT_CORS_ORIGINS = [
+  "https://langbang.org",
+  "https://www.langbang.org",
+  "https://langbangml-api.langbangml.workers.dev",
+];
+// Minimal Gemini safety config (BLOCK_ONLY_HIGH avoids over-blocking legitimate
+// language-learning content while limiting the owner account's exposure to
+// disallowed-content generation). Applied to all generate calls.
+const GEMINI_SAFETY_SETTINGS = [
+  { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
+  { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
+  { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
+  { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
+];
+
 export default {
   async fetch(request, env) {
+    const allowOrigin = allowedOrigin(request.headers.get("Origin") || "", env);
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: corsHeaders() });
+      return new Response(null, { status: 204, headers: corsHeaders(allowOrigin) });
     }
 
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
 
     try {
+      const response = await (async () => {
       if (request.method === "GET" && path === "/health") {
         return json({ ok: true, service: "langbangml-api" });
       }
@@ -63,6 +110,12 @@ export default {
       if (request.method === "POST" && path === "/v1/gemini/generate") {
         return await geminiGenerate(request, env);
       }
+      if (request.method === "POST" && path === "/v1/gemini/g2-translate") {
+        return await geminiG2Translate(request, env);
+      }
+      if (path === "/v1/gemini/live" && (request.headers.get("Upgrade") || "").toLowerCase() === "websocket") {
+        return await geminiLiveRelay(request, env);
+      }
       if (request.method === "POST" && path === "/v1/phrases/complete") {
         return await completePhrase(request, env);
       }
@@ -74,6 +127,9 @@ export default {
       }
       if (request.method === "POST" && path === "/v1/auth/email/verify") {
         return await authEmailVerify(request, env);
+      }
+      if (request.method === "POST" && path === "/v1/auth/test-login") {
+        return await authTestLogin(request, env);
       }
       if (request.method === "POST" && path === "/v1/auth/sign-out") {
         const user = await requireUser(request, env);
@@ -153,11 +209,13 @@ export default {
         return await audioManifest(request, env);
       }
       return json({ error: "not found" }, 404);
+      })();
+      return withCors(response, allowOrigin);
     } catch (error) {
       if (error instanceof HttpError) {
-        return json({ error: error.message, details: error.details }, error.status);
+        return withCors(json({ error: error.message, details: error.details }, error.status), allowOrigin);
       }
-      return json({ error: error?.message || String(error) }, 500);
+      return withCors(json({ error: error?.message || String(error) }, 500), allowOrigin);
     }
   },
 };
@@ -179,6 +237,17 @@ function requireAdmin(request, env) {
   const token = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
   if (token !== expected) {
     throw new HttpError(401, "admin token required");
+  }
+}
+
+// Non-throwing admin check — exempts the owner's own tooling (bulk content
+// generation, audio warming) from the end-user rate limits below.
+function isAdmin(request, env) {
+  try {
+    requireAdmin(request, env);
+    return true;
+  } catch (_) {
+    return false;
   }
 }
 
@@ -205,6 +274,85 @@ async function requireUser(request, env) {
   return row;
 }
 
+// Returns the authenticated user row if a valid Bearer session is present, else
+// null — never throws on missing/invalid auth. Lets endpoints meter signed-in
+// users without forcing login (e.g. audio that must work pre-login).
+async function optionalUser(request, env) {
+  const auth = request.headers.get("Authorization") || "";
+  if (!/^Bearer\s+/i.test(auth)) return null;
+  try {
+    return await requireUser(request, env);
+  } catch (_) {
+    return null;
+  }
+}
+
+function clientIp(request) {
+  return (
+    request.headers.get("CF-Connecting-IP") ||
+    (request.headers.get("X-Forwarded-For") || "").split(",")[0].trim() ||
+    "unknown"
+  );
+}
+
+function truthy(value) {
+  return value === true || value === "true" || value === "1" || value === 1;
+}
+
+// D1-backed fixed-window rate limit. Increments the counter for the current
+// window and throws HttpError(429) once the limit is exceeded. Fails OPEN on any
+// D1 error (incl. migration 013 not yet applied) so abuse control never takes an
+// endpoint down. One write + one read per guarded call — front with an edge WAF
+// rule (plan BE-0a) for true flood protection.
+async function enforceRateLimit(env, bucket, limit, windowSeconds, details = {}) {
+  if (!env.DB || !Number.isFinite(limit) || limit <= 0) return;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const windowStart = nowSec - (nowSec % windowSeconds);
+  try {
+    await env.DB.prepare(`
+      INSERT INTO rate_limit_counters (bucket, window_start, count, updated_at)
+      VALUES (?, ?, 1, datetime('now'))
+      ON CONFLICT(bucket, window_start) DO UPDATE SET
+        count = count + 1,
+        updated_at = datetime('now')
+    `).bind(bucket, windowStart).run();
+    const row = await env.DB.prepare(
+      `SELECT count FROM rate_limit_counters WHERE bucket = ? AND window_start = ?`,
+    ).bind(bucket, windowStart).first();
+    const used = Number(row?.count || 0);
+    if (used > limit) {
+      throw new HttpError(429, "rate limit exceeded", {
+        ...details,
+        limit,
+        windowSeconds,
+        retryAfterSeconds: Math.max(1, windowStart + windowSeconds - nowSec),
+      });
+    }
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    // Any D1 failure (missing table, transient error) → fail open.
+    return;
+  }
+}
+
+// Gate for the paid-backend endpoints (Gemini generate / phrase completion).
+// Meters per signed-in user when a session is present and always caps per IP.
+// When LLM_REQUIRE_AUTH is set (plan BE-1 end state, after clients send tokens)
+// anonymous callers are rejected outright.
+async function guardLlmEndpoint(request, env, name, ipPerHour, userPerDay) {
+  // The owner's own tooling authenticates with the admin token and is exempt.
+  if (isAdmin(request, env)) return null;
+  const user = await optionalUser(request, env);
+  if (!user && truthy(env.LLM_REQUIRE_AUTH)) {
+    throw new HttpError(401, "sign-in required");
+  }
+  await enforceRateLimit(env, `${name}:ip:${clientIp(request)}`, ipPerHour, 3600, { scope: "ip" });
+  if (user) {
+    await enforceRateLimit(env, `${name}:user:${user.user_id}`, userPerDay, 86400, { scope: "user" });
+  }
+  return user;
+}
+
 async function authGoogle(request, env) {
   const body = await request.json();
   const idToken = boundedString(body.idToken, "idToken", MAX_ID_TOKEN_CHARS);
@@ -228,6 +376,8 @@ async function authEmailStart(request, env) {
   const body = await request.json();
   const email = normalizeEmail(boundedString(body.email, "email", MAX_EMAIL_CHARS));
   if (!email) throw new HttpError(400, "valid email is required");
+  await enforceRateLimit(env, `email-start:ip:${clientIp(request)}`, RL.emailStartIpPerHour, 3600, { scope: "ip" });
+  await enforceRateLimit(env, `email-start:addr:${email}`, RL.emailStartEmailPerHour, 3600, { scope: "email" });
   const pepper = env.EMAIL_LOGIN_PEPPER;
   if (!pepper) throw new HttpError(503, "EMAIL_LOGIN_PEPPER is not configured");
 
@@ -256,6 +406,8 @@ async function authEmailVerify(request, env) {
   const code = String(body.code || "").replace(/\D/g, "");
   if (!email) throw new HttpError(400, "valid email is required");
   if (!/^\d{6}$/.test(code)) throw new HttpError(400, "six-digit code is required");
+  await enforceRateLimit(env, `email-verify:ip:${clientIp(request)}`, RL.emailVerifyIpPerHour, 3600, { scope: "ip" });
+  await enforceRateLimit(env, `email-verify:addr:${email}`, RL.emailVerifyEmailPer10Min, 600, { scope: "email" });
   const pepper = env.EMAIL_LOGIN_PEPPER;
   if (!pepper) throw new HttpError(503, "EMAIL_LOGIN_PEPPER is not configured");
   const codeHash = await hashEmailCode(email, code, pepper);
@@ -288,6 +440,36 @@ async function authEmailVerify(request, env) {
   return json(authResponse(user, session));
 }
 
+// Scoped username+password login for a single test/review account (e.g. Play Store
+// review, automated QA). Disabled unless BOTH TEST_LOGIN_EMAIL and TEST_LOGIN_PASSWORD
+// secrets are set. This is intentionally separate from the real email-code and Google
+// flows — it adds no password surface for ordinary users.
+async function authTestLogin(request, env) {
+  const expectedEmail = normalizeEmail(env.TEST_LOGIN_EMAIL || "");
+  const expectedPassword = env.TEST_LOGIN_PASSWORD || "";
+  if (!expectedEmail || !expectedPassword) {
+    throw new HttpError(404, "not found");
+  }
+  const body = await request.json();
+  const email = normalizeEmail(boundedString(body.email, "email", MAX_EMAIL_CHARS));
+  const password = String(body.password || "");
+  const emailOk = !!email && email === expectedEmail;
+  const passwordOk = await constantTimeEqual(password, expectedPassword);
+  if (!emailOk || !passwordOk) {
+    throw new HttpError(401, "invalid test credentials");
+  }
+  const user = await upsertUserIdentity(env, {
+    provider: "email",
+    providerSubject: expectedEmail,
+    email: expectedEmail,
+    emailVerified: true,
+    displayName: "Test Account",
+    pictureUrl: "",
+  });
+  const session = await createSession(env, user.id);
+  return json(authResponse(user, session));
+}
+
 async function signOut(request, env, user) {
   const auth = request.headers.get("Authorization") || "";
   const token = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
@@ -305,7 +487,11 @@ async function createAgentToken(request, env, user) {
   const body = await readOptionalJson(request);
   const revokeExisting = body.revokeExisting === true || body.rotate === true;
   const label = boundedString(body.label || "Claude/Codex", "label", MAX_AGENT_LABEL_CHARS, true) || "Claude/Codex";
-  const defaultInstanceId = normalizeInstanceId(body.instanceId || "langbangml-en-pl");
+  const defaultInstanceId = normalizeInstanceId(
+    languageVersionToInstanceId(body.instanceId || body.version || body.languageVersion || body.langVersion || body.language_version) ||
+      body.instanceId ||
+      "langbangml-en-pl",
+  );
   if (revokeExisting) {
     await env.DB.prepare(`
       UPDATE user_agent_tokens
@@ -332,7 +518,7 @@ async function createAgentToken(request, env, user) {
     defaultInstanceId,
     dailyLimit: agentDailyLimit(env),
     apiBase: publicApiBase(env),
-    instructionsUrl: `${publicApiBase(env)}/agent`,
+    instructionsUrl: publicAgentDocsUrl(env),
     createdAt: new Date().toISOString(),
   });
 }
@@ -551,7 +737,15 @@ async function loadUserPhrases(env, userId, instanceId) {
       SELECT group_json
       FROM user_phrase_groups
       WHERE user_id = ? AND instance_id = ? AND deleted_at IS NULL
-      ORDER BY sort_order ASC, updated_at ASC
+      ORDER BY
+        CASE WHEN json_extract(group_json, '$.sortOrder') IS NULL THEN 1 ELSE 0 END ASC,
+        CAST(json_extract(group_json, '$.sortOrder') AS INTEGER) ASC,
+        COALESCE(
+          CAST(json_extract(group_json, '$.createdAt') AS INTEGER),
+          unixepoch(updated_at) * 1000
+        ) DESC,
+        sort_order ASC,
+        updated_at DESC
     `).bind(userId, instanceId).all(),
     env.DB.prepare(`
       SELECT phrase_key
@@ -734,62 +928,117 @@ async function agentStatus(request, env, agent, quota) {
     tokenPrefix: agent.token_prefix,
     defaultInstanceId: agent.default_instance_id,
     apiBase: publicApiBase(env),
-    instructionsUrl: `${publicApiBase(env)}/agent`,
+    instructionsUrl: publicAgentDocsUrl(env),
     quota,
   });
 }
 
 async function agentPhrases(request, env, agent, quota) {
   if (request.method === "GET") {
-    const instanceId = normalizeAgentInstanceId(new URL(request.url).searchParams.get("instanceId"), agent);
-    return json({ ok: true, ...(await loadUserPhrases(env, agent.user_id, instanceId)), quota });
+    const params = new URL(request.url).searchParams;
+    const instanceId = normalizeAgentInstanceIdFromParams(params, agent);
+    const current = await loadUserPhrases(env, agent.user_id, instanceId);
+    const requestedGroupId = requestedAgentPhraseGroupId(params);
+    const groupsOnly = truthyParam(params.get("groupsOnly") || params.get("summary"));
+    let groups = current.groups;
+    if (requestedGroupId) {
+      groups = groups.filter((group) => group.id.toLowerCase() === requestedGroupId.toLowerCase());
+      if (groups.length === 0) throw new HttpError(404, "phrase group not found", { groupId: requestedGroupId });
+    }
+    const responseGroups = groupsOnly ? groups.map(agentPhraseGroupSummary) : groups;
+    return json({
+      ok: true,
+      ...current,
+      groups: responseGroups,
+      groupsOnly,
+      group: requestedGroupId && !groupsOnly ? groups[0] : undefined,
+      quota,
+    });
   }
   if (request.method === "POST") {
     const body = await readJsonLimited(request, MAX_AGENT_BODY_CHARS);
-    const instanceId = normalizeAgentInstanceId(body.instanceId, agent);
-    const groupId = normalizePhraseGroupId(body.groupId || body.group?.id || body.groupTitle || "agent-phrases");
-    const groupTitle = boundedString(body.groupTitle || body.group?.title || groupId, "groupTitle", 200, true) || groupId;
-    const groupSubtitle = boundedString(body.groupSubtitle || body.group?.subtitle || "", "groupSubtitle", 400, true);
-    const sentence = normalizeSentenceExample(body.phrase || body.sentence || body.item || body);
+    const instanceId = normalizeAgentInstanceIdFromBody(body, agent);
+    const content = await loadContentForInstance(env, instanceId);
+    const groupTitleInput = cleanString(body.groupTitle || body.groupName || body.group?.title || body.group?.name);
+    const groupIdInput = cleanString(body.groupId || body.group?.id);
+    const groupTitle = boundedString(
+      groupTitleInput || groupIdInput || "Agent phrases",
+      "groupTitle",
+      MAX_AGENT_GROUP_TITLE_CHARS,
+      true,
+    ) || "Agent phrases";
+    const now = Date.now();
+    const groupId = normalizePhraseGroupId(groupIdInput || timestampedPhraseGroupId(groupTitle, now));
+    const groupSubtitle = boundedString(
+      body.groupSubtitle || body.group?.subtitle || "",
+      "groupSubtitle",
+      MAX_AGENT_GROUP_SUBTITLE_CHARS,
+      true,
+    );
+    const groupCollection = normalizeOptionalPhraseGroupCollection(
+      body.collection || body.groupCollection || body.group?.collection,
+    );
+    const sortOrder = normalizeOptionalGroupSortOrder(body.sortOrder ?? body.order ?? body.group?.sortOrder ?? body.group?.order);
+    const atomic = normalizeAgentAtomicFlag(body);
+    const sentences = await normalizeAgentPhraseSentences(env, body, content.languagePair, atomic);
     const current = await loadUserPhrases(env, agent.user_id, instanceId);
     const groups = current.groups.slice();
     const index = groups.findIndex((group) => group.id.toLowerCase() === groupId.toLowerCase());
     const existing = index >= 0
       ? groups[index]
-      : { id: groupId, title: groupTitle, subtitle: groupSubtitle, sentences: [] };
-    const sentences = Array.isArray(existing.sentences) ? existing.sentences.slice() : [];
-    const key = sentenceKey(sentence);
-    const existingSentenceIndex = sentences.findIndex((item) => sentenceKey(item) === key);
-    if (existingSentenceIndex >= 0) {
-      sentences[existingSentenceIndex] = sentence;
-    } else {
-      sentences.push(sentence);
+      : { id: groupId, title: groupTitle, subtitle: groupSubtitle, createdAt: now, sentences: [] };
+    const nextSentences = Array.isArray(existing.sentences) ? existing.sentences.slice() : [];
+    let replaced = 0;
+    let added = 0;
+    for (const sentence of sentences) {
+      const key = sentenceKey(sentence);
+      const existingSentenceIndex = nextSentences.findIndex((item) => sentenceKey(item) === key);
+      if (existingSentenceIndex >= 0) {
+        nextSentences[existingSentenceIndex] = sentence;
+        replaced += 1;
+      } else {
+        nextSentences.push(sentence);
+        added += 1;
+      }
     }
     const updated = {
       ...existing,
       title: existing.title || groupTitle,
       subtitle: existing.subtitle || groupSubtitle,
-      sentences,
+      collection: groupCollection ?? existing.collection,
+      createdAt: existing.createdAt || now,
+      sortOrder: sortOrder ?? existing.sortOrder,
+      sentences: nextSentences,
     };
+    if (updated.collection === undefined) delete updated.collection;
+    if (updated.sortOrder === undefined) delete updated.sortOrder;
     if (index >= 0) groups[index] = updated;
     else groups.unshift(updated);
     await upsertUserPhraseGroup(env, agent.user_id, instanceId, updated, index >= 0 ? index : 0);
     return json({
       ok: true,
-      action: existingSentenceIndex >= 0 ? "replace_phrase" : "add_phrase",
+      action: replaced > 0 && added === 0 ? "replace_phrase" : "add_phrase",
       instanceId,
+      version: agentInstanceVersion(instanceId),
+      atomic,
       group: updated,
-      phrase: sentence,
+      phrase: sentences[0],
+      phrases: sentences,
+      added,
+      replaced,
       quota,
     });
   }
   if (request.method === "DELETE") {
     const body = await readOptionalJson(request);
-    const instanceId = normalizeAgentInstanceId(body.instanceId || new URL(request.url).searchParams.get("instanceId"), agent);
-    const groupId = normalizePhraseGroupId(body.groupId || new URL(request.url).searchParams.get("groupId"));
-    const phraseKey = cleanString(body.phraseKey || body.key || new URL(request.url).searchParams.get("phraseKey"));
-    const pl = cleanString(body.pl || body.target || new URL(request.url).searchParams.get("pl"));
-    const en = cleanString(body.en || body.source || new URL(request.url).searchParams.get("en"));
+    const params = new URL(request.url).searchParams;
+    const instanceId = normalizeAgentInstanceIdFromBodyOrParams(body, params, agent);
+    const deleteGroupTitle = cleanString(body.groupTitle || body.groupName || params.get("groupTitle") || params.get("groupName"));
+    const groupId = normalizePhraseGroupId(body.groupId || params.get("groupId") || (deleteGroupTitle ? slug(deleteGroupTitle) : ""));
+    const phraseKey = cleanString(body.phraseKey || body.key || params.get("phraseKey"));
+    const fields = normalizeAgentPhraseLanguageFields(body, languagePairForInstanceId(instanceId));
+    const pl = cleanString(fields.pl || body.pl || body.target || params.get("pl") || params.get("polish"));
+    const en = cleanString(fields.en || body.en || body.source || params.get("en") || params.get("english"));
     if (!phraseKey && !pl && !en) {
       await env.DB.prepare(`
         UPDATE user_phrase_groups
@@ -820,12 +1069,12 @@ async function agentPhrases(request, env, agent, quota) {
 
 async function agentWords(request, env, agent, quota) {
   if (request.method === "GET") {
-    const instanceId = normalizeAgentInstanceId(new URL(request.url).searchParams.get("instanceId"), agent);
+    const instanceId = normalizeAgentInstanceIdFromParams(new URL(request.url).searchParams, agent);
     return json({ ok: true, instanceId, words: await loadUserWords(env, agent.user_id, instanceId), quota });
   }
   if (request.method === "POST") {
     const body = await readJsonLimited(request, MAX_AGENT_BODY_CHARS);
-    const instanceId = normalizeAgentInstanceId(body.instanceId, agent);
+    const instanceId = normalizeAgentInstanceIdFromBody(body, agent);
     const wordType = normalizeWordType(body.type || body.wordType || body.section);
     const item = normalizeAgentWordItem(wordType, body.item || body.word || body);
     await upsertUserWord(env, agent.user_id, instanceId, wordType, item);
@@ -834,7 +1083,7 @@ async function agentWords(request, env, agent, quota) {
   if (request.method === "DELETE") {
     const body = await readOptionalJson(request);
     const params = new URL(request.url).searchParams;
-    const instanceId = normalizeAgentInstanceId(body.instanceId || params.get("instanceId"), agent);
+    const instanceId = normalizeAgentInstanceIdFromBodyOrParams(body, params, agent);
     const wordType = normalizeWordType(body.type || body.wordType || body.section || params.get("type"));
     const lemma = boundedString(body.lemma || params.get("lemma"), "lemma", 200);
     await env.DB.prepare(`
@@ -847,7 +1096,38 @@ async function agentWords(request, env, agent, quota) {
   return json({ error: "method not allowed" }, 405);
 }
 
+async function generateLiteralForSentence(env, sentence) {
+  const { pl, en } = sentence;
+  if (!pl.includes(" ")) return en;
+  if (!env.GEMINI_API_KEY) return null;
+  try {
+    const prompt =
+      "Generate a word-for-word English gloss of a Polish phrase, preserving Polish word order. " +
+      "Use hyphens to join multi-word glosses of a single token. " +
+      `Polish: ${JSON.stringify(pl)}. English meaning: ${JSON.stringify(en)}. ` +
+      'Return ONLY JSON: {"literal":"word-for-word gloss"}';
+    const text = await geminiGenerateText(env, prompt);
+    const parsed = JSON.parse(text);
+    const lit = typeof parsed?.literal === "string" ? parsed.literal.trim() : "";
+    return lit || null;
+  } catch {
+    return null;
+  }
+}
+
 async function upsertUserPhraseGroup(env, userId, instanceId, group, sortOrder) {
+  const sentences = Array.isArray(group.sentences) ? group.sentences : [];
+  const needsLiteral = sentences.some((s) => !s.literal);
+  if (needsLiteral) {
+    const filled = await Promise.all(
+      sentences.map(async (s) => {
+        if (s.literal) return s;
+        const literal = await generateLiteralForSentence(env, s);
+        return literal ? { ...s, literal } : s;
+      }),
+    );
+    group = { ...group, sentences: filled };
+  }
   await env.DB.prepare(`
     INSERT INTO user_phrase_groups
       (user_id, instance_id, group_id, sort_order, group_json, updated_at, deleted_at)
@@ -873,7 +1153,235 @@ async function upsertUserWord(env, userId, instanceId, wordType, item) {
 }
 
 function normalizeAgentInstanceId(value, agent) {
-  return normalizeInstanceId(value || agent.default_instance_id || "langbangml-en-pl");
+  const requested = languageVersionToInstanceId(value) || cleanString(value);
+  const tokenDefault = languageVersionToInstanceId(agent.default_instance_id) || cleanString(agent.default_instance_id);
+  return normalizeInstanceId(requested || tokenDefault || "langbangml-en-pl");
+}
+
+function normalizeAgentInstanceIdFromBody(body, agent) {
+  return normalizeAgentInstanceId(
+    body.instanceId || body.instance || body.version || body.languageVersion || body.langVersion || body.language_version,
+    agent,
+  );
+}
+
+function normalizeAgentInstanceIdFromParams(params, agent) {
+  return normalizeAgentInstanceId(
+    params.get("instanceId") || params.get("instance") || params.get("version") || params.get("languageVersion") || params.get("langVersion"),
+    agent,
+  );
+}
+
+function normalizeAgentInstanceIdFromBodyOrParams(body, params, agent) {
+  return normalizeAgentInstanceId(
+    body.instanceId || body.instance || body.version || body.languageVersion || body.langVersion || body.language_version ||
+      params.get("instanceId") || params.get("instance") || params.get("version") || params.get("languageVersion") || params.get("langVersion"),
+    agent,
+  );
+}
+
+function languageVersionToInstanceId(value) {
+  const raw = cleanString(value);
+  if (!raw) return "";
+  const key = raw.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (key === "enpl" || key === "englishpolish" || key === "langbangmlenpl" || key === "langbangenpl") {
+    return "langbangml-en-pl";
+  }
+  if (key === "plen" || key === "polishenglish" || key === "langbangmlplen" || key === "langbangplen") {
+    return "langbangml-pl-en";
+  }
+  return "";
+}
+
+function agentInstanceVersion(instanceId) {
+  if (instanceId === "langbangml-pl-en") return "PLEN";
+  return "ENPL";
+}
+
+function languagePairForInstanceId(instanceId) {
+  if (instanceId === "langbangml-pl-en") {
+    return { sourceLanguage: "Polish", targetLanguage: "English" };
+  }
+  return { sourceLanguage: "English", targetLanguage: "Polish" };
+}
+
+function normalizeAgentAtomicFlag(body) {
+  const atomic = body.atomic;
+  const breakDown = body.breakDown ?? body.breakdown ?? body.split ?? body.splitLongPhrases;
+  if (atomic === false || breakDown === true) return false;
+  if (typeof atomic === "string" && /^(false|no|split|breakdown|break-down)$/i.test(atomic.trim())) return false;
+  if (typeof breakDown === "string" && /^(true|yes|split|breakdown|break-down)$/i.test(breakDown.trim())) return false;
+  return true;
+}
+
+function requestedAgentPhraseGroupId(params) {
+  const groupId = cleanString(params.get("groupId"));
+  if (groupId) return normalizePhraseGroupId(groupId);
+  const groupTitle = cleanString(params.get("groupTitle") || params.get("groupName"));
+  return groupTitle ? normalizePhraseGroupId(slug(groupTitle)) : "";
+}
+
+function truthyParam(value) {
+  return /^(1|true|yes|y|summary|groups)$/i.test(cleanString(value));
+}
+
+function agentPhraseGroupSummary(group) {
+  const sentences = Array.isArray(group.sentences) ? group.sentences : [];
+  return {
+    id: group.id,
+    title: group.title || group.id,
+    subtitle: group.subtitle || "",
+    collection: group.collection || "",
+    sentenceCount: sentences.length,
+  };
+}
+
+function normalizeAgentPhraseInputs(body) {
+  const inputs = Array.isArray(body.phrases)
+    ? body.phrases
+    : Array.isArray(body.sentences)
+      ? body.sentences
+      : Array.isArray(body.items)
+        ? body.items
+        : [body.phrase || body.sentence || body.item || body];
+  if (inputs.length === 0) throw new HttpError(400, "at least one phrase is required");
+  if (inputs.length > MAX_AGENT_PHRASE_INPUTS) {
+    throw new HttpError(400, "too many phrase inputs", { limit: MAX_AGENT_PHRASE_INPUTS });
+  }
+  return inputs;
+}
+
+async function normalizeAgentPhraseSentences(env, body, pair, atomic) {
+  const inputs = normalizeAgentPhraseInputs(body);
+  const out = [];
+  for (const input of inputs) {
+    out.push(...await generateAgentPhraseEntries(env, input, pair, atomic));
+    if (out.length > MAX_AGENT_PHRASE_OUTPUTS) {
+      throw new HttpError(400, "too many generated phrases", { limit: MAX_AGENT_PHRASE_OUTPUTS });
+    }
+  }
+  if (out.length === 0) throw new HttpError(502, "Gemini returned no phrase entries");
+  return out;
+}
+
+async function generateAgentPhraseEntries(env, raw, pair, atomic) {
+  const fields = normalizeAgentPhraseLanguageFields(raw, pair);
+  if (!fields.en && !fields.pl && !fields.literal && fields.words.length === 0) {
+    throw new HttpError(400, "provide english, polish, en, pl, source, target, or literal phrase text");
+  }
+  if (hasCompleteAgentPhraseFields(fields)) {
+    return [normalizeAgentPhraseEntry(raw, pair, atomic)];
+  }
+  const text = await geminiGenerateText(
+    env,
+    buildAgentPhraseEntriesPrompt({ fields, pair, atomic }),
+    DEFAULT_GEMINI_MODEL,
+  );
+  const parsed = parseGeminiJsonText(text);
+  const entries = Array.isArray(parsed?.phrases) ? parsed.phrases : Array.isArray(parsed) ? parsed : [];
+  const normalized = entries.map((entry) => normalizeAgentPhraseEntry(entry, pair, atomic)).filter(Boolean);
+  if (normalized.length === 0) throw new HttpError(502, "Gemini returned no usable phrase entries");
+  if (atomic && normalized.length !== 1) return normalized.slice(0, 1);
+  return normalized;
+}
+
+function hasCompleteAgentPhraseFields(fields) {
+  return Boolean(fields.en && fields.pl && fields.literal && fields.words.length > 0);
+}
+
+function normalizeAgentPhraseLanguageFields(raw, pair) {
+  const value = typeof raw === "string" ? { source: raw } : raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const sourceIsEnglish = isEnglishLanguage(pair?.sourceLanguage);
+  const targetIsEnglish = isEnglishLanguage(pair?.targetLanguage);
+  const sourceText = firstString(value.source, value.sourceText, value.learningLanguage, value.learningText);
+  const targetText = firstString(value.target, value.targetText, value.targetLanguage, value.targetLanguageText);
+  const englishText = firstString(value.english, value.englishText);
+  const polishText = firstString(value.polish, value.polishText);
+  const nativeEn = cleanString(value.en);
+  const nativePl = cleanString(value.pl);
+  const en = nativeEn || sourceText || (sourceIsEnglish ? englishText : targetIsEnglish ? polishText : englishText);
+  const pl = nativePl || targetText || (targetIsEnglish ? englishText : sourceIsEnglish ? polishText : polishText);
+  return {
+    en: boundedOptionalPhraseString(en, "phrase source"),
+    pl: boundedOptionalPhraseString(pl, "phrase target"),
+    literal: boundedOptionalPhraseString(value.literal || value.literalText || value.gloss, "phrase literal"),
+    words: Array.isArray(value.words) ? value.words.map(normalizeTokenPair).filter(Boolean).slice(0, 200) : [],
+    index: normalizeOptionalPhraseIndex(value.index ?? value.sortIndex ?? value.order ?? value.position),
+  };
+}
+
+function firstString(...values) {
+  for (const value of values) {
+    const text = cleanString(value);
+    if (text) return text;
+  }
+  return "";
+}
+
+function boundedOptionalPhraseString(value, label) {
+  const text = cleanString(value);
+  if (text.length > MAX_PHRASE_FIELD_CHARS) {
+    throw new HttpError(400, `${label} is too long`, { limit: MAX_PHRASE_FIELD_CHARS });
+  }
+  return text;
+}
+
+function normalizeAgentPhraseEntry(entry, pair, atomic) {
+  const fields = normalizeAgentPhraseLanguageFields(entry, pair);
+  const sentence = normalizeSentenceExample({
+    en: fields.en,
+    pl: fields.pl,
+    literal: fields.literal,
+    words: fields.words,
+    index: fields.index,
+  });
+  if (isPolishLanguage(pair?.targetLanguage)) {
+    sentence.pl = scrubPolishYallText(sentence.pl);
+    if (Array.isArray(sentence.words)) {
+      sentence.words = sentence.words.map((word) => ({ ...word, pl: scrubPolishYallText(word.pl) }));
+    }
+  }
+  if (!atomic) {
+    const targetChars = sentence.pl.length;
+    const targetWords = sentence.pl.split(/\s+/).filter(Boolean).length;
+    if (targetChars > MAX_AGENT_PHRASE_TARGET_CHARS || targetWords > MAX_AGENT_PHRASE_TARGET_WORDS) {
+      throw new HttpError(502, "Gemini returned a phrase that is still too long", {
+        targetChars,
+        targetWords,
+        maxTargetChars: MAX_AGENT_PHRASE_TARGET_CHARS,
+        maxTargetWords: MAX_AGENT_PHRASE_TARGET_WORDS,
+      });
+    }
+  }
+  return sentence;
+}
+
+function isEnglishLanguage(value) {
+  return /\benglish\b|\ben\b/i.test(String(value || ""));
+}
+
+function buildAgentPhraseEntriesPrompt({ fields, pair, atomic }) {
+  const sourceLanguage = pair?.sourceLanguage || "English";
+  const targetLanguage = pair?.targetLanguage || "Polish";
+  const mode = atomic
+    ? "Return exactly one phrase entry. Preserve it as one atomic study item."
+    : `Break the input into short display-safe study items. Each target answer must be at most ${MAX_AGENT_PHRASE_TARGET_WORDS} whitespace-separated tokens and ${MAX_AGENT_PHRASE_TARGET_CHARS} characters. Preserve meaning and order; do not add unrelated examples.`;
+  return "Prepare LangBang custom phrase entries for one learner. " +
+    `The source cue language is ${sourceLanguage}. The target answer language is ${targetLanguage}. ` +
+    "The API may receive only English, only Polish, or both; infer and validate the missing side. " +
+    "The app stores source cue text in a JSON field named en and target answer text in a JSON field named pl, " +
+    "even when the target language is not Polish. " +
+    `${mode} ` +
+    `Input source cue=${JSON.stringify(fields.en)}, target answer=${JSON.stringify(fields.pl)}, ` +
+    `literal=${JSON.stringify(fields.literal)}, words=${JSON.stringify(fields.words)}. ` +
+    "Fill literal as a word-for-word gloss of the target answer, preserving target word order. " +
+    "Fill words: one object per whitespace-separated target token, in target order; put the target token in pl " +
+    "and the source-language gloss in en. If the target language is Polish and a token is a noun, pronoun, or " +
+    "adjective, include gender (m/f/n) and caseKey (nom/acc/gen/dat/inst/loc/voc) when known. " +
+    "Use common, natural learner language. Reject awkward literal translations, rare expressions, and contradictions " +
+    "by returning an empty phrases array. Return ONLY JSON, no markdown, with this exact shape: " +
+    "{\"phrases\":[{\"en\":\"source cue\",\"pl\":\"target answer\",\"literal\":\"target-order gloss\"," +
+    "\"words\":[{\"pl\":\"target-token\",\"en\":\"source-gloss\"}]}]}.";
 }
 
 function normalizePhraseGroupId(value) {
@@ -882,6 +1390,10 @@ function normalizePhraseGroupId(value) {
     throw new HttpError(400, "valid groupId is required");
   }
   return id;
+}
+
+function timestampedPhraseGroupId(title, now = Date.now()) {
+  return normalizePhraseGroupId(`${slug(title)}-${Math.trunc(now).toString(36)}`);
 }
 
 function sentenceKey(sentence) {
@@ -1048,6 +1560,46 @@ async function upsertUserIdentity(env, profile) {
   };
 }
 
+const CALENDAR_BASICS_GROUP = {
+  id: "calendar-basics",
+  title: "Calendar Basics",
+  subtitle: "Days, months, and time expressions",
+  sentences: [
+    { pl: "poniedziałek", en: "Monday", literal: "Monday" },
+    { pl: "wtorek", en: "Tuesday", literal: "Tuesday" },
+    { pl: "środa", en: "Wednesday", literal: "Wednesday" },
+    { pl: "czwartek", en: "Thursday", literal: "Thursday" },
+    { pl: "piątek", en: "Friday", literal: "Friday" },
+    { pl: "sobota", en: "Saturday", literal: "Saturday" },
+    { pl: "niedziela", en: "Sunday", literal: "Sunday" },
+    { pl: "styczeń", en: "January", literal: "January" },
+    { pl: "luty", en: "February", literal: "February" },
+    { pl: "marzec", en: "March", literal: "March" },
+    { pl: "kwiecień", en: "April", literal: "April" },
+    { pl: "maj", en: "May", literal: "May" },
+    { pl: "czerwiec", en: "June", literal: "June" },
+    { pl: "lipiec", en: "July", literal: "July" },
+    { pl: "sierpień", en: "August", literal: "August" },
+    { pl: "wrzesień", en: "September", literal: "September" },
+    { pl: "październik", en: "October", literal: "October" },
+    { pl: "listopad", en: "November", literal: "November" },
+    { pl: "grudzień", en: "December", literal: "December" },
+    { pl: "dzisiaj", en: "today", literal: "today" },
+    { pl: "jutro", en: "tomorrow", literal: "tomorrow" },
+    { pl: "przedwczoraj", en: "day before yesterday", literal: "before-yesterday" },
+    { pl: "w przyszłym tygodniu", en: "next week", literal: "in next week" },
+    { pl: "w przyszłym miesiącu", en: "next month", literal: "in next month" },
+    { pl: "w przyszłym roku", en: "next year", literal: "in next year" },
+    { pl: "w tym roku", en: "this year", literal: "in this year" },
+    { pl: "w tym miesiącu", en: "this month", literal: "in this month" },
+    { pl: "w tym tygodniu", en: "this week", literal: "in this week" },
+    { pl: "za chwilę", en: "in a while", literal: "for a-moment" },
+    { pl: "drugiego lipca", en: "on the 2nd of July", literal: "second-of July" },
+    { pl: "piątego lipca", en: "on the 5th of July", literal: "fifth-of July" },
+    { pl: "Urodziny Soni są dwudziestego sierpnia.", en: "Sonia's birthday is on the 20th of August.", literal: "Birthday-of Sonia are twentieth-of August." },
+  ],
+};
+
 async function findOrCreateUser(env, profile) {
   const existingUser = await env.DB.prepare(`
     SELECT id
@@ -1068,6 +1620,7 @@ async function findOrCreateUser(env, profile) {
     profile.displayName,
     profile.pictureUrl,
   ).run();
+  await upsertUserPhraseGroup(env, id, "langbangml-en-pl", CALENDAR_BASICS_GROUP, 0);
   return id;
 }
 
@@ -1212,6 +1765,18 @@ async function hashEmailCode(email, code, pepper) {
   return sha256Hex(`${email}|${code}|${pepper}`);
 }
 
+// Length-independent equality: hash both sides, then compare digests without an
+// early exit so the comparison time does not leak how much of the secret matched.
+async function constantTimeEqual(a, b) {
+  const ha = await sha256Hex(String(a));
+  const hb = await sha256Hex(String(b));
+  let diff = ha.length ^ hb.length;
+  for (let i = 0; i < ha.length && i < hb.length; i++) {
+    diff |= ha.charCodeAt(i) ^ hb.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 async function sendLoginEmail(env, email, code) {
   if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return false;
   const response = await fetch("https://api.resend.com/emails", {
@@ -1301,12 +1866,21 @@ function normalizePhraseGroup(raw) {
   if (sentences.length > MAX_SYNC_SENTENCES_PER_GROUP) {
     throw new HttpError(400, "too many phrase sentences", { groupId: id, limit: MAX_SYNC_SENTENCES_PER_GROUP });
   }
+  const normalizedSentences = normalizePhraseSentenceIndexes(sentences.map(normalizeSentenceExample));
   return {
     id,
     title,
     subtitle: boundedString(raw.subtitle || "", "group.subtitle", 400, true),
-    sentences: sentences.map(normalizeSentenceExample),
+    collection: normalizeOptionalPhraseGroupCollection(raw.collection),
+    createdAt: normalizeOptionalGroupCreatedAt(raw.createdAt ?? raw.created_at),
+    sortOrder: normalizeOptionalGroupSortOrder(raw.sortOrder ?? raw.sort_order ?? raw.order),
+    sentences: normalizedSentences,
   };
+}
+
+function normalizeOptionalPhraseGroupCollection(value) {
+  const collection = boundedString(value || "", "group.collection", 80, true);
+  return collection || undefined;
 }
 
 function normalizeSentenceExample(raw) {
@@ -1316,13 +1890,49 @@ function normalizeSentenceExample(raw) {
   const pl = boundedString(raw.pl, "sentence.pl", 1200);
   const en = boundedString(raw.en, "sentence.en", 1200);
   const literal = boundedString(raw.literal || "", "sentence.literal", 1600, true);
+  const index = normalizeOptionalPhraseIndex(raw.index ?? raw.sortIndex ?? raw.order ?? raw.position);
   const out = { pl, en };
+  if (index !== null) out.index = index;
   if (literal) out.literal = literal;
   if (Array.isArray(raw.words)) {
     const words = raw.words.map(normalizeTokenPair).filter(Boolean);
     if (words.length > 0) out.words = words.slice(0, 200);
   }
   return out;
+}
+
+function normalizeOptionalPhraseIndex(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const index = Number(value);
+  if (!Number.isInteger(index) || index < 1 || index > MAX_SYNC_SENTENCES_PER_GROUP) {
+    throw new HttpError(400, "sentence.index must be a positive integer", { limit: MAX_SYNC_SENTENCES_PER_GROUP });
+  }
+  return index;
+}
+
+function normalizeOptionalGroupCreatedAt(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const millis = typeof value === "string" && !/^\d+$/.test(value)
+    ? Date.parse(value)
+    : Number(value);
+  if (!Number.isFinite(millis)) {
+    throw new HttpError(400, "group.createdAt must be epoch millis or an ISO timestamp");
+  }
+  return Math.trunc(millis);
+}
+
+function normalizeOptionalGroupSortOrder(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const order = Number(value);
+  if (!Number.isInteger(order)) throw new HttpError(400, "group.sortOrder must be an integer");
+  return order;
+}
+
+function normalizePhraseSentenceIndexes(sentences) {
+  return sentences
+    .map((sentence, fallback) => ({ ...sentence, index: sentence.index || fallback + 1 }))
+    .sort((a, b) => a.index - b.index)
+    .map((sentence, index) => ({ ...sentence, index: index + 1 }));
 }
 
 function normalizeStarredPhrases(value) {
@@ -1345,6 +1955,7 @@ async function listInstances(env) {
 }
 
 async function ingestAnalytics(request, env) {
+  await enforceRateLimit(env, `analytics:ip:${clientIp(request)}`, RL.analyticsIpPerMin, 60, { scope: "ip" });
   const body = await readJsonLimited(request, 128 * 1024);
   const installationId = analyticsId(body.installationId, "installationId", 160);
   const sessionId = analyticsId(body.sessionId, "sessionId", 160);
@@ -1858,6 +2469,7 @@ async function labelsFor(env, locale) {
 }
 
 async function geminiGenerate(request, env) {
+  await guardLlmEndpoint(request, env, "gemini-generate", RL.geminiIpPerHour, RL.geminiUserPerDay);
   const body = await request.json();
   const prompt = boundedString(body.prompt, "prompt", MAX_GEMINI_PROMPT_CHARS);
   if (!prompt.trim()) throw new HttpError(400, "prompt is required");
@@ -1869,7 +2481,97 @@ async function geminiGenerate(request, env) {
   });
 }
 
+async function geminiG2Translate(request, env) {
+  requireGeminiLiveToken(request, env);
+  const body = await request.json();
+  const english = boundedString(body.english || body.text, "english", MAX_G2_TRANSLATE_CHARS);
+  const text = await geminiGenerateText(
+    env,
+    buildG2TranslatePrompt(english),
+    DEFAULT_GEMINI_MODEL,
+    env.GEMINI_LIVE_API_KEY || env.GEMINI_API_KEY,
+  );
+  const result = normalizeG2Translation(parseGeminiJsonText(text), english);
+  return json({
+    ok: true,
+    ...result,
+    displayText: formatG2TranslationDisplay(result),
+  });
+}
+
+function requireGeminiLiveToken(request, env) {
+  const expected = (env.GEMINI_LIVE_TOKEN || "").trim();
+  const auth = request.headers.get("Authorization") || "";
+  const token = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  if (!expected || token !== expected) {
+    throw new HttpError(401, "unauthorized");
+  }
+}
+
+// WebSocket relay for the Gemini Live API (live translation). The Android app connects here with a
+// revocable proxy token; this worker holds the real GEMINI_API_KEY and pipes frames both ways, so
+// the Gemini key never ships on-device. Bidirectional, opaque passthrough of setup/audio/transcripts.
+async function geminiLiveRelay(request, env) {
+  const url = new URL(request.url);
+  const token =
+    (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim() ||
+    (url.searchParams.get("token") || "").trim();
+  const expected = (env.GEMINI_LIVE_TOKEN || "").trim();
+  if (!expected || token !== expected) {
+    return new Response("unauthorized", { status: 401 });
+  }
+  // Dedicated live-translate key (has gemini-3.5-live-translate-preview access); falls back to the
+  // shared key. Kept separate so we never disturb the generate endpoint's GEMINI_API_KEY.
+  const key = env.GEMINI_LIVE_API_KEY || env.GEMINI_API_KEY;
+  if (!key) return new Response("GEMINI_LIVE_API_KEY not configured", { status: 503 });
+
+  let upstream;
+  try {
+    const resp = await fetch(
+      // Cloudflare's outbound WebSocket upgrade requires the https:// scheme (not wss://).
+      `https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(key)}`,
+      { headers: { Upgrade: "websocket" } },
+    );
+    upstream = resp.webSocket;
+    if (!upstream) {
+      return new Response(`upstream did not upgrade: status=${resp.status}`, { status: 502 });
+    }
+  } catch (e) {
+    return new Response("upstream connect failed: " + (e && e.message ? e.message : String(e)), { status: 502 });
+  }
+  upstream.accept();
+
+  const pair = new WebSocketPair();
+  const client = pair[0];
+  const server = pair[1];
+  server.accept();
+
+  // client (phone) -> Gemini
+  server.addEventListener("message", (e) => {
+    try { upstream.send(e.data); } catch (_) {}
+  });
+  server.addEventListener("close", () => {
+    try { upstream.close(); } catch (_) {}
+  });
+  server.addEventListener("error", () => {
+    try { upstream.close(); } catch (_) {}
+  });
+  // Gemini -> client (phone)
+  upstream.addEventListener("message", (e) => {
+    try { server.send(e.data); } catch (_) {}
+  });
+  upstream.addEventListener("close", (e) => {
+    try { server.close(e.code, e.reason); } catch (_) {}
+  });
+  upstream.addEventListener("error", () => {
+    try { server.close(); } catch (_) {}
+  });
+
+  return new Response(null, { status: 101, webSocket: client });
+}
+
 async function completePhrase(request, env) {
+  await guardLlmEndpoint(request, env, "phrases-complete", RL.completeIpPerHour, RL.completeUserPerDay);
   const body = await request.json();
   const sourceText = boundedString(body.sourceText, "sourceText", MAX_PHRASE_FIELD_CHARS, true);
   const targetText = boundedString(body.targetText, "targetText", MAX_PHRASE_FIELD_CHARS, true);
@@ -1902,12 +2604,63 @@ async function generateAiPhraseBatch(env, { prompt, count, pair }) {
   return phrases.slice(0, count).map(normalizeSentenceExample);
 }
 
-async function geminiGenerateText(env, prompt, model = DEFAULT_GEMINI_MODEL) {
-  return geminiTextFromRaw(await geminiGenerateRaw(env, prompt, model));
+async function geminiGenerateText(env, prompt, model = DEFAULT_GEMINI_MODEL, keyOverride = null) {
+  // Temporary failover: while the Gemini key's billing is depleted, route every JSON
+  // text-generation call (phrase completion, AI phrase gen, agent phrases, G2 translate)
+  // to Azure OpenAI when it is configured. Revert by deleting the AZURE_OPENAI_KEY
+  // secret — this falls straight back to Gemini.
+  if (env.AZURE_OPENAI_KEY && env.AZURE_OPENAI_ENDPOINT && env.AZURE_OPENAI_DEPLOYMENT) {
+    return azureOpenAiGenerateText(env, prompt);
+  }
+  return geminiTextFromRaw(await geminiGenerateRaw(env, prompt, model, keyOverride));
 }
 
-async function geminiGenerateRaw(env, prompt, model = DEFAULT_GEMINI_MODEL) {
-  const key = env.GEMINI_API_KEY;
+// Azure OpenAI chat-completions with JSON mode — the temporary stand-in for Gemini
+// (see geminiGenerateText). Returns the model's JSON text; callers parse it with
+// parseGeminiJsonText exactly as they do for Gemini output.
+async function azureOpenAiGenerateText(env, prompt) {
+  const endpoint = String(env.AZURE_OPENAI_ENDPOINT || "").replace(/\/+$/, "");
+  const deployment = env.AZURE_OPENAI_DEPLOYMENT;
+  const apiVersion = env.AZURE_OPENAI_API_VERSION || "2024-10-21";
+  const response = await fetch(
+    `${endpoint}/openai/deployments/${encodeURIComponent(deployment)}/chat/completions?api-version=${apiVersion}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "api-key": env.AZURE_OPENAI_KEY },
+      body: JSON.stringify({
+        messages: [
+          {
+            role: "system",
+            content: "You are a precise language assistant. Respond with a single valid JSON object only — no markdown fences, no commentary.",
+          },
+          { role: "user", content: prompt },
+        ],
+        response_format: { type: "json_object" },
+        // gpt-5.x reasoning model: keep latency down. "low" matches Gemini-tier
+        // quality for these translation/validation prompts (supports low|medium|high).
+        reasoning_effort: env.AZURE_OPENAI_REASONING_EFFORT || "low",
+      }),
+    },
+  );
+  const raw = await response.text();
+  if (!response.ok) {
+    throw new HttpError(502, `Azure OpenAI HTTP ${response.status}`, { body: raw.slice(0, 500) });
+  }
+  let root;
+  try {
+    root = JSON.parse(raw);
+  } catch (_) {
+    throw new HttpError(502, "Azure OpenAI response was not JSON");
+  }
+  const text = root?.choices?.[0]?.message?.content;
+  if (typeof text !== "string" || !text.trim()) {
+    throw new HttpError(502, "Azure OpenAI response text missing");
+  }
+  return text;
+}
+
+async function geminiGenerateRaw(env, prompt, model = DEFAULT_GEMINI_MODEL, keyOverride = null) {
+  const key = keyOverride || env.GEMINI_API_KEY;
   if (!key) throw new HttpError(503, "GEMINI_API_KEY is not configured");
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,
@@ -1917,6 +2670,7 @@ async function geminiGenerateRaw(env, prompt, model = DEFAULT_GEMINI_MODEL) {
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { temperature: 0.1, responseMimeType: "application/json" },
+        safetySettings: GEMINI_SAFETY_SETTINGS,
       }),
     },
   );
@@ -1943,17 +2697,17 @@ function buildPhraseCompletionPrompt({ sourceText, targetText, literalText, sour
     "in a JSON field named \"target\". User-provided fields may be blank. " +
     `source=${JSON.stringify(sourceText)}, target=${JSON.stringify(targetText)}, ` +
     `literal=${JSON.stringify(literalText)}. ` +
-    "Fill any missing source, target, and literal fields. If the user provided more than " +
-    "one field, verify that the provided values describe the same phrase. If they conflict " +
-    "semantically, grammatically, or the literal gloss does not match the target word order, " +
-    "return consistent:false and explain the problem in issue. Do not silently accept " +
-    "contradictory fields. Minor punctuation, capitalization, or literal-gloss precision " +
+    "Fill any missing source, target, and literal fields by translating faithfully. This " +
+    "phrase was deliberately chosen by the learner, so translate it as-is even when it is " +
+    "playful, informal, unusual, contrived, or uncommon, and silently correct obvious typos " +
+    "or small grammar slips while preserving the intended meaning. Do NOT reject a phrase for " +
+    "being awkward, rare, not \"natural learner language\", translated-sounding, or " +
+    "coverage-driven. " +
+    "Only set consistent:false when the user supplied BOTH a source and a target (or literal) " +
+    "whose meanings genuinely and substantially contradict each other; a single provided " +
+    "field, or merely unusual phrasing, is never inconsistent. When consistent:false, explain " +
+    "the conflict in issue. Minor punctuation, capitalization, or literal-gloss precision " +
     "fixes are allowed when consistent remains true. " +
-    "The phrase must be common, natural learner language in both languages, not merely " +
-    "grammatical. Reject awkward, rare, contrived, translated-sounding, or coverage-driven " +
-    "phrases. Examples that fail: \"I am listening about a sick cat\", \"health doctor\", " +
-    "\"difficult weather\", \"important key\", \"easy gift\", \"quick book\", \"long coffee\", " +
-    "and any Polish target that contains the English pronoun \"Y'all\". " +
     "The target answer must be written in the target language. Do not copy source-language " +
     "words into the target except proper names or accepted loanwords. If the target language " +
     "is Polish and the subject is second-person plural, write \"Wy\" or omit the pronoun; " +
@@ -1989,6 +2743,47 @@ function buildAiPhraseGenerationPrompt({ prompt, count, pair }) {
     "Return ONLY JSON, no markdown, with this exact shape: " +
     "{\"phrases\":[{\"pl\":\"target answer\",\"en\":\"source cue\",\"literal\":\"target-order gloss\"," +
     "\"words\":[{\"pl\":\"target-token\",\"en\":\"source-gloss\"}]}]}.";
+}
+
+function buildG2TranslatePrompt(english) {
+  return "Translate one English phrase for immediate display on Even Realities G2 glasses. " +
+    "Return a concise, natural Polish translation and a plain ASCII English-speaker pronunciation " +
+    "guide for the Polish. The pronunciation guide should preserve Polish word order, use hyphens " +
+    "inside difficult words, avoid IPA symbols, and be readable on a tiny HUD. " +
+    "Do not add explanations, alternatives, markdown, or quotes. " +
+    `English input: ${JSON.stringify(english)}. ` +
+    "Return ONLY JSON with this exact shape: " +
+    "{\"english\":\"...\",\"polish\":\"...\",\"phonetics\":\"...\"}.";
+}
+
+function normalizeG2Translation(value, fallbackEnglish) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpError(502, "Gemini returned an invalid G2 translation");
+  }
+  const english = cleanString(value.english) || cleanString(fallbackEnglish);
+  const polish = cleanString(value.polish);
+  const phonetics = cleanString(value.phonetics || value.pronunciation);
+  if (!english || !polish || !phonetics) {
+    throw new HttpError(502, "Gemini returned an incomplete G2 translation", {
+      hasEnglish: Boolean(english),
+      hasPolish: Boolean(polish),
+      hasPhonetics: Boolean(phonetics),
+    });
+  }
+  return {
+    english: english.slice(0, MAX_G2_TRANSLATE_CHARS),
+    polish: polish.slice(0, 500),
+    phonetics: phonetics.slice(0, 500),
+  };
+}
+
+function formatG2TranslationDisplay(result) {
+  return [
+    "G2Trans text",
+    `EN: ${result.english}`,
+    `PL: ${result.polish}`,
+    `PH: ${result.phonetics}`,
+  ].join("\n");
 }
 
 function parseGeminiJsonText(text) {
@@ -2592,10 +3387,17 @@ async function readOptionalJson(request) {
 }
 
 async function audioManifest(request, env) {
+  const admin = isAdmin(request, env);
+  if (!admin) {
+    await enforceRateLimit(env, `audio-manifest:ip:${clientIp(request)}`, RL.audioIpPerHour, 3600, { scope: "ip" });
+  }
   const body = await request.json();
   const phrases = Array.isArray(body.phrases) ? body.phrases : [];
   if (phrases.length === 0) {
     return json({ error: "phrases[] required" }, 400);
+  }
+  if (!admin && phrases.length > MAX_AUDIO_MANIFEST_PHRASES) {
+    return json({ error: `too many phrases (max ${MAX_AUDIO_MANIFEST_PHRASES} per request)` }, 413);
   }
   const manifest = [];
   for (const phrase of phrases) {
@@ -2873,6 +3675,10 @@ function publicApiBase(env) {
   return env.PUBLIC_API_BASE || "https://langbangml-api.langbangml.workers.dev";
 }
 
+function publicAgentDocsUrl(env) {
+  return env.PUBLIC_AGENT_DOCS_URL || "https://langbang.org/api";
+}
+
 function sourceCodeUrl(env) {
   return env.SOURCE_CODE_URL || "https://github.com/rsonnad/langbang/tree/codex/langbangml";
 }
@@ -2887,19 +3693,26 @@ function parseJson(raw, fallback) {
 
 function agentInstructionsPage(env) {
   const apiBase = publicApiBase(env);
+  const docsUrl = publicAgentDocsUrl(env);
   const sourceUrl = sourceCodeUrl(env);
   const addPhrase = JSON.stringify({
-    instanceId: "langbangml-en-pl",
-    groupId: "my-phrases",
-    groupTitle: "My phrases",
+    groupTitle: "Discussion Conversation",
+    atomic: true,
     phrase: {
-      pl: "Lubię uczyć się polskiego.",
-      en: "I like learning Polish.",
-      literal: "I-like to-learn self Polish.",
+      english: "I like learning Polish.",
+      polish: "Lubię uczyć się polskiego.",
+    },
+  }, null, 2);
+  const splitPhrase = JSON.stringify({
+    version: "ENPL",
+    groupId: "restaurant",
+    groupTitle: "Restaurant",
+    atomic: false,
+    phrase: {
+      english: "Could we sit by the window, and can I see the menu before we order?",
     },
   }, null, 2);
   const addNoun = JSON.stringify({
-    instanceId: "langbangml-en-pl",
     type: "noun",
     item: {
       lemma: "ogród",
@@ -2911,7 +3724,6 @@ function agentInstructionsPage(env) {
     },
   }, null, 2);
   const addVerb = JSON.stringify({
-    instanceId: "langbangml-en-pl",
     type: "verb",
     item: {
       lemma: "uczyć się",
@@ -2931,7 +3743,7 @@ function agentInstructionsPage(env) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LangBangML Agent API</title>
+  <title>LangBang Agent API</title>
   <style>
     :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     body { margin: 0; background: #f7f4ee; color: #1f2933; line-height: 1.5; }
@@ -2951,23 +3763,30 @@ function agentInstructionsPage(env) {
 </head>
 <body>
   <header>
-    <h1>LangBangML Agent API</h1>
+    <h1>LangBang Agent API</h1>
     <p class="muted">Use this with the personal token copied from the Android Settings screen.</p>
   </header>
   <main>
     <section class="warn">
       <h2>Agent Setup Prompt</h2>
       <p>Paste this into Claude, Codex, or another coding agent together with the token from the app:</p>
-      <pre>Use the LangBangML Agent API to edit my personal study content.
+      <pre>Use the LangBang Agent API to edit my personal study content.
 API base: ${escapeHtml(apiBase)}
-Instructions: ${escapeHtml(apiBase)}/agent
+Instructions: ${escapeHtml(docsUrl)}
 Token: PASTE_TOKEN_HERE
 
 Use Authorization: Bearer PASTE_TOKEN_HERE on every /v1/agent request.
 Do not print or store the token in project files, git commits, logs, or screenshots.
 Daily limit: ${agentDailyLimit(env)} authenticated agent API calls per token.
-Use app-native JSON fields: phrases use pl/en/literal; words use lemma/en and the type-specific forms below.
-Never ask for the LangBangML admin content token.</pre>
+Before adding content, GET /v1/agent/phrases?groupsOnly=true to see existing groups for the token's default language pair.
+Omit version/instanceId to use the token's default language pair. Set version "ENPL" or "PLEN" only when you need a different direction.
+For phrases, you may send english, polish, or both. LangBang will fill the missing side plus literal and word alignment.
+Set atomic:true to keep one phrase, or atomic:false to let LangBang split long text into short display-safe phrases.
+Use groupTitle/groupName for a human phrase-group name. Keep it to ${MAX_AGENT_GROUP_TITLE_CHARS} characters or less.
+Omit groupId for normal new groups; LangBang will create a timestamped id so groups sort newest-first. Provide sortOrder only when you need an explicit order override.
+For fastest phrase writes, provide pl, en, literal, and words[]; incomplete phrase entries require synchronous LLM completion before saving.
+Words use lemma/en and the type-specific forms below.
+Never ask for the LangBang admin content token.</pre>
     </section>
     <section>
       <h2>Source Code And License</h2>
@@ -2978,12 +3797,26 @@ Never ask for the LangBangML admin content token.</pre>
       <h2>Endpoints</h2>
       <ul>
         <li><code>GET /v1/agent/status</code> checks the token, default instance, and remaining daily quota.</li>
-        <li><code>POST /v1/agent/phrases</code> adds or replaces one phrase sentence in a personal phrase group.</li>
+        <li><code>GET /v1/agent/phrases</code> lists existing custom phrase groups and phrases for a version.</li>
+        <li><code>POST /v1/agent/phrases</code> adds or replaces one or more phrase sentences in a personal phrase group.</li>
         <li><code>DELETE /v1/agent/phrases</code> deletes a phrase sentence, or deletes a group when no phrase is provided.</li>
         <li><code>POST /v1/agent/words</code> adds or replaces a personal word in Verbs, Nouns, Adj, or Adv.</li>
         <li><code>DELETE /v1/agent/words</code> deletes a personal word by type and lemma.</li>
       </ul>
       <p class="muted">All edits are user-owned content tied to the signed-in app account. They do not mutate global LangBangML lessons.</p>
+    </section>
+    <section>
+      <h2>Phrase Rules</h2>
+      <ul>
+        <li>Omit <code>version</code> and <code>instanceId</code> to use the token's default language pair. Set <code>version:"ENPL"</code> for English cue to Polish answer, or <code>version:"PLEN"</code> for Polish cue to English answer. The older <code>instanceId</code> values still work.</li>
+        <li>The selected version controls which Android app flavor downloads the content. Signed-in APKs pull their version's custom phrases on launch, sign-in, instance switch, and the Settings/Phrases sync actions.</li>
+        <li>Use <code>groupTitle</code> or <code>groupName</code> for readable names such as <code>Discussion Conversation</code>. The limit is <code>${MAX_AGENT_GROUP_TITLE_CHARS}</code> characters.</li>
+        <li>Default ordering is reverse chronological. Omit <code>groupId</code> for a new group and LangBang generates a timestamped id plus <code>createdAt</code>. Send <code>sortOrder</code> only when you want an explicit order override.</li>
+        <li>Phrase input may use real-language fields: <code>english</code>, <code>polish</code>, or both. App-native <code>en</code>/<code>pl</code> also works for existing integrations.</li>
+        <li>Fast path: provide <code>pl</code>, <code>en</code>, <code>literal</code>, and non-empty <code>words[]</code>; the API saves the structured phrase directly.</li>
+        <li>LLM path: when translation, literal gloss, or word alignment is missing, LangBang uses Gemini Flash before saving. This is useful for rough input, but slower and more failure-prone for poetic fragments.</li>
+        <li>Use <code>atomic:true</code> when the text should stay as one phrase. Use <code>atomic:false</code> to split long or compound input into short display-safe phrases before saving.</li>
+      </ul>
     </section>
     <section>
       <h2>In-App AI Phrase Generation</h2>
@@ -2992,16 +3825,27 @@ Never ask for the LangBangML admin content token.</pre>
     </section>
     <section>
       <h2>Examples</h2>
+      <h3>List Phrase Groups</h3>
+      <pre>curl -sS "${escapeHtml(apiBase)}/v1/agent/phrases?groupsOnly=true" \\
+  -H "Authorization: Bearer $LANGBANGML_AGENT_TOKEN"</pre>
+      <h3>List One Phrase Group With Phrases</h3>
+      <pre>curl -sS "${escapeHtml(apiBase)}/v1/agent/phrases?groupTitle=Discussion%20Conversation" \\
+  -H "Authorization: Bearer $LANGBANGML_AGENT_TOKEN"</pre>
       <h3>Add A Phrase</h3>
       <pre>curl -sS ${escapeHtml(apiBase)}/v1/agent/phrases \\
   -H "Authorization: Bearer $LANGBANGML_AGENT_TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '${escapeHtml(addPhrase)}'</pre>
+      <h3>Add And Split A Longer Phrase</h3>
+      <pre>curl -sS ${escapeHtml(apiBase)}/v1/agent/phrases \\
+  -H "Authorization: Bearer $LANGBANGML_AGENT_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '${escapeHtml(splitPhrase)}'</pre>
       <h3>Delete A Phrase</h3>
       <pre>curl -sS -X DELETE ${escapeHtml(apiBase)}/v1/agent/phrases \\
   -H "Authorization: Bearer $LANGBANGML_AGENT_TOKEN" \\
   -H "Content-Type: application/json" \\
-  -d '{"instanceId":"langbangml-en-pl","groupId":"my-phrases","pl":"Lubię uczyć się polskiego."}'</pre>
+  -d '{"groupTitle":"Discussion Conversation","polish":"Lubię uczyć się polskiego."}'</pre>
       <h3>Add A Noun</h3>
       <pre>curl -sS ${escapeHtml(apiBase)}/v1/agent/words \\
   -H "Authorization: Bearer $LANGBANGML_AGENT_TOKEN" \\
@@ -3013,7 +3857,7 @@ Never ask for the LangBangML admin content token.</pre>
   -H "Content-Type: application/json" \\
   -d '${escapeHtml(addVerb)}'</pre>
       <h3>Delete A Word</h3>
-      <pre>curl -sS -X DELETE "${escapeHtml(apiBase)}/v1/agent/words?instanceId=langbangml-en-pl&type=noun&lemma=ogr%C3%B3d" \\
+      <pre>curl -sS -X DELETE "${escapeHtml(apiBase)}/v1/agent/words?version=ENPL&type=noun&lemma=ogr%C3%B3d" \\
   -H "Authorization: Bearer $LANGBANGML_AGENT_TOKEN"</pre>
     </section>
     <section>
@@ -3304,10 +4148,43 @@ function json(data, status = 200) {
   });
 }
 
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
+function allowedOrigin(origin, env) {
+  if (!origin) return "";
+  const configured = env && env.CORS_ALLOWED_ORIGINS
+    ? env.CORS_ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
+    : DEFAULT_CORS_ORIGINS;
+  if (configured.includes("*")) return "*";
+  if (configured.includes(origin)) return origin;
+  // Localhost dev origins (any port) for local web work.
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin;
+  return "";
+}
+
+// Adds the resolved CORS origin to a response. Leaves WebSocket upgrades and
+// non-allowlisted origins untouched (no ACAO → the browser blocks the
+// cross-origin read; native apps / same-origin / curl are unaffected).
+function withCors(response, allowOrigin) {
+  if (!allowOrigin) return response;
+  if (response.status === 101 || response.webSocket) return response;
+  const headers = new Headers(response.headers);
+  headers.set("Access-Control-Allow-Origin", allowOrigin);
+  headers.append("Vary", "Origin");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function corsHeaders(allowOrigin) {
+  const headers = {
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
   };
+  if (allowOrigin) {
+    headers["Access-Control-Allow-Origin"] = allowOrigin;
+    headers["Vary"] = "Origin";
+  }
+  return headers;
 }

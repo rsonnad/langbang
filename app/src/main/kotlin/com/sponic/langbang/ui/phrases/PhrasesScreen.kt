@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,10 +27,15 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -64,6 +70,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.sponic.langbang.BuildConfig
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.cloud.CloudAiPhraseQuota
@@ -94,6 +102,16 @@ import com.sponic.langbang.ui.common.SubtleCheckbox
 import com.sponic.langbang.ui.common.WordAlignedPolish
 import com.sponic.langbang.ui.theme.LbShapes
 import kotlinx.coroutines.launch
+
+private data class PhraseCollectionGroup(
+    val name: String,
+    val groups: List<PhraseGroup>
+)
+
+private sealed interface PhraseRailItem {
+    data class CollectionHeader(val collection: PhraseCollectionGroup, val expanded: Boolean) : PhraseRailItem
+    data class GroupRow(val group: PhraseGroup, val inCollection: Boolean = false) : PhraseRailItem
+}
 
 /**
  * Phrases tab — multi-sentence real-world utterances (introductions, small-talk, etc.).
@@ -126,7 +144,8 @@ fun PhrasesScreen(
 
     LaunchedEffect(data.groups.map { it.id }) {
         if (selectedId == null || data.groups.none { it.id == selectedId }) {
-            selectedId = data.groups.firstOrNull()?.id
+            selectedId = data.groups.firstOrNull { it.collection.isNullOrBlank() }?.id
+                ?: data.groups.firstOrNull()?.id
         }
     }
 
@@ -177,6 +196,24 @@ fun PhrasesScreen(
         }
     }
 
+    fun syncPhraseGroups() {
+        if (!auth.signedIn || auth.syncingPhrases) return
+        scope.launch {
+            generationError = null
+            generationStatus = "Refreshing phrase groups"
+            app.phraseSync.syncNow().fold(
+                onSuccess = { response ->
+                    generationStatus = "Phrase groups refreshed"
+                    reload(response.groups.firstOrNull()?.id)
+                },
+                onFailure = { t ->
+                    generationError = "Refresh failed: ${t.message ?: t.javaClass.simpleName}"
+                    generationStatus = null
+                }
+            )
+        }
+    }
+
     if (showAccountGateForGroup) {
         AccountGateDialog(
             app = app,
@@ -215,11 +252,14 @@ fun PhrasesScreen(
             generating = generating,
             generationStatus = generationStatus,
             generationError = generationError,
+            canSync = auth.signedIn,
+            syncing = auth.syncingPhrases,
             onAddGroup = ::requestAddGroup,
+            onSync = ::syncPhraseGroups,
             onGeneratePending = ::generatePendingAudio,
             onSelect = { selectedId = it.id },
             modifier = Modifier
-                .width(360.dp)
+                .width(324.dp)
                 .fillMaxHeight()
                 .background(LbColors.Surface)
         )
@@ -235,7 +275,8 @@ fun PhrasesScreen(
                         onPhraseAdded = { sentence ->
                             pendingAudio.add(sentence)
                             reload(group.id)
-                        }
+                        },
+                        onGroupEdited = { reload(group.id) }
                     )
                 } ?: Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
@@ -257,15 +298,29 @@ private fun PhraseGroupList(
     generating: Boolean,
     generationStatus: String?,
     generationError: String?,
+    canSync: Boolean,
+    syncing: Boolean,
     onAddGroup: () -> Unit,
+    onSync: () -> Unit,
     onGeneratePending: () -> Unit,
     onSelect: (PhraseGroup) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var collapsedCollections by remember { mutableStateOf(setOf("Songs")) }
+    val collectionGroups = remember(groups) { phraseCollections(groups) }
+    val railItems = remember(groups, selected?.id, collapsedCollections) {
+        phraseRailItems(
+            groups = groups,
+            collections = collectionGroups,
+            selected = selected,
+            collapsed = collapsedCollections
+        )
+    }
+
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         item(key = "phrase-rail-head") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -276,6 +331,13 @@ private fun PhraseGroupList(
                         icon = Icons.Default.Add,
                         contentDescription = "Add phrase group",
                         onClick = onAddGroup
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    HeaderIconButton(
+                        icon = Icons.Default.Refresh,
+                        contentDescription = "Refresh phrase groups",
+                        enabled = canSync && !syncing,
+                        onClick = onSync
                     )
                     if (pendingCount > 0) {
                         Spacer(Modifier.width(6.dp))
@@ -319,50 +381,184 @@ private fun PhraseGroupList(
                 }
             }
         }
-        itemsIndexed(groups, key = { _, g -> "g-${g.id}" }) { _, g ->
-            val isSel = g == selected
-            val starCount = g.sentences.count { it.pl in starred }
-            Surface(
-                color = Color.White,
-                shape = LbShapes.Card,
-                border = BorderStroke(1.dp, if (isSel) LbColors.Primary.copy(alpha = 0.25f) else LbColors.Line),
-                shadowElevation = if (isSel) 3.dp else 0.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(LbShapes.Card)
-                    .clickable { onSelect(g) }
-            ) {
-                Row {
-                    Box(
-                        Modifier
-                            .width(4.dp)
-                            .fillMaxHeight()
-                            .background(if (isSel) LbColors.Primary else Color.Transparent)
-                    )
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 12.dp, vertical = 11.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            g.title,
-                            color = if (isSel) LbColors.Primary else LbColors.TextPrimary,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 15.sp,
-                            maxLines = 1
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            MetaChip("${g.sentences.size} sentences")
-                            if (starCount > 0) MetaChip("$starCount", star = true)
+        itemsIndexed(railItems, key = { _, item ->
+            when (item) {
+                is PhraseRailItem.CollectionHeader -> "collection-${item.collection.name}"
+                is PhraseRailItem.GroupRow -> "g-${item.group.id}"
+            }
+        }) { _, item ->
+            when (item) {
+                is PhraseRailItem.CollectionHeader -> {
+                    PhraseCollectionRow(
+                        collection = item.collection,
+                        expanded = item.expanded,
+                        onToggle = {
+                            collapsedCollections = if (item.collection.name in collapsedCollections) {
+                                collapsedCollections - item.collection.name
+                            } else {
+                                collapsedCollections + item.collection.name
+                            }
                         }
+                    )
+                }
+                is PhraseRailItem.GroupRow -> {
+                    PhraseGroupRow(
+                        group = item.group,
+                        selected = item.group == selected,
+                        starCount = item.group.sentences.count { it.pl in starred },
+                        inCollection = item.inCollection,
+                        onSelect = { onSelect(item.group) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun phraseCollections(groups: List<PhraseGroup>): List<PhraseCollectionGroup> =
+    groups
+        .filter { !it.collection.isNullOrBlank() }
+        .groupBy { it.collection!!.trim() }
+        .map { (name, collectionGroups) -> PhraseCollectionGroup(name, collectionGroups) }
+
+private fun phraseRailItems(
+    groups: List<PhraseGroup>,
+    collections: List<PhraseCollectionGroup>,
+    selected: PhraseGroup?,
+    collapsed: Set<String>
+): List<PhraseRailItem> {
+    val groupedIds = collections.flatMap { it.groups }.map { it.id }.toSet()
+    val byCollection = collections.associateBy { it.name }
+    val emittedCollections = mutableSetOf<String>()
+    val items = mutableListOf<PhraseRailItem>()
+    for (group in groups) {
+        val collectionName = group.collection?.trim().orEmpty()
+        if (collectionName.isBlank()) {
+            items += PhraseRailItem.GroupRow(group)
+            continue
+        }
+        if (collectionName in emittedCollections) continue
+        val collection = byCollection[collectionName] ?: continue
+        emittedCollections += collectionName
+        val selectedId = selected?.id
+        val selectedInside = selectedId != null && collection.groups.any { it.id == selectedId }
+        val expanded = collectionName !in collapsed || selectedInside
+        items += PhraseRailItem.CollectionHeader(collection, expanded)
+        if (expanded) {
+            collection.groups.forEach { items += PhraseRailItem.GroupRow(it, inCollection = true) }
+        }
+    }
+    for (collection in collections) {
+        if (collection.name !in emittedCollections) {
+            val expanded = collection.name !in collapsed
+            items += PhraseRailItem.CollectionHeader(collection, expanded)
+            if (expanded) collection.groups.forEach { items += PhraseRailItem.GroupRow(it, inCollection = true) }
+        }
+    }
+    return items.filterNot { item -> item is PhraseRailItem.GroupRow && !item.inCollection && item.group.id in groupedIds }
+}
+
+@Composable
+private fun PhraseCollectionRow(
+    collection: PhraseCollectionGroup,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    Surface(
+        color = LbColors.SurfaceTint,
+        shape = LbShapes.Card,
+        border = BorderStroke(1.dp, LbColors.Line),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(LbShapes.Card)
+            .clickable { onToggle() }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (expanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = if (expanded) "Collapse collection" else "Expand collection",
+                tint = LbColors.TextMuted,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                collection.name,
+                color = LbColors.TextPrimary,
+                fontWeight = FontWeight.Black,
+                fontSize = 14.sp,
+                lineHeight = 16.sp,
+                modifier = Modifier.weight(1f),
+                maxLines = 1
+            )
+            Text(
+                "[${collection.groups.size}]",
+                fontSize = 11.sp,
+                color = LbColors.TextMuted,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun PhraseGroupRow(
+    group: PhraseGroup,
+    selected: Boolean,
+    starCount: Int,
+    inCollection: Boolean,
+    onSelect: () -> Unit
+) {
+    Surface(
+        color = Color.White,
+        shape = LbShapes.Card,
+        border = BorderStroke(1.dp, if (selected) LbColors.Primary.copy(alpha = 0.25f) else LbColors.Line),
+        shadowElevation = if (selected) 3.dp else 0.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = if (inCollection) 16.dp else 0.dp)
+            .clip(LbShapes.Card)
+            .clickable { onSelect() }
+    ) {
+        Row {
+            Box(
+                Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(if (selected) LbColors.Primary else Color.Transparent)
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 10.dp, vertical = 3.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        group.title,
+                        color = if (selected) LbColors.Primary else LbColors.TextPrimary,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 14.sp,
+                        lineHeight = 16.sp,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1
+                    )
+                    if (starCount > 0) {
+                        MetaChip("$starCount", star = true)
+                        Spacer(Modifier.width(4.dp))
                     }
                     Text(
-                        phraseGroupTag(g),
-                        color = LbColors.TextMuted,
+                        "[${group.sentences.size}]",
                         fontSize = 11.sp,
+                        color = LbColors.TextMuted,
                         fontWeight = FontWeight.ExtraBold,
-                        modifier = Modifier.padding(top = 12.dp, end = 12.dp)
+                        maxLines = 1
                     )
                 }
             }
@@ -377,12 +573,19 @@ private fun PhraseDetail(
     group: PhraseGroup,
     groups: List<PhraseGroup>,
     onSelectGroup: (PhraseGroup) -> Unit,
-    onPhraseAdded: (SentenceExample) -> Unit
+    onPhraseAdded: (SentenceExample) -> Unit,
+    onGroupEdited: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val player = remember(group) { StudyQueuePlayer(app, scope) }
     val playingIndex = player.playingIndex
     val playing = player.hasQueue
+    val displaySentences = remember(group.sentences) { orderedPhraseSentences(group.sentences) }
+    val titleSentence = remember(group.title) { playableTitleSentence(group.title) }
+    val playbackSentences = remember(titleSentence, displaySentences) {
+        titleSentence?.let { listOf(it) + displaySentences } ?: displaySentences
+    }
     val starred by app.starredPhrases.starred.collectAsState()
     // "Starred only" scopes the quiz to the learner's personal deck (across ALL groups),
     // not just the current group. Sticky within this composition.
@@ -397,6 +600,10 @@ private fun PhraseDetail(
     var aiPhraseStatus by remember(group.id) { mutableStateOf<String?>(null) }
     var aiPhraseError by remember(group.id) { mutableStateOf<String?>(null) }
     var aiPhraseQuota by remember(group.id) { mutableStateOf<CloudAiPhraseQuota?>(null) }
+    var editingSentence by remember(group.id) { mutableStateOf<SentenceExample?>(null) }
+    var editPhraseBusy by remember(group.id) { mutableStateOf(false) }
+    var editPhraseError by remember(group.id) { mutableStateOf<String?>(null) }
+    var showEditGroup by remember(group.id) { mutableStateOf(false) }
     fun requestAddPhrase() {
         if (auth.customItemGateSatisfied) {
             showAddPhrase = true
@@ -407,6 +614,19 @@ private fun PhraseDetail(
     // Stop playback when this group's detail leaves composition.
     DisposableEffect(group) {
         onDispose { player.stop() }
+    }
+
+    if (showEditGroup) {
+        EditPhraseGroupDialog(
+            group = group,
+            onDismiss = { showEditGroup = false },
+            onSave = { newTitle, newSubtitle ->
+                showEditGroup = false
+                app.lessonRepo.addUserPhraseGroup(group.copy(title = newTitle, subtitle = newSubtitle))
+                scope.launch { app.phraseSync.pushLocalAfterEdit() }
+                onGroupEdited()
+            }
+        )
     }
 
     if (showAccountGateForPhrase) {
@@ -463,6 +683,11 @@ private fun PhraseDetail(
                             },
                             onFailure = { t ->
                                 addPhraseError = t.message ?: t.javaClass.simpleName
+                                android.widget.Toast.makeText(
+                                    context,
+                                    addPhraseError,
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
                             }
                         )
                         addPhraseBusy = false
@@ -535,11 +760,75 @@ private fun PhraseDetail(
         )
     }
 
+    editingSentence?.let { sentence ->
+        EditPhraseDialog(
+            sourceLabel = app.sourceLanguageLabel(),
+            targetLabel = app.targetLanguageLabel(),
+            sentence = sentence,
+            phraseCount = displaySentences.size,
+            busy = editPhraseBusy,
+            error = editPhraseError,
+            onDismiss = {
+                if (!editPhraseBusy) {
+                    editingSentence = null
+                    editPhraseError = null
+                }
+            },
+            onSave = { sourceText, targetText, newIndex, sourceChanged, targetChanged ->
+                if (!editPhraseBusy) {
+                    scope.launch {
+                        editPhraseBusy = true
+                        editPhraseError = null
+                        if (!sourceChanged && !targetChanged) {
+                            val replacement = sentence.copy(index = newIndex)
+                            val updated = app.lessonRepo.replaceUserPhraseSentence(group.id, sentence, replacement)
+                            if (updated != null) {
+                                editingSentence = null
+                                editPhraseError = null
+                                onPhraseAdded(replacement)
+                                app.phraseSync.pushLocalAfterEdit()
+                            } else {
+                                editPhraseError = "Phrase is no longer available."
+                            }
+                        } else {
+                            val sourceForCompletion = if (targetChanged && !sourceChanged) "" else sourceText
+                            val targetForCompletion = if (sourceChanged && !targetChanged) "" else targetText
+                            app.cloudBackend.completePhrase(
+                                sourceText = sourceForCompletion,
+                                targetText = targetForCompletion,
+                                literalText = "",
+                                sourceLanguage = app.sourceLanguageLabel(),
+                                targetLanguage = app.targetLanguageLabel()
+                            ).fold(
+                                onSuccess = { completed ->
+                                    val replacement = completed.copy(index = newIndex)
+                                    val updated = app.lessonRepo.replaceUserPhraseSentence(group.id, sentence, replacement)
+                                    if (updated != null) {
+                                        editingSentence = null
+                                        editPhraseError = null
+                                        onPhraseAdded(replacement)
+                                        app.phraseSync.pushLocalAfterEdit()
+                                    } else {
+                                        editPhraseError = "Phrase is no longer available."
+                                    }
+                                },
+                                onFailure = { t ->
+                                    editPhraseError = t.message ?: t.javaClass.simpleName
+                                }
+                            )
+                        }
+                        editPhraseBusy = false
+                    }
+                }
+            }
+        )
+    }
+
     // Warm each tappable word's (normal-voice) audio in the background the moment the
     // group opens, so tapping a word in the list voices instantly instead of waiting on
     // an on-demand synth. Cancelled + restarted automatically when the group changes.
-    LaunchedEffect(group) {
-        group.sentences
+    LaunchedEffect(displaySentences) {
+        displaySentences
             .flatMap { it.pl.split(PHRASE_WHITESPACE) }
             .map { it.polishWordForPhraseAudio() }
             .filter { it.isNotEmpty() }
@@ -623,22 +912,25 @@ private fun PhraseDetail(
             ) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     SectionLabel(phraseGroupTag(group))
-                    Text(
-                        group.title,
-                        fontSize = 23.sp,
-                        lineHeight = 27.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = LbColors.TextPrimary
-                    )
-                    if (group.subtitle.isNotBlank()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         Text(
-                            group.subtitle,
-                            fontSize = 14.sp,
-                            color = LbColors.TextSecondary
+                            group.title,
+                            fontSize = 23.sp,
+                            lineHeight = 27.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = LbColors.TextPrimary
+                        )
+                        HeaderIconButton(
+                            icon = Icons.Default.Edit,
+                            contentDescription = "Edit group name",
+                            onClick = { showEditGroup = true }
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("${group.sentences.size} sentences", fontSize = 12.sp, color = LbColors.TextMuted)
+                        Text("${playbackSentences.size} phrases", fontSize = 12.sp, color = LbColors.TextMuted)
                         Text("•", fontSize = 12.sp, color = LbColors.TextMuted)
                         Text("${group.sentences.count { it.pl in starred }} starred", fontSize = 12.sp, color = LbColors.TextMuted)
                     }
@@ -656,15 +948,15 @@ private fun PhraseDetail(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                if (!playing) {
-                    LbButton.Audio(
-                        label = "Play",
-                        count = group.sentences.size,
-                        onClick = {
-                            startPlayback(group.sentences, quiz = false)
-                        }
-                    )
-                }
+	                if (!playing) {
+	                    LbButton.Audio(
+	                        label = "Play",
+	                        count = playbackSentences.size,
+	                        onClick = {
+	                            startPlayback(playbackSentences, quiz = false)
+	                        }
+	                    )
+	                }
                 Surface(
                     color = if (starredOnly) LbColors.PrimarySoft else Color.White,
                     shape = LbShapes.Button,
@@ -704,7 +996,7 @@ private fun PhraseDetail(
 
         // Sentence list
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            group.sentences.forEachIndexed { i, s ->
+            displaySentences.forEachIndexed { i, s ->
                 SentenceRow(
                     sentence = s,
                     isCurrent = i == playingIndex,
@@ -712,6 +1004,10 @@ private fun PhraseDetail(
                     onToggleStar = {
                         app.starredPhrases.toggle(s.pl)
                         scope.launch { app.phraseSync.pushLocalAfterEdit() }
+                    },
+                    onEdit = {
+                        editPhraseError = null
+                        editingSentence = s
                     },
                     onWordClick = ::playSingleWord,
                     onPlay = {
@@ -944,6 +1240,47 @@ private fun AddPhraseGroupDialog(
 }
 
 @Composable
+private fun EditPhraseGroupDialog(
+    group: PhraseGroup,
+    onDismiss: () -> Unit,
+    onSave: (String, String) -> Unit
+) {
+    var title by remember { mutableStateOf(group.title) }
+    var subtitle by remember { mutableStateOf(group.subtitle) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit phrase group") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Group name") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = subtitle,
+                    onValueChange = { subtitle = it },
+                    label = { Text("Description") },
+                    minLines = 2
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = title.trim().isNotEmpty(),
+                onClick = { onSave(title.trim(), subtitle.trim()) }
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
 private fun AddPhraseDialog(
     sourceLabel: String,
     targetLabel: String,
@@ -976,6 +1313,22 @@ private fun AddPhraseDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                error?.let {
+                    Surface(
+                        color = LbColors.Stop.copy(alpha = 0.1f),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, LbColors.Stop),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = it,
+                            color = LbColors.Stop,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
                 Text(
                     "Manual phrase",
                     fontSize = 12.sp,
@@ -1000,14 +1353,6 @@ private fun AddPhraseDialog(
                     label = { Text("Literal gloss") },
                     minLines = 2
                 )
-                error?.let {
-                    Text(
-                        text = it,
-                        color = LbColors.Stop,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
                 Surface(
                     color = LbColors.SurfaceTint,
                     shape = RoundedCornerShape(8.dp),
@@ -1105,6 +1450,196 @@ private fun AddPhraseDialog(
 }
 
 @Composable
+private fun EditPhraseDialog(
+    sourceLabel: String,
+    targetLabel: String,
+    sentence: SentenceExample,
+    phraseCount: Int,
+    busy: Boolean,
+    error: String?,
+    onDismiss: () -> Unit,
+    onSave: (String, String, Int, Boolean, Boolean) -> Unit
+) {
+    var source by remember(sentence) { mutableStateOf(sentence.en) }
+    var target by remember(sentence) { mutableStateOf(sentence.pl) }
+    var indexText by remember(sentence) { mutableStateOf((sentence.index ?: 1).toString()) }
+    val parsedIndex = indexText.toIntOrNull()?.coerceIn(1, phraseCount.coerceAtLeast(1))
+    val sourceChanged = source.trim() != sentence.en.trim()
+    val targetChanged = target.trim() != sentence.pl.trim()
+    val indexChanged = parsedIndex != null && parsedIndex != (sentence.index ?: 1)
+    val canSave = !busy && parsedIndex != null && (sourceChanged || targetChanged || indexChanged) &&
+        (source.trim().isNotEmpty() || target.trim().isNotEmpty())
+    Dialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            color = LbColors.SurfaceRaised,
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier
+                .fillMaxWidth(0.85f)
+                .imePadding()
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 24.dp, vertical = 22.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Edit phrase",
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = LbColors.TextPrimary
+                    )
+                    CompactIndexEditor(
+                        value = indexText,
+                        max = phraseCount.coerceAtLeast(1),
+                        enabled = !busy,
+                        onValueChange = { indexText = it }
+                    )
+                }
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedTextField(
+                        value = source,
+                        onValueChange = { source = it },
+                        label = { Text("$sourceLabel cue") },
+                        minLines = 1,
+                        maxLines = 3,
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = target,
+                        onValueChange = { target = it },
+                        label = { Text("$targetLabel phrase") },
+                        minLines = 1,
+                        maxLines = 3,
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    error?.let {
+                        Text(
+                            text = it,
+                            color = LbColors.Stop,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    LbButton.Ghost(
+                        label = "Cancel",
+                        enabled = !busy,
+                        onClick = onDismiss
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    LbButton.Primary(
+                        label = if (busy) "Translating..." else "Save",
+                        enabled = canSave,
+                        onClick = { onSave(source.trim(), target.trim(), parsedIndex ?: 1, sourceChanged, targetChanged) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactIndexEditor(
+    value: String,
+    max: Int,
+    enabled: Boolean,
+    onValueChange: (String) -> Unit
+) {
+    val current = value.toIntOrNull()?.coerceIn(1, max) ?: 1
+    Row(
+        modifier = Modifier.height(30.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "Index",
+            fontSize = 11.sp,
+            color = if (enabled) LbColors.TextSecondary else LbColors.TextMuted
+        )
+        Spacer(Modifier.width(4.dp))
+        Surface(
+            color = LbColors.Sheet,
+            shape = LbShapes.Button,
+            border = BorderStroke(1.dp, LbColors.Line),
+            modifier = Modifier
+                .width(54.dp)
+                .height(30.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IndexStepperArrow(
+                    decrement = true,
+                    enabled = enabled && current > 1,
+                    onClick = { onValueChange((current - 1).toString()) }
+                )
+                Text(
+                    current.toString(),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (enabled) LbColors.TextPrimary else LbColors.TextMuted,
+                    modifier = Modifier.width(20.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                IndexStepperArrow(
+                    decrement = false,
+                    enabled = enabled && current < max,
+                    onClick = { onValueChange((current + 1).toString()) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun IndexStepperArrow(
+    decrement: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        color = Color.Transparent,
+        shape = LbShapes.Button,
+        modifier = Modifier
+            .width(17.dp)
+            .height(30.dp)
+            .clip(LbShapes.Button)
+            .clickable(enabled = enabled, onClick = onClick)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = if (decrement) {
+                    Icons.AutoMirrored.Filled.KeyboardArrowLeft
+                } else {
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight
+                },
+                contentDescription = if (decrement) "Move earlier" else "Move later",
+                tint = if (enabled) LbColors.TextSecondary else LbColors.TextMuted,
+                modifier = Modifier.size(17.dp)
+            )
+        }
+    }
+}
+
+@Composable
 private fun PhraseToggle(
     label: String,
     checked: Boolean,
@@ -1147,6 +1682,7 @@ private fun SentenceRow(
     isCurrent: Boolean,
     isStarred: Boolean,
     onToggleStar: () -> Unit,
+    onEdit: () -> Unit,
     onWordClick: (String) -> Unit,
     onPlay: () -> Unit
 ) {
@@ -1173,23 +1709,65 @@ private fun SentenceRow(
             )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                DelayedEnglishTranslation(
-                    text = sentence.en,
-                    fontSize = 13.sp,
-                    color = LbColors.TextMuted
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = (sentence.index ?: 1).toString().padStart(2, '0'),
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = LbColors.TextMuted.copy(alpha = 0.58f),
+                        modifier = Modifier.padding(end = 6.dp)
+                    )
+                    DelayedEnglishTranslation(
+                        text = sentence.en,
+                        fontSize = 12.sp,
+                        color = LbColors.TextMuted
+                    )
+                }
                 WordAlignedPolish(
                     sentence = sentence,
-                    plFontSize = 20.sp,
+                    plFontSize = 19.sp,
                     plFontWeight = FontWeight.Bold,
-                    glossFontSize = 11.sp,
+                    glossFontSize = 10.sp,
                     onPlWordClick = onWordClick
                 )
             }
-            StarToggle(selected = isStarred, onClick = onToggleStar)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                HeaderIconButton(
+                    icon = Icons.Default.Edit,
+                    contentDescription = "Edit phrase",
+                    onClick = onEdit
+                )
+                StarToggle(selected = isStarred, onClick = onToggleStar)
+            }
         }
     }
 }
+
+private fun orderedPhraseSentences(sentences: List<SentenceExample>): List<SentenceExample> =
+    sentences
+        .mapIndexed { fallback, sentence -> sentence.copy(index = sentence.index ?: fallback + 1) }
+        .sortedWith(compareBy<SentenceExample> { it.index ?: Int.MAX_VALUE })
+        .mapIndexed { index, sentence -> sentence.copy(index = index + 1) }
+
+private fun playableTitleSentence(title: String): SentenceExample? {
+    val cleaned = title.trim()
+    if (cleaned.isEmpty() || !looksLikePolishTargetText(cleaned)) return null
+    return SentenceExample(
+        pl = cleaned,
+        en = cleaned,
+        literal = cleaned,
+        words = cleaned.split(PHRASE_WHITESPACE)
+            .filter { it.isNotBlank() }
+            .map { com.sponic.langbang.data.model.TokenPair(pl = it, en = it) },
+        index = 0
+    )
+}
+
+private fun looksLikePolishTargetText(text: String): Boolean =
+    text.any { it in "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ" }
 
 @Composable
 private fun MetaChip(text: String, star: Boolean = false) {
@@ -1214,10 +1792,10 @@ private fun MetaChip(text: String, star: Boolean = false) {
 private fun phraseGroupTag(group: PhraseGroup): String {
     val text = "${group.title} ${group.subtitle}".lowercase()
     return when {
-        "intro" in text || "meet" in text -> "Conversation"
-        "home" in text || "daily" in text || "food" in text -> "Daily life"
-        "travel" in text || "city" in text || "shop" in text -> "Around town"
-        else -> "Practice"
+        "intro" in text || "meet" in text -> "conversation"
+        "home" in text || "daily" in text || "food" in text -> "daily life"
+        "travel" in text || "city" in text || "shop" in text -> "around town"
+        else -> "practice"
     }
 }
 
