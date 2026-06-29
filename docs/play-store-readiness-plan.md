@@ -2,7 +2,7 @@
 
 Operationalizes [`docs/prompts/03-play-store-readiness-and-legal-pages.md`](prompts/03-play-store-readiness-and-legal-pages.md)
 into a dependency-ordered build plan. Derived from a security/readiness review on
-2026-06-22 (four-dimension audit: Android/Play, backend/auth, LLM abuse, billing).
+2026-06-29 (four-dimension audit: Android/Play, backend/auth, LLM abuse, billing).
 
 Goal: ship LangBang to Google Play as a freemium product (free tier + paid
 "LangBang Plus" including API access), abuse-resistant and policy-compliant.
@@ -141,8 +141,8 @@ Start REL-1 + REL-4 + LEGAL-6 on day 1 (wall-clock-bound, not effort-bound). The
 
 ## Status log
 
-- 2026-06-22: Plan created.
-- 2026-06-22: Track A first patch **deployed to prod** — worker Version
+- 2026-06-29: Plan created.
+- 2026-06-29: Track A first patch **deployed to prod** — worker Version
   `391bb926-0afb-4199-8b87-870b24e98e6c`; D1 migration `013_abuse_controls`
   applied to remote. Live now: CORS origin allowlist (was `*`); per-IP +
   per-user fixed-window rate limits on `/v1/gemini/generate`,
@@ -161,3 +161,14 @@ Start REL-1 + REL-4 + LEGAL-6 on day 1 (wall-clock-bound, not effort-bound). The
   - TODO dashboard-only: BE-0a edge WAF rate-limit rules; BE-0b GCP/Azure
     billing caps.
   - Next code: BE-3 structured server-side prompts for `/v1/gemini/generate`.
+- 2026-06-29: More Play blockers completed & deployed —
+  - **Account deletion API** (API worker Version `0962c333`): `DELETE /v1/me`
+    and `POST /v1/me/delete` — self-scoped purge of account/auth/content +
+    analytics-PII anonymization (verified 401 without auth).
+  - **Legal pages live** (site worker `langbang-placeholder`):
+    `langbang.org/privacy` and `/terms` now serve real content (verified 200).
+  - **Data Safety / permissions / content-rating answers**:
+    `docs/play-data-safety.md`.
+  - Remaining for deletion (LEGAL-3): in-app "Delete account" button (Android,
+    Track B). The server endpoint + the email path in the privacy policy satisfy
+    Play's deletion requirement in the meantime.
