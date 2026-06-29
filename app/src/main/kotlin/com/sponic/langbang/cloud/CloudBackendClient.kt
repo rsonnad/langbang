@@ -234,6 +234,13 @@ class CloudBackendClient(
         }
     }
 
+    suspend fun deleteAccount(sessionToken: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            write("DELETE", "/v1/me", "{}", bearerToken = sessionToken)
+            Unit
+        }
+    }
+
     private fun get(path: String, bearerToken: String? = null): String {
         val endpoint = "${apiBase.trimEnd('/')}$path"
         val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {

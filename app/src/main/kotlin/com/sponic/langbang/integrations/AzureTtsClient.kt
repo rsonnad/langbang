@@ -83,7 +83,14 @@ class AzureTtsClient(
                 conn.doOutput = true
                 conn.connectTimeout = 15000
                 conn.readTimeout = 30000
-                conn.setRequestProperty("Ocp-Apim-Subscription-Key", key)
+                // Auth: prefer a short-lived token (no key in release builds); fall
+                // back to the embedded subscription key only when present (debug).
+                val azureToken = AzureSpeechAuth.getToken()?.first
+                when {
+                    azureToken != null -> conn.setRequestProperty("Authorization", "Bearer $azureToken")
+                    key.isNotBlank() -> conn.setRequestProperty("Ocp-Apim-Subscription-Key", key)
+                    else -> return@withContext Result.failure(IOException("Azure TTS auth unavailable"))
+                }
                 conn.setRequestProperty("Content-Type", "application/ssml+xml")
                 conn.setRequestProperty("X-Microsoft-OutputFormat", "audio-24khz-48kbitrate-mono-mp3")
                 conn.setRequestProperty("User-Agent", "langbang/0.1")

@@ -123,10 +123,17 @@ class AzurePronunciationClient(
     ): Result<PronunciationScore> {
         var recognizer: SpeechRecognizer? = null
         return try {
-            val speechConfig = SpeechConfig.fromSubscription(
-                BuildConfig.AZURE_SPEECH_KEY,
-                BuildConfig.AZURE_SPEECH_REGION
-            )
+            // Auth: prefer a short-lived token (no key in release builds); fall back
+            // to the embedded subscription key only when present (debug).
+            val azureAuth = AzureSpeechAuth.getToken()
+            val speechConfig = when {
+                azureAuth != null -> SpeechConfig.fromAuthorizationToken(azureAuth.first, azureAuth.second)
+                BuildConfig.AZURE_SPEECH_KEY.isNotBlank() -> SpeechConfig.fromSubscription(
+                    BuildConfig.AZURE_SPEECH_KEY,
+                    BuildConfig.AZURE_SPEECH_REGION
+                )
+                else -> return Result.failure(IllegalStateException("Azure pronunciation auth unavailable"))
+            }
             speechConfig.speechRecognitionLanguage = locale
             // Slightly chatty logging surface for diagnostics.
             speechConfig.setProperty(PropertyId.Speech_LogFilename, "")

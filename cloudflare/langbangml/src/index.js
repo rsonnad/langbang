@@ -213,6 +213,9 @@ export default {
       if (request.method === "POST" && path === "/v1/audio/manifest") {
         return await audioManifest(request, env);
       }
+      if (request.method === "POST" && path === "/v1/azure/speech-token") {
+        return await azureSpeechToken(request, env);
+      }
       return json({ error: "not found" }, 404);
       })();
       return withCors(response, allowOrigin);
@@ -2641,17 +2644,18 @@ async function generateAiPhraseBatch(env, { prompt, count, pair }) {
 }
 
 async function geminiGenerateText(env, prompt, model = DEFAULT_GEMINI_MODEL, keyOverride = null) {
-  // Temporary failover: while the Gemini key's billing is depleted, route every JSON
-  // text-generation call (phrase completion, AI phrase gen, agent phrases, G2 translate)
-  // to Azure OpenAI when it is configured. Revert by deleting the AZURE_OPENAI_KEY
-  // secret — this falls straight back to Gemini.
+  // Azure OpenAI (gpt-5.5) is the PRIMARY LLM for every JSON text-generation call
+  // (phrase completion, AI phrase gen, agent phrases, G2 translate). Made the intended
+  // default 2026-06-13 after an A/B vs Gemini showed quality parity on Polish
+  // (conjugation/declension/translation) and Azure ran faster. Gemini is the fallback only
+  // when Azure is unconfigured — do not delete AZURE_OPENAI_KEY.
   if (env.AZURE_OPENAI_KEY && env.AZURE_OPENAI_ENDPOINT && env.AZURE_OPENAI_DEPLOYMENT) {
     return azureOpenAiGenerateText(env, prompt);
   }
   return geminiTextFromRaw(await geminiGenerateRaw(env, prompt, model, keyOverride));
 }
 
-// Azure OpenAI chat-completions with JSON mode — the temporary stand-in for Gemini
+// Azure OpenAI chat-completions with JSON mode — the primary text-gen backend
 // (see geminiGenerateText). Returns the model's JSON text; callers parse it with
 // parseGeminiJsonText exactly as they do for Gemini output.
 async function azureOpenAiGenerateText(env, prompt) {
@@ -3609,6 +3613,26 @@ function dedupePhrases(phrases) {
     out.push({ text, locale, voice });
   }
   return out;
+}
+
+// Mints a short-lived (~10 min) Azure Speech authorization token so the Android
+// client can use SpeechConfig.fromAuthorizationToken / a Bearer header instead of
+// shipping the raw AZURE_SPEECH_KEY in the APK (plan BE-4 / AND-4). Rate-limited;
+// a leaked token expires in minutes vs a permanent embedded key.
+async function azureSpeechToken(request, env) {
+  await enforceRateLimit(env, `azure-token:ip:${clientIp(request)}`, 120, 3600, { scope: "ip" });
+  const key = env.AZURE_SPEECH_KEY;
+  if (!key) throw new HttpError(503, "AZURE_SPEECH_KEY is not configured");
+  const region = env.AZURE_SPEECH_REGION || "eastus";
+  const resp = await fetch(`https://${region}.api.cognitive.microsoft.com/sts/v1.0/issueToken`, {
+    method: "POST",
+    headers: { "Ocp-Apim-Subscription-Key": key, "Content-Length": "0" },
+  });
+  if (!resp.ok) {
+    throw new HttpError(502, `Azure token request failed: ${resp.status}`);
+  }
+  const token = await resp.text();
+  return json({ token, region, expiresInSeconds: 540 });
 }
 
 async function synthesize(env, text, voice, locale) {
