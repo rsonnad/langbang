@@ -172,3 +172,20 @@ Start REL-1 + REL-4 + LEGAL-6 on day 1 (wall-clock-bound, not effort-bound). The
   - Remaining for deletion (LEGAL-3): in-app "Delete account" button (Android,
     Track B). The server endpoint + the email path in the privacy policy satisfy
     Play's deletion requirement in the meantime.
+- 2026-06-29: **Play-safe Android release variant** done & verified (AND-7 +
+  AND-2/3, commit `066743c`). Added a `release` buildType signed with a generated
+  Play **upload keystore** (`keystore/langbang-upload.jks`, gitignored; creds in
+  gitignored `local.properties`) + AAB output. Stripped the Play-blocker entries
+  (`WRITE_SECURE_SETTINGS`, `REQUEST_INSTALL_PACKAGES`, `RECEIVE_BOOT_COMPLETED`,
+  `AdbWifiBootReceiver`, self-update `FileProvider`) into
+  `src/debug/AndroidManifest.xml` (debug-only); guarded adb-wifi calls with
+  `BuildConfig.DEBUG`. Verified: `bundleEnPlRelease` → signed
+  `app-enPl-release.aab` (jar verified, 30 MB); release merged manifest = 0
+  blocker entries; debug overlay keeps all 4 (tablet build unchanged).
+  - ⚠ ACTION: back up `keystore/langbang-upload.jks` + the `RELEASE_*` lines of
+    `local.properties` to Bitwarden — not in git; losing the upload key requires
+    a Google Play key reset.
+  - Remaining Android Play work: AND-4 (drop `AZURE_SPEECH_KEY`/`GEMINI_API_KEY`
+    from release BuildConfig — needs BE-4 Azure proxy first); contextual mic
+    permission (AND-5); in-app Privacy/Terms links + delete-account button
+    (AND-9); build the `plEn` AAB too; R8 keep-rules to enable minify (AND-7b).
