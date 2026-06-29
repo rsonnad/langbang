@@ -139,6 +139,11 @@ export default {
         const user = await requireUser(request, env);
         return json({ user: publicUser(user) });
       }
+      if ((request.method === "DELETE" && path === "/v1/me") ||
+          (request.method === "POST" && path === "/v1/me/delete")) {
+        const user = await requireUser(request, env);
+        return await deleteAccount(request, env, user);
+      }
       if (request.method === "POST" && path === "/v1/me/agent-token") {
         const user = await requireUser(request, env);
         return await createAgentToken(request, env, user);
@@ -351,6 +356,37 @@ async function guardLlmEndpoint(request, env, name, ipPerHour, userPerDay) {
     await enforceRateLimit(env, `${name}:user:${user.user_id}`, userPerDay, 86400, { scope: "user" });
   }
   return user;
+}
+
+// Account + data deletion (Play requirement). Removes the authenticated user's
+// account, credentials, and all user-owned content; anonymizes (does not delete)
+// their analytics profile so aggregate usage stays intact without retaining PII.
+// Scoped entirely to the caller's own user_id — cannot affect other users.
+async function deleteAccount(request, env, user) {
+  const uid = user.user_id;
+  const email = user.email_normalized || user.email || "";
+  const stmts = [
+    env.DB.prepare("DELETE FROM user_agent_token_usage WHERE token_id IN (SELECT id FROM user_agent_tokens WHERE user_id = ?)").bind(uid),
+    env.DB.prepare("DELETE FROM user_agent_api_call_events WHERE user_id = ?").bind(uid),
+    env.DB.prepare("DELETE FROM user_agent_tokens WHERE user_id = ?").bind(uid),
+    env.DB.prepare("DELETE FROM user_custom_words WHERE user_id = ?").bind(uid),
+    env.DB.prepare("DELETE FROM user_ai_phrase_quota_requests WHERE user_id = ?").bind(uid),
+    env.DB.prepare("DELETE FROM user_ai_phrase_quotas WHERE user_id = ?").bind(uid),
+    env.DB.prepare("DELETE FROM user_starred_phrases WHERE user_id = ?").bind(uid),
+    env.DB.prepare("DELETE FROM user_phrase_groups WHERE user_id = ?").bind(uid),
+    env.DB.prepare("DELETE FROM auth_sessions WHERE user_id = ?").bind(uid),
+    env.DB.prepare("DELETE FROM auth_identities WHERE user_id = ?").bind(uid),
+  ];
+  if (email) {
+    stmts.push(env.DB.prepare("DELETE FROM email_login_codes WHERE email_normalized = ?").bind(email));
+    stmts.push(env.DB.prepare(
+      "UPDATE analytics_profiles SET email = NULL, display_name = NULL, provider_subject = NULL, " +
+      "provider = 'anonymous', signup_state = 'deleted', updated_at = datetime('now') WHERE email = ?",
+    ).bind(email));
+  }
+  stmts.push(env.DB.prepare("DELETE FROM users WHERE id = ?").bind(uid));
+  await env.DB.batch(stmts);
+  return json({ ok: true, deleted: true });
 }
 
 async function authGoogle(request, env) {
