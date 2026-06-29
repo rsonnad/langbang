@@ -189,3 +189,22 @@ Start REL-1 + REL-4 + LEGAL-6 on day 1 (wall-clock-bound, not effort-bound). The
     from release BuildConfig — needs BE-4 Azure proxy first); contextual mic
     permission (AND-5); in-app Privacy/Terms links + delete-account button
     (AND-9); build the `plEn` AAB too; R8 keep-rules to enable minify (AND-7b).
+- 2026-06-29: **Remaining Play items finished** (commit `bf662d7`; worker
+  `16209813`):
+  - **BE-4 / AND-4** — Azure key off the device. New `POST /v1/azure/speech-token`
+    mints a ~10-min Azure STS token (verified: returns a 758-char JWT).
+    `AzureSpeechAuth` caches it; `AzureTtsClient` (Bearer) +
+    `AzurePronunciationClient` (`fromAuthorizationToken`) use it, with a
+    debug-only subscription-key fallback. Release `BuildConfig` now ships
+    `AZURE_SPEECH_KEY=""` and `GEMINI_API_KEY=""` (verified both flavors). ⚠
+    On-device audio via the release token path to confirm in closed testing —
+    debug keeps the key, so tablets are unaffected.
+  - **AND-5** — mic permission no longer requested at launch (contextual only;
+    `PhraseDetail`/`NowVoicingPanel` already handle it).
+  - **AND-9** — `CloudBackendClient.deleteAccount` (committed) + in-app Privacy/
+    Terms links + Delete-account button in Settings (in the working tree;
+    `SettingsScreen.kt` is entangled with other WIP, so left uncommitted).
+  - **plEn AAB** built + signed alongside enPl (`bundlePlEnRelease`).
+  - Still user-only: **LEGAL-6** credential migration (Google Cloud OAuth/Gemini
+    project + Resend domain — console work); AND-7b R8 keep-rules for minify;
+    back up the upload keystore (see prior entry).
