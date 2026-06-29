@@ -94,7 +94,7 @@ class LangbangApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        AdbWifiKeeper.enableIfGranted(this, "app start")
+        if (BuildConfig.DEBUG) AdbWifiKeeper.enableIfGranted(this, "app start")
         cloudConfig = CloudConfigStore(this, BuildConfig.LANGBANGML_INSTANCE_ID)
         cloudBackend = CloudBackendClient(apiBase = BuildConfig.LANGBANGML_API_BASE)
         authStore = AuthStore(this)

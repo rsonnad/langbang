@@ -65,6 +65,19 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        // Play upload key. Credentials live in local.properties (gitignored); the
+        // keystore itself is NOT committed (gitignored) — back it up in Bitwarden.
+        // Absent (fresh checkout/CI) → release falls back to debug signing so the
+        // build still runs; a real Play upload requires these to be set.
+        val relStore = localProps.getProperty("RELEASE_STORE_FILE")
+        if (relStore != null && rootProject.file(relStore).exists()) {
+            create("release") {
+                storeFile = rootProject.file(relStore)
+                storePassword = localProps.getProperty("RELEASE_STORE_PASSWORD")
+                keyAlias = localProps.getProperty("RELEASE_KEY_ALIAS")
+                keyPassword = localProps.getProperty("RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     defaultConfig {
@@ -138,6 +151,17 @@ android {
                 "LANGBANGML_UPDATE_MANIFEST_URL",
                 "\"https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev/langbang/builds/pl-en/latest.json\""
             )
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            // R8 left OFF for now: Azure Speech SDK / ktor / kotlinx-serialization
+            // need keep rules before shrinking is safe (follow-up AND-7b).
+            isMinifyEnabled = false
+            // Sign with the Play upload key when configured, else debug (so the
+            // build never fails); only a release-keystore-signed AAB is uploadable.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 

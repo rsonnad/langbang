@@ -5,15 +5,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Dev-tablet helper: granted once with `adb shell pm grant ...`.
-         Normal Android installs do not receive this permission. -->
-    <uses-permission
-        android:name="android.permission.WRITE_SECURE_SETTINGS"
-        tools:ignore="ProtectedPermissions" />
-    <!-- In-app APK self-update: download a newer build from R2 and launch the
-         system installer. The install itself still shows Android's confirmation. -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Dev-only permissions (WRITE_SECURE_SETTINGS adb-wifi helper,
+         REQUEST_INSTALL_PACKAGES + RECEIVE_BOOT_COMPLETED for the R2 sideload
+         self-update) are declared in src/debug/AndroidManifest.xml so they are
+         merged into debug builds only and never ship in a Play release. -->
 
     <uses-feature
         android:name="android.hardware.microphone"
@@ -43,27 +38,20 @@
             </intent-filter>
         </activity>
 
+        <!-- AdbWifiBootReceiver (BOOT_COMPLETED adb-wifi helper) is debug-only;
+             see src/debug/AndroidManifest.xml. -->
+
         <receiver
-            android:name=".AdbWifiBootReceiver"
+            android:name=".ExternalNowVoicingReceiver"
             android:enabled="true"
-            android:exported="false">
+            android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="com.sponic.langbangml.DRIVE_NOW_VOICING" />
             </intent-filter>
         </receiver>
 
-        <!-- Serves the downloaded update.apk to the system installer via a content:// URI
-             (file:// URIs are blocked for installs on API 24+). -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
+        <!-- FileProvider (serves the downloaded update.apk to the installer) is
+             debug-only; see src/debug/AndroidManifest.xml. -->
 
     </application>
 
