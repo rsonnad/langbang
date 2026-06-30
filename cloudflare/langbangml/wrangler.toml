@@ -9,9 +9,12 @@ preview_urls = false
 PUBLIC_R2_BASE = "https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev"
 AUDIO_PREFIX = "langbang/audio"
 AZURE_SPEECH_REGION = "eastus"
-# Temporary Gemini failover → Azure OpenAI (gpt-5.5 on sponic-openai-eastus2) while the
-# Gemini key billing is depleted. AZURE_OPENAI_KEY is set as a secret; delete that secret
-# to revert all LLM text generation back to Gemini. See geminiGenerateText in src/index.js.
+# PRIMARY LLM for all JSON text-generation = Azure OpenAI (gpt-5.5 on sponic-openai-eastus2).
+# Made the intended default 2026-06-13 after an A/B vs Gemini showed quality parity on Polish
+# (irregular conjugation, adjective declension by gender/case, EN→PL translation) and Azure was
+# faster. AZURE_OPENAI_KEY is set as a secret and is REQUIRED — do NOT delete it. Gemini
+# (env.GEMINI_API_KEY) is the fallback only when Azure is unconfigured. See geminiGenerateText
+# in src/index.js.
 AZURE_OPENAI_ENDPOINT = "https://sponic-openai-eastus2.openai.azure.com"
 AZURE_OPENAI_DEPLOYMENT = "gpt-5.5"
 AZURE_OPENAI_API_VERSION = "2024-10-21"
