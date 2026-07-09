@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">G2Trans</string>
+    <string name="notification_channel">G2Trans Bridge</string>
+    <string name="notification_title">G2Trans running</string>
+</resources>

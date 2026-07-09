@@ -56,8 +56,8 @@ import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
-import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.ensureCachedAudio
+import com.sponic.langbang.domain.playAudioAndAwait
 import com.sponic.langbang.domain.sourceAudioVoice
 import com.sponic.langbang.domain.targetAudioVoice
 import com.sponic.langbang.domain.targetSlowVoice
@@ -77,8 +77,6 @@ import com.sponic.langbang.ui.common.WordPlayLimitControl
 import com.sponic.langbang.ui.common.variableEndForPolishForm
 import com.sponic.langbang.ui.common.variableStartForPolishForm
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 // Each case map is keyed "sg" / "pl"; we always render in this order.
@@ -184,6 +182,16 @@ internal class NounsScreenState(
         player.stop()
     }
 
+    fun playPolishOnce(text: String) {
+        if (text.isBlank()) return
+        PlaybackController.stop()
+        app.audioPlayer.stop()
+        scope.launch {
+            val target = app.targetAudioVoice()
+            app.playAudioAndAwait(text, target.locale, target.voice)
+        }
+    }
+
     fun ensureCheckedDefaults(allLemmas: List<String>) {
         if (checkedDefaultsLoaded) return
         checkedDefaultsLoaded = true
@@ -231,17 +239,24 @@ internal class NounsScreenState(
         if (limit <= 0) return 0
         return nouns
             .filter { it.lemma in checkedLemmas }
-            .sumOf { app.lessonRepo.nounSentencesFor(it.lemma).size.coerceAtMost(limit) }
+            .sumOf { noun ->
+                val examples = app.lessonRepo.nounSentencesFor(noun.lemma)
+                if (examples.isNotEmpty()) {
+                    examples.size.coerceAtMost(limit)
+                } else {
+                    nounFormItems(noun, limit).size
+                }
+            }
     }
 
     fun playAll(nouns: List<NounEntry>, quiz: Boolean) {
         if (player.hasQueue) { stop(); return }
-        val items = buildCheckedSentenceQueue(nouns, quiz)
+        val items = buildCheckedPlaybackQueue(nouns, quiz)
         if (items.isEmpty()) return
         startQueue(items, quiz)
     }
 
-    private fun buildCheckedSentenceQueue(
+    private fun buildCheckedPlaybackQueue(
         nouns: List<NounEntry>,
         quiz: Boolean
     ): List<SentenceExample> {
@@ -251,7 +266,11 @@ internal class NounsScreenState(
             .filter { it.lemma in checkedLemmas }
             .flatMap { noun ->
                 val pool = app.lessonRepo.nounSentencesFor(noun.lemma)
-                if (randomOrder) pool.shuffled().take(limit) else pool.take(limit)
+                when {
+                    pool.isEmpty() -> nounFormItems(noun, limit)
+                    randomOrder -> pool.shuffled().take(limit)
+                    else -> pool.take(limit)
+                }
             }
         return if (randomOrder || quiz) items.shuffled() else items
     }
@@ -264,13 +283,15 @@ internal class NounsScreenState(
      */
     fun recallQuiz() {
         if (player.hasQueue) { stop(); return }
-        val items = nounFormItems() ?: return
+        val noun = selected ?: return
+        val items = nounFormItems(noun).takeIf { it.isNotEmpty() } ?: return
         startQueue(items.shuffled(), quiz = true)
     }
 
     fun playForms() {
         if (player.hasQueue) { stop(); return }
-        val items = nounFormItems() ?: return
+        val noun = selected ?: return
+        val items = nounFormItems(noun).takeIf { it.isNotEmpty() } ?: return
         startQueue(items, quiz = false)
     }
 
@@ -286,9 +307,11 @@ internal class NounsScreenState(
         }
     }
 
-    private fun nounFormItems(): List<SentenceExample>? {
-        val noun = selected ?: return null
-        val items = buildList {
+    private fun nounFormItems(
+        noun: NounEntry,
+        limit: Int = Int.MAX_VALUE
+    ): List<SentenceExample> =
+        buildList {
             CASE_BLOCKS.filter { it.key in selectedCaseKeys }.forEach { block ->
                 val map = noun.caseMap(block.key)
                 NUMBER_KEYS.filter { it in selectedNumberKeys }.forEach { num ->
@@ -298,9 +321,7 @@ internal class NounsScreenState(
                     }
                 }
             }
-        }
-        return items.takeIf { it.isNotEmpty() }
-    }
+        }.take(limit.coerceAtLeast(0))
 
     private fun makeRecallItem(
         nounEn: String,
@@ -450,7 +471,6 @@ fun NounsScreen(
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 state.selected?.let {
                     NounParadigm(
-                        app = app,
                         noun = it,
                         state = state,
                         nouns = lesson.nouns
@@ -672,7 +692,6 @@ private fun NounList(
 }
 @Composable
 private fun NounParadigm(
-    app: LangbangApplication,
     noun: NounEntry,
     state: NounsScreenState,
     nouns: List<NounEntry>
@@ -712,7 +731,7 @@ private fun NounParadigm(
         CASE_BLOCKS.filter { it.key in state.selectedCaseKeys }.forEach { block ->
             val map = noun.caseMap(block.key)
             CompactCaseRows(
-                app = app,
+                state = state,
                 block = block,
                 map = map,
                 selectedNumberKeys = state.selectedNumberKeys,
@@ -722,13 +741,13 @@ private fun NounParadigm(
         }
 
         Spacer(Modifier.height(8.dp))
-        SentencesSection(app, state)
+        SentencesSection(state)
     }
 }
 
 @Composable
 private fun CompactCaseRows(
-    app: LangbangApplication,
+    state: NounsScreenState,
     block: CaseBlock,
     map: Map<String, String>,
     selectedNumberKeys: Set<String>,
@@ -777,7 +796,7 @@ private fun CompactCaseRows(
                         form = form,
                         baseForm = baseForm,
                         gender = gender
-                    ) { playForm(app, form) }
+                    ) { state.playPolishOnce(form) }
                 }
             }
         }
@@ -828,7 +847,7 @@ private fun FormRow(
 }
 
 @Composable
-private fun SentencesSection(app: LangbangApplication, state: NounsScreenState) {
+private fun SentencesSection(state: NounsScreenState) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (state.sentences.isEmpty()) {
             Text(
@@ -842,7 +861,8 @@ private fun SentencesSection(app: LangbangApplication, state: NounsScreenState) 
                 SentenceRow(
                     sentence = s,
                     highlighted = i == state.playingIndex,
-                    onPlay = { playSentence(app, s) }
+                    onWordClick = { state.playPolishOnce(it) },
+                    onPlay = { state.playPolishOnce(s.pl) }
                 )
             }
         }
@@ -857,6 +877,7 @@ private fun SentencesSection(app: LangbangApplication, state: NounsScreenState) 
 private fun SentenceRow(
     sentence: SentenceExample,
     highlighted: Boolean = false,
+    onWordClick: (String) -> Unit,
     onPlay: () -> Unit
 ) {
     Card(
@@ -883,31 +904,10 @@ private fun SentenceRow(
                     sentence = sentence,
                     plFontSize = 16.sp,
                     plFontWeight = FontWeight.Bold,
-                    glossFontSize = 10.sp
+                    glossFontSize = 10.sp,
+                    onPlWordClick = onWordClick
                 )
             }
         }
     }
-}
-
-// ── Shared helpers ────────────────────────────────────────────────────────────
-
-private fun playSentence(app: LangbangApplication, sentence: SentenceExample) {
-    playAudio(app, sentence.pl)
-}
-
-private fun playForm(
-    app: LangbangApplication,
-    form: String
-) {
-    if (form.isEmpty()) return
-    playAudio(app, form)
-}
-
-private fun playAudio(app: LangbangApplication, text: String) {
-    if (text.isEmpty()) return
-    val f = app.audioCache.fileFor(
-        app.targetAudioVoice().locale, app.targetAudioVoice().voice, text
-    )
-    app.audioPlayer.play(f)
 }

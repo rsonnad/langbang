@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "langbang"
 include(":app")
+include(":g2trans")

@@ -19,6 +19,17 @@ back here before acting.
 It is separate from the original bundled-asset Android app in
 `/Users/rahulio/Documents/CodingProjects/langbang`.
 
+## Adding Content (verbs / phrases)
+
+Recipe: [`docs/process/adding-verbs-and-phrases.md`](docs/process/adding-verbs-and-phrases.md).
+
+- **Default for all accounts** (nothing else specified): edit the asset JSON
+  (`lesson-02.json` verbs / `lesson-05.json` phrases) → regenerate seeds →
+  push to live D1 + warm audio. This is the default target.
+- **One specific account**: use that account's Agent API token
+  (`POST /v1/agent/words` / `/v1/agent/phrases`, docs at https://langbang.org/api).
+  Agent edits are user-owned and never touch the global default lessons.
+
 ## Cloudflare
 
 LangBangML uses the new LangBang Cloudflare account:
@@ -28,6 +39,21 @@ LangBangML uses the new LangBang Cloudflare account:
 - R2 bucket: `langbangml`
 - Public R2 base: `https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev`
 - Main R2 prefix: `langbang/`
+
+Cloudflare account boundary:
+
+- `langbangapp@gmail.com` / account `df99afea5ab9636a19adbdead37fc133` is
+  the only correct home for LangBang backend/data resources: Worker
+  `langbangml-api`, D1 `langbangml`, R2 bucket `langbangml`, Worker secrets,
+  LangBang API deploys, app backend deploys, and phrase-import bridges.
+- `wingsiebird@gmail.com` / account `9cd3a280a54ce2a5b382602f0247b577` is
+  relevant to LangBang only because the `langbang.org` Cloudflare zone remains
+  there. Use it only for DNS/zone/site-edge work such as the
+  `langbang-placeholder` route shim for `langbang.org/*` and
+  `www.langbang.org/*`.
+- Do not create or deploy LangBang API, D1, R2, Worker-secret, phrase-import,
+  or app-backend resources in the Wingsiebird account unless the user explicitly
+  asks to move or modify the domain zone itself.
 
 Do not publish LangBangML artifacts to the old `alpacapps` R2 bucket. The old
 account values may remain only in migration evidence or cleanup prompts.

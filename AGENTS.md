@@ -29,6 +29,21 @@ LangBangML uses the new LangBang Cloudflare account:
 - Public R2 base: `https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev`
 - Main R2 prefix: `langbang/`
 
+Cloudflare account boundary:
+
+- `langbangapp@gmail.com` / account `df99afea5ab9636a19adbdead37fc133` is
+  the only correct home for LangBang backend/data resources: Worker
+  `langbangml-api`, D1 `langbangml`, R2 bucket `langbangml`, Worker secrets,
+  LangBang API deploys, app backend deploys, and phrase-import bridges.
+- `wingsiebird@gmail.com` / account `9cd3a280a54ce2a5b382602f0247b577` is
+  relevant to LangBang only because the `langbang.org` Cloudflare zone remains
+  there. Use it only for DNS/zone/site-edge work such as the
+  `langbang-placeholder` route shim for `langbang.org/*` and
+  `www.langbang.org/*`.
+- Do not create or deploy LangBang API, D1, R2, Worker-secret, phrase-import,
+  or app-backend resources in the Wingsiebird account unless the user explicitly
+  asks to move or modify the domain zone itself.
+
 Do not publish LangBangML artifacts to the old `alpacapps` R2 bucket. The old
 account values may remain only in migration evidence or cleanup prompts.
 
@@ -71,6 +86,29 @@ over the tablets. See `docs/process/tablet-build-integrity.md`.
 
 Admin tokens and new Cloudflare operational credentials belong in Bitwarden
 collection `devops-langbang`.
+
+## TTRAN Handoff Docs
+
+When the user asks for a TTRAN, TRAN, trans, transfer, or numbered handoff doc,
+use the actual `ttran` system on Alpuca. Do not stop at a repo-local prompt
+unless Alpuca access is blocked.
+
+- CLI: `/usr/local/bin/ttran`
+- Store on Alpuca: `/Volumes/PortoSams2T/ttran`
+- Primary SSH host alias: `alpuca-ts`
+- Verified Tailscale fallback: `alpuca@100.74.59.97`
+- Tailscale UI may also show MagicDNS: `alpuca.tail9c9221.ts.net`
+- Publish: `ttran put <file> [name]`
+- Replace an existing numbered doc: `ttran replace <ID> <file>`
+- Stream for review: `ttran cat <ID>`
+- Download locally: `ttran get <ID> <destination-directory>`
+
+If the `alpuca-ts` SSH alias is unavailable but Alpuca is green in Tailscale,
+retry with `TTRAN_HOST=alpuca@100.74.59.97`, for example
+`TTRAN_HOST=alpuca@100.74.59.97 ttran cat <ID>`.
+
+If `ttran` is blocked, report the exact Alpuca, SSH, or Tailscale blocker and
+leave the repo-local draft clearly marked as waiting for TTRAN publication.
 
 ## Bitwarden Recipe
 

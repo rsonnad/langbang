@@ -20,5 +20,10 @@ artifacts/
 captures/
 __pycache__/
 *.pyc
+*.egg-info/
 .claude/
 .gstack/
+g2-gemini-bridge/.env
+g2-gemini-bridge/.venv/
+g2-gemini-bridge/logs/
+keystore/langbang-upload.jks

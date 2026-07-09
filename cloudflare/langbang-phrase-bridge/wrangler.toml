@@ -1,0 +1,17 @@
+name = "langbang-phrase-bridge"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+account_id = "df99afea5ab9636a19adbdead37fc133"
+workers_dev = true
+preview_urls = false
+
+[vars]
+LANGBANG_API_BASE = "https://langbang.org"
+ALLOW_PUBLIC_WRITES = "false"
+APPROVER_EMAILS = "wingsiebird@gmail.com"
+APPROVAL_URL = "https://langbang.org/bridge/approve"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "langbangml"
+database_id = "d259445e-d263-4ae2-a391-f0d176492265"

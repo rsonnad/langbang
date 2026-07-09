@@ -1,0 +1,30 @@
+{
+  "instances": [
+    {
+      "id": "pl-en",
+      "displayName": "LangBang — English Study",
+      "uiLocale": "pl-PL",
+      "contentVersionId": "pl-en-v1",
+      "languagePair": {
+        "id": "pl-en",
+        "sourceLanguage": "Polish",
+        "targetLanguage": "English",
+        "sourceLocale": "pl-PL",
+        "targetLocale": "en-US"
+      }
+    },
+    {
+      "id": "en-pl",
+      "displayName": "LangBang — Polish Study",
+      "uiLocale": "en-US",
+      "contentVersionId": "en-pl-v1",
+      "languagePair": {
+        "id": "en-pl",
+        "sourceLanguage": "English",
+        "targetLanguage": "Polish",
+        "sourceLocale": "en-US",
+        "targetLocale": "pl-PL"
+      }
+    }
+  ]
+}

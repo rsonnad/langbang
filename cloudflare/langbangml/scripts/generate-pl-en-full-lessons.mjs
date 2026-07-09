@@ -233,6 +233,7 @@ function polishPhraseGroupTitle(id, fallback) {
     "intro-rahul": "Przedstawienie się — Rahul",
     "language-icebreakers": "Pierwsze rozmowy językowe",
     "welcome-to-poland": "Witamy w Polsce",
+    poland: "Polska",
   };
   return titles[id] || fallback;
 }
@@ -242,6 +243,7 @@ function polishPhraseGroupSubtitle(id, fallback) {
     "intro-rahul": "Poznajesz nową osobę i wyjaśniasz, czym się zajmujesz.",
     "language-icebreakers": "Naturalna rozmowa, kiedy dopiero uczysz się angielskiego: przeproś, poproś o pomoc i zmień język.",
     "welcome-to-poland": "Powitanie osoby przyjeżdżającej do Polski, z odrobiną optymizmu na koniec świata.",
+    poland: "Polskie hasła patriotyczne i codzienne powiedzenia.",
   };
   return subtitles[id] || fallback;
 }

@@ -1,5 +1,42 @@
 # Service access recipes (langbang)
 
+## Cloudflare R2 — upload to `langbangml` bucket (S3 API) — verified 2026-06-14
+
+Used to publish the verb sentence tree (`langbang/sentences/v6/...`). Creds in BW item
+**`Cloudflare R2 - LangBang S3 Admin`** (type=2 secure note, collection devops-langbang;
+fields `Access Key ID` / `Secret Access Key`, endpoint
+`https://df99afea5ab9636a19adbdead37fc133.r2.cloudflarestorage.com`).
+
+**Gotchas that cost real time this session — avoid these:**
+- `bw-read "Cloudflare R2 - LangBang S3 Admin" "Access Key ID"` returns **EMPTY** (the helper
+  re-unlocks non-interactively and dies). Use an explicit `BW_SESSION` + `jq` instead.
+- Do **not** `ITEM=$(bw get item …)` then `echo "$ITEM" | jq` — the item's `notes` has control
+  chars and `echo` corrupts it (`jq: Invalid string: control characters…`). Use `printf '%s'`.
+- `@tsv` + `read` to grab both creds in one shot mangled the secret — extract each field separately.
+- aws cli v2: pass the endpoint via the **`AWS_ENDPOINT_URL` env var, NOT `--endpoint-url` in a
+  shell var** — zsh doesn't word-split `EP="--endpoint-url …"`, so `$EP` becomes one arg →
+  `aws: Unknown options: --endpoint-url …`.
+
+```bash
+export BW_PASSWORD="$(security find-generic-password -a 'rahulioson@gmail.com' -s 'bitwarden-cli' -w)"
+export BW_SESSION="$(/opt/homebrew/bin/bw unlock --passwordenv BW_PASSWORD --raw)"; unset BW_PASSWORD
+ITEM=$(bw get item "Cloudflare R2 - LangBang S3 Admin" --session "$BW_SESSION")
+export AWS_ACCESS_KEY_ID=$(printf '%s' "$ITEM" | jq -r '.fields[]|select(.name=="Access Key ID")|.value')
+export AWS_SECRET_ACCESS_KEY=$(printf '%s' "$ITEM" | jq -r '.fields[]|select(.name=="Secret Access Key")|.value')
+export AWS_ENDPOINT_URL="https://df99afea5ab9636a19adbdead37fc133.r2.cloudflarestorage.com"
+export AWS_DEFAULT_REGION=auto
+aws s3 cp ./bundles/ s3://langbangml/langbang/sentences/v6/verbs/ --recursive --content-type application/json
+# server-side copy within bucket also works: aws s3 cp s3://…/v5/adjectives/ s3://…/v6/adjectives/ --recursive
+```
+Public read URL: `https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev/<key>`. NOTE: the app
+(`SentenceRegenService`) does **not** validate the manifest's `sha256`/`count`/`bytes` — it just
+GETs each entry's `url` — so those manifest fields can be approximate.
+
+Separately, **redpanda (`100.67.185.125`) SSH is denied from this Mac** (publickey/password,
+recurring) — deploy to devices directly from this Mac instead; fix = add this Mac's pubkey to
+redpanda's authorized_keys. The Gemini proxy `langbangml-api.langbangml.workers.dev/v1/gemini/generate`
+403s default User-Agents (e.g. python-urllib) — send a browser UA.
+
 ## Galaxy Tab A9+ — wireless adb — verified 2026-05-22
 
 **Current active tablet: `entry-alpaca-tablet` at `100.103.110.7`.**
@@ -691,3 +728,92 @@ ACC="$(bw get item 'Cloudflare R2 — Object Storage' --session "$BW_SESSION" \
 build-history page (`genalpaca-admin/rahulio/pages/langbang/builds.html`) is regenerated
 by `langbang/scripts/gen-builds-page.sh`. Never overwrite `langbang-latest.apk` / the
 update manifest for fork builds — that's the canonical channel the in-app updater polls.
+
+## Cloudflare: TWO accounts — match the token to the worker (RCA 2026-06-08)
+
+Deploying `langbangml-api` failed first with "account_id ... does not match any of
+your authenticated accounts" because I grabbed the wrong token. The langbang stack
+spans **two Cloudflare accounts**:
+
+- **`langbangml-api` worker + D1 (`langbangml`) + R2 bucket (`langbangml`)** live in
+  account **`df99afea5ab9636a19adbdead37fc133`** (Langbangapp@gmail.com).
+  - Worker deploy + `wrangler secret put`: `CLOUDFLARE_API_TOKEN` = BW
+    `"Cloudflare - LangBang Codex Claude Admin"` → field `"Cloudflare Account API Token"`.
+    Verify with `wrangler whoami` (should print Langbangapp + df99afea).
+  - R2 S3 ops (e.g. `aws s3api put-bucket-cors`): keys from BW
+    `"Cloudflare R2 - LangBang S3 Admin"`, endpoint `https://df99afea….r2.cloudflarestorage.com`.
+- **`langbang.org` DNS/zone-bound site edge only** remains in account
+  **`9cd3a280a54ce2a5b382602f0247b577`** (Wingsiebird@gmail.com) because the
+  Cloudflare zone is there. The zone currently routes `langbang.org/*` and
+  `www.langbang.org/*` to site shim Worker `langbang-placeholder`, which serves
+  static/site pages and proxies same-origin requests to the new-account API.
+  Treat this as DNS/site-edge plumbing, not as the LangBang backend account.
+  Do not create new LangBang API, D1, R2, secret, token, phrase-import, or app
+  backend resources in Wingsiebird unless the domain zone itself is being moved
+  or the user explicitly asks for a zone-level change. Deploy the site shim with
+  `scripts/deploy-langbang-org-site.sh` using BW item
+  `5080315a-e7f0-4acf-ba36-b45e00424d10` → field `"Cloudflare API Token"`;
+  do NOT use this token for `langbangml-api`.
+
+**R2 CORS:** the public r2.dev host sends NO CORS headers by default, so browser
+`fetch()`/`cache.put()` of audio cross-origin throws "Failed to fetch" (TypeError).
+`<audio>` playback still works (media elements ignore CORS) which masks it. Fix once with:
+`aws s3api put-bucket-cors --bucket langbangml --endpoint-url https://df99afea….r2.cloudflarestorage.com --cors-configuration '{"CORSRules":[{"AllowedOrigins":["*"],"AllowedMethods":["GET","HEAD"],"AllowedHeaders":["*"],"MaxAgeSeconds":86400}]}'`
+(keys: BW `"Cloudflare R2 - LangBang S3 Admin"`). Already applied 2026-06-08.
+
+**Test/review login:** `POST /v1/auth/test-login {email,password}` on `langbangml-api`
+is gated by secrets `TEST_LOGIN_EMAIL` + `TEST_LOGIN_PASSWORD` (set 2026-06-08:
+`tester@langbang.org`). Disabled (404) if either secret is unset. Additive to the
+passwordless email-code/Google flows; web UI exposes it as "Sign in with a password".
+
+## LangBangML Agent API + agent token + headless device sign-in — 2026-06-09
+
+Content is cloud-backed (D1), NOT bundled — phrases/words can be added or edited
+with no app rebuild. The Worker exposes a per-user "agent" API:
+- `GET /v1/agent/status` — whoami + default instance + daily quota (100/day)
+- `POST /v1/agent/phrases` — add/replace ONE sentence in a personal phrase group.
+  Body `{instanceId, groupId, groupTitle, phrase:{pl,en[,literal]}}`. **Dedup key is
+  `pl|en` lowercased** — changing pl OR en makes a NEW sentence, so to EDIT a line
+  you delete+re-add or rebuild the group. No phonetic field (only pl/en/literal/words).
+- `DELETE /v1/agent/phrases` — drop a sentence (by pl/en/phraseKey), or the whole group (omit them)
+- `POST|DELETE /v1/agent/words`
+Auth = per-user `lba_` token (table `user_agent_tokens`), DISTINCT from the content-admin
+token. Phrases land in that account and sync to any device signed into it.
+
+**rahulioson@gmail.com agent token is in BW item `99b01a79-05a6-445b-a0fb-b464010cc2b1`**
+("Cloudflare — LangBangML Agent Token (rahulioson)", in login.password). user_id
+`af0571ad-1c52-4f74-a204-c79c7c7ca1a0`, default instance langbangml-en-pl.
+    export BW_SESSION=$(~/bin/bw-unlock)
+    TOKEN=$(bw get item 99b01a79-05a6-445b-a0fb-b464010cc2b1 --session "$BW_SESSION" | jq -r '.login.password')
+    curl -sS https://langbangml-api.langbangml.workers.dev/v1/agent/status -H "Authorization: Bearer $TOKEN" | jq .
+
+**Direct D1** (db `langbangml`, id d259445e-d263-4ae2-a391-f0d176492265): CF token from
+BW "Cloudflare - LangBang Codex Claude Admin" (2e39357e-..., fields "Account ID" +
+"Cloudflare Account API Token"). From `cloudflare/langbangml`:
+    CLOUDFLARE_API_TOKEN=.. CLOUDFLARE_ACCOUNT_ID=.. npx wrangler d1 execute langbangml --remote --json --command "SELECT ..."
+Single `--command` returns rows (`.[0].results`); multi-statement `--file` returns only a
+summary. D1 read-replica lag: a write confirmed by wrangler (primary) can take a few
+seconds to show on the Worker API read.
+
+**Mint an agent token without the app:** generate `lba_<base64url-32>`, store its sha256-hex:
+    RAND=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '='); TOKEN="lba_$RAND"
+    HASH=$(printf '%s' "$TOKEN" | shasum -a 256 | awk '{print $1}')
+    # INSERT INTO user_agent_tokens (id,user_id,token_hash,token_prefix,label,default_instance_id)
+    #   VALUES ('<uuid>','<user_id>','$HASH','${TOKEN:0:12}','Claude/Codex','langbangml-en-pl');
+
+**Sign a debuggable device into an account headlessly** (push content to a tablet whose
+app isn't signed in): mint an `auth_sessions` row (token `lb_<base64url-32>`, sha256-hex
+in token_hash, expires_at datetime('now','+90 days')), then write SharedPreferences
+`<appHome>/shared_prefs/langbang-auth.xml` with keys user-id, email, email-verified(bool),
+display-name, session-token, session-expires-at. Write via `adb push` → /data/local/tmp
+then `run-as <pkg> cp` to an ABSOLUTE path (`$(run-as <pkg> pwd)/shared_prefs/...`) —
+relative paths fail under `run-as sh -c`. force-stop before, launch after. Verify the app
+sees it via `shared_prefs/product_analytics.xml` (profile-json shows signed_in profileId).
+User phrase groups persist locally at `<appHome>/files/user-phrases.json` =
+`[{id,title,subtitle,sentences:[{pl,en}]}]` — writable directly (deterministic, no network).
+
+**Tablet DNS gotcha (2026-06-09):** the A11 tablet (SM-X238U @ 100.85.223.100,
+`adb-sponicgtab`) intermittently fails to resolve `langbangml-api.langbangml.workers.dev`
+("No address associated with hostname") over Tailscale, so in-app cloud sync is flaky
+there — write `files/user-phrases.json` directly as the workaround. The Pixel 10 Pro XL
+(100.94.27.79, `adb-pixel`) is rahulioson's real signed-in device.

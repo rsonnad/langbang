@@ -96,8 +96,18 @@ fun PronunciationScreen(app: LangbangApplication) {
         mutableStateOf(app.practicePrefs.wordPlayLimit(PracticePrefsStore.CATEGORY_PRONUNCIATION).toString())
     }
     var playingWord by remember { mutableStateOf<String?>(null) }
+    val selectedExampleCount = selected?.examples?.size ?: 0
+    val checkedExampleMax = data.phonemes
+        .filter { it.letter in checkedKeys }
+        .maxOfOrNull { it.examples.size }
+        ?: 0
+    val maxPlayLimit = maxOf(
+        PracticePrefsStore.MIN_WORD_PLAY_LIMIT,
+        selectedExampleCount,
+        checkedExampleMax
+    )
     val playLimit = playLimitText.toIntOrNull()
-        ?.coerceIn(PracticePrefsStore.MIN_WORD_PLAY_LIMIT, PracticePrefsStore.MAX_WORD_PLAY_LIMIT)
+        ?.coerceIn(PracticePrefsStore.MIN_WORD_PLAY_LIMIT, maxPlayLimit)
         ?: PracticePrefsStore.DEFAULT_WORD_PLAY_LIMIT
 
     fun setChecked(next: Set<String>) {
@@ -201,9 +211,14 @@ fun PronunciationScreen(app: LangbangApplication) {
                         practiceCount = practiceItems().size,
                         practiceActive = player.hasQueue,
                         playLimitText = playLimitText,
+                        maxPlayLimit = maxPlayLimit,
                         onPlayLimitTextChange = {
-                            playLimitText = it
-                            it.toIntOrNull()?.let { n ->
+                            val next = it.toIntOrNull()?.coerceIn(
+                                PracticePrefsStore.MIN_WORD_PLAY_LIMIT,
+                                maxPlayLimit
+                            )
+                            playLimitText = next?.toString() ?: it
+                            next?.let { n ->
                                 app.practicePrefs.setWordPlayLimit(
                                     PracticePrefsStore.CATEGORY_PRONUNCIATION,
                                     n
@@ -333,6 +348,7 @@ private fun PhonemeDetail(
     practiceCount: Int,
     practiceActive: Boolean,
     playLimitText: String,
+    maxPlayLimit: Int,
     onPlayLimitTextChange: (String) -> Unit,
     onStartPractice: () -> Unit
 ) {
@@ -408,7 +424,9 @@ private fun PhonemeDetail(
                     limitText = playLimitText,
                     onLimitTextChange = onPlayLimitTextChange,
                     leadingLabel = "with",
-                    trailingLabel = "vars"
+                    trailingLabel = "vars",
+                    maxValue = maxPlayLimit,
+                    maxValueLabel = "all"
                 )
             } else {
                 Text("Playing", fontSize = 12.sp, color = LbColors.TextMuted)

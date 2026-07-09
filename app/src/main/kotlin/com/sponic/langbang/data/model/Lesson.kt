@@ -46,13 +46,35 @@ data class SentenceExample(
      * before the Gemini prompt change still deserialize; the panel falls back to
      * whitespace-splitting `literal` when this field is absent.
      */
-    val words: List<TokenPair>? = null
+    val words: List<TokenPair>? = null,
+    /**
+     * User-facing order within a phrase group. Nullable so older bundled and cached
+     * content still deserializes; phrase editing normalizes persisted custom groups.
+     */
+    val index: Int? = null,
+    /**
+     * Grammatical person/number of the sentence's subject ("1sg".."3pl"), so the
+     * Verbs-tab pronoun filter can keep only sentences whose subject the learner
+     * selected. Nullable so pre-v6 cached sentences still deserialize; when absent
+     * the person is derived from the conjugated verb form present in the sentence.
+     */
+    val person: String? = null
 )
 
 @Serializable
 data class TokenPair(
     val pl: String,
     val en: String,
+    /**
+     * Part-of-speech category used to gate sentences against the Verbs-tab
+     * Pronoun/helper/Adj/Adv/Nouns toggles ("at-most" semantics): a sentence is
+     * eligible only if every token's category is currently allowed. One of
+     * "pronoun", "verb", "helper", "adjective", "adverb", "noun", "other"
+     * (prepositions/particles → "other"). Nullable so pre-v6 cached sentences
+     * (no category tags) still deserialize; the filter treats untagged tokens as
+     * always-allowed so legacy content degrades gracefully.
+     */
+    val cat: String? = null,
     val gender: String? = null,
     val caseKey: String? = null,
     val caseLabel: String? = null,
@@ -153,5 +175,8 @@ data class PhraseGroup(
     val id: String,
     val title: String,
     val subtitle: String = "",
+    val collection: String? = null,
+    val createdAt: Long? = null,
+    val sortOrder: Int? = null,
     val sentences: List<SentenceExample>
 )

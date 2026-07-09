@@ -26,26 +26,35 @@ fi
 
 TOKEN="${LANGBANGML_CONTENT_TOKEN:-}"
 if [ -z "$TOKEN" ]; then
-  if [ -z "${BW_SESSION:-}" ]; then
-    BW_PASSWORD="$(security find-generic-password -a "rahulioson@gmail.com" -s "bitwarden-cli" -w 2>/dev/null || true)"
-    if [ -z "$BW_PASSWORD" ]; then
-      echo "Could not read Bitwarden CLI password from Keychain." >&2
-      echo "Or set LANGBANGML_CONTENT_TOKEN directly." >&2
-      exit 1
+  BW_CLI="${BW_CLI:-}"
+  if [ -z "$BW_CLI" ]; then
+    if [ -x /opt/homebrew/bin/bw ]; then
+      BW_CLI="/opt/homebrew/bin/bw"
+    else
+      BW_CLI="bw"
     fi
-    export BW_PASSWORD
-    BW_SESSION="$(bw unlock --passwordenv BW_PASSWORD --raw)"
-    export BW_SESSION
   fi
+
+  BW_PASSWORD="$(security find-generic-password -a "rahulioson@gmail.com" -s "bitwarden-cli" -w 2>/dev/null || true)"
+  if [ -z "$BW_PASSWORD" ]; then
+    echo "Could not read Bitwarden CLI password from Keychain." >&2
+    echo "Or set LANGBANGML_CONTENT_TOKEN directly." >&2
+    exit 1
+  fi
+  export BW_PASSWORD
+  BW_SESSION="$("$BW_CLI" unlock --passwordenv BW_PASSWORD --raw </dev/null)"
+  unset BW_PASSWORD
+  export BW_SESSION
+
   TOKEN="$(
-    bw get item "Cloudflare — LangBangML Content API — New Account" --session "$BW_SESSION" </dev/null 2>/dev/null || true
+    "$BW_CLI" get item "Cloudflare — LangBangML Content API — New Account" --session "$BW_SESSION" </dev/null 2>/dev/null || true
   )"
   TOKEN="$(
     printf '%s' "$TOKEN" \
       | jq -r '.login.password // empty'
   )"
   if [ -z "$TOKEN" ]; then
-    TOKEN="$(bw get item "Cloudflare — LangBangML Content API" --session "$BW_SESSION" </dev/null | jq -r '.login.password')" || {
+    TOKEN="$("$BW_CLI" get item "Cloudflare — LangBangML Content API" --session "$BW_SESSION" </dev/null | jq -r '.login.password')" || {
       echo "Could not read Cloudflare — LangBangML Content API from Bitwarden." >&2
       exit 1
     }

@@ -1,5 +1,6 @@
 package com.sponic.langbang.domain
 
+import android.util.Log
 import com.sponic.langbang.LangbangApplication
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -23,6 +24,13 @@ suspend fun LangbangApplication.ensureCachedAudio(
     val file = audioCache.fileFor(locale, voice, text)
     if (!audioCache.has(file)) {
         tts.synthesize(text, voice, locale, file)
+            .onFailure { t ->
+                Log.w(
+                    "LangBangAudio",
+                    "Could not cache audio locale=$locale voice=$voice text=${text.take(80)}",
+                    t
+                )
+            }
     }
     return file.takeIf { audioCache.has(it) }
 }
