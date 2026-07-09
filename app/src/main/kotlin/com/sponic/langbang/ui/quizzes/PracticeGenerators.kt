@@ -65,7 +65,8 @@ object PracticeGenerators {
                 val subject = englishSubjectFor(person)
                 commonInfinitives.map { infinitive ->
                     val prompt = pattern.prompt(subject, person, infinitive.enBase)
-                    val answerPl = "${audioPronoun(person)} $form ${infinitive.pl}".trim()
+                    val infinitivePl = pattern.infinitiveSurface(infinitive.pl)
+                    val answerPl = "${audioPronoun(person)} $form $infinitivePl".trim()
                     PracticeItem(
                         id = "helper-inf:${pattern.key}:${infinitive.pl}:$person",
                         kind = PracticeKind.HELPER_INFINITIVE,
@@ -76,7 +77,7 @@ object PracticeGenerators {
                         words = listOf(
                             TokenPair(audioPronoun(person), subject),
                             TokenPair(form, pattern.gloss(person)),
-                            TokenPair(infinitive.pl, pattern.infinitiveGloss(infinitive.enBase))
+                            TokenPair(infinitivePl, pattern.infinitiveGloss(infinitive.enBase))
                         ),
                         targetLemma = "${pattern.lemma}+${infinitive.pl}",
                         targetForm = form,
@@ -489,7 +490,8 @@ object PracticeGenerators {
                     prompt = { subject, _, infinitive -> "$subject could $infinitive" },
                     gloss = { "could" },
                     infinitiveGloss = { it },
-                    infinitiveLemmas = CouldMightInfinitives
+                    infinitiveLemmas = CouldMightInfinitives,
+                    perfectiveForms = ModalPerfectiveForms
                 )
             )
             add(
@@ -502,7 +504,8 @@ object PracticeGenerators {
                     prompt = { subject, _, infinitive -> "$subject might $infinitive" },
                     gloss = { "might" },
                     infinitiveGloss = { it },
-                    infinitiveLemmas = CouldMightInfinitives
+                    infinitiveLemmas = CouldMightInfinitives,
+                    perfectiveForms = ModalPerfectiveForms
                 )
             )
             add(
@@ -625,8 +628,14 @@ object PracticeGenerators {
         val prompt: (subject: String, person: String, infinitive: String) -> String,
         val gloss: (person: String) -> String,
         val infinitiveGloss: (String) -> String,
-        val infinitiveLemmas: Set<String>
-    )
+        val infinitiveLemmas: Set<String>,
+        // Surface-form overrides for infinitives where this modal reads more
+        // naturally with the perfective aspect (e.g. "I could eat" → "mógłbym
+        // zjeść", not the imperfective "jeść"). Keyed by infinitive lemma.
+        val perfectiveForms: Map<String, String> = emptyMap()
+    ) {
+        fun infinitiveSurface(lemma: String): String = perfectiveForms[lemma] ?: lemma
+    }
 
     private fun NounEntry.caseMap(key: String): Map<String, String> = when (key) {
         "nom" -> nom
@@ -738,6 +747,12 @@ object PracticeGenerators {
         "1pl" to "moglibyśmy",
         "2pl" to "moglibyście",
         "3pl" to "mogliby"
+    )
+
+    // Infinitives that read more naturally as perfective after could/might.
+    // "I could eat" → "ja mógłbym zjeść" (not the imperfective "jeść").
+    private val ModalPerfectiveForms = mapOf(
+        "jeść" to "zjeść"
     )
 
     private val ShouldForms = mapOf(

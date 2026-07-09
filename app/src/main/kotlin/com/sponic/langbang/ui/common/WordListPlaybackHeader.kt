@@ -74,6 +74,7 @@ fun WordPlayLimitControl(
     trailingLabel: String?,
     minValue: Int = 1,
     maxValue: Int = 99,
+    maxValueLabel: String? = null,
     modifier: Modifier = Modifier
 ) {
     val current = limitText.toIntOrNull()?.coerceIn(minValue, maxValue) ?: minValue
@@ -92,7 +93,8 @@ fun WordPlayLimitControl(
             onValueChange = { onLimitTextChange(it.toString()) },
             enabled = enabled,
             minValue = minValue,
-            maxValue = maxValue
+            maxValue = maxValue,
+            maxValueLabel = maxValueLabel
         )
         trailingLabel?.let {
             Spacer(Modifier.width(2.dp))
@@ -111,7 +113,8 @@ private fun CompactStepper(
     onValueChange: (Int) -> Unit,
     enabled: Boolean,
     minValue: Int,
-    maxValue: Int
+    maxValue: Int,
+    maxValueLabel: String?
 ) {
     Surface(
         color = LbColors.Sheet,
@@ -130,7 +133,7 @@ private fun CompactStepper(
                 onClick = { onValueChange((value - 1).coerceIn(minValue, maxValue)) }
             )
             Text(
-                value.toString(),
+                maxValueLabel?.takeIf { value >= maxValue } ?: value.toString(),
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = if (enabled) LbColors.TextPrimary else LbColors.TextMuted,

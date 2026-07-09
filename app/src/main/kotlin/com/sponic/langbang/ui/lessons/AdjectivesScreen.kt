@@ -65,6 +65,7 @@ import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.ensureCachedAudio
+import com.sponic.langbang.domain.playAudioAndAwait
 import com.sponic.langbang.domain.sourceAudioVoice
 import com.sponic.langbang.domain.targetAudioVoice
 import com.sponic.langbang.domain.targetSlowVoice
@@ -156,6 +157,16 @@ internal class AdjectivesScreenState(
 
     fun stop() {
         player.stop()
+    }
+
+    fun playPolishOnce(text: String) {
+        if (text.isBlank()) return
+        PlaybackController.stop()
+        app.audioPlayer.stop()
+        scope.launch {
+            val target = app.targetAudioVoice()
+            app.playAudioAndAwait(text, target.locale, target.voice)
+        }
     }
 
     fun ensureCheckedDefaults(allLemmas: List<String>) {
@@ -724,6 +735,7 @@ private fun SentencesSection(app: LangbangApplication, state: AdjectivesScreenSt
                 SentenceRow(
                     sentence = s,
                     highlighted = i == state.playingIndex,
+                    onWordClick = { state.playPolishOnce(it) },
                     onPlay = { playSentence(app, s) }
                 )
             }
@@ -739,6 +751,7 @@ private fun SentencesSection(app: LangbangApplication, state: AdjectivesScreenSt
 private fun SentenceRow(
     sentence: SentenceExample,
     highlighted: Boolean = false,
+    onWordClick: (String) -> Unit,
     onPlay: () -> Unit
 ) {
     Card(
@@ -765,7 +778,8 @@ private fun SentenceRow(
                     sentence = sentence,
                     plFontSize = 16.sp,
                     plFontWeight = FontWeight.Bold,
-                    glossFontSize = 10.sp
+                    glossFontSize = 10.sp,
+                    onPlWordClick = onWordClick
                 )
             }
         }

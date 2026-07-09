@@ -257,10 +257,10 @@ private fun DrawScope.drawSyllableShadeBands(
                 )
                 if (range.accented) {
                     val underlineInset = 3.dp.toPx()
-                    val underlineWidth = 1.5.dp.toPx()
+                    val underlineWidth = 1.dp.toPx()
                     val underlineY = bottom - underlineWidth / 2f
                     drawLine(
-                        color = Color(0xFF4F5B66).copy(alpha = 0.72f),
+                        color = Color(0xFF7D8994).copy(alpha = 0.5f),
                         start = androidx.compose.ui.geometry.Offset(left + underlineInset, underlineY),
                         end = androidx.compose.ui.geometry.Offset(right - underlineInset, underlineY),
                         strokeWidth = underlineWidth

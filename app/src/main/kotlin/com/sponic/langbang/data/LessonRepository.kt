@@ -267,9 +267,10 @@ class LessonRepository(
 
     /**
      * Lesson 5 — common multi-sentence phrases bundled with the app, plus any custom
-     * groups the user has added (custom groups appear first in the list so they're
-     * easy to find). Sentence text gets the same `(plural)` scrub as the other lessons
-     * for parity.
+     * groups the user has added. Custom groups appear first, ordered newest-created
+     * first (reverse-chronological by the timestamp encoded in their id), with bundled
+     * groups in their authored order below. Sentence text gets the same `(plural)` scrub
+     * as the other lessons for parity.
      */
     fun lesson5(): PhrasesLesson {
         val base = cachedLesson5Base ?: run {
@@ -283,25 +284,75 @@ class LessonRepository(
             }
         )
         if (added.isEmpty()) return scrubbedBase
-        val merged = (added + scrubbedBase.groups).distinctBy { it.id.lowercase() }
+        // Explicit sortOrder wins when present. Otherwise the local/remote cache order
+        // is authoritative; the Agent API and local add flow store newest groups first.
+        val sortedAdded = added
+            .mapIndexed { index, group -> IndexedValue(index, group) }
+            .sortedWith(
+                compareBy<IndexedValue<PhraseGroup>> { it.value.sortOrder ?: Int.MAX_VALUE }
+                    .thenBy { it.index }
+            )
+            .map { it.value }
+        val merged = (sortedAdded + scrubbedBase.groups).distinctBy { it.id.lowercase() }
         return scrubbedBase.copy(groups = merged)
     }
 
+    /**
+     * Creation time (epoch millis) encoded in a custom phrase-group id as a trailing
+     * base-36 segment (`slug-<base36 millis>`), or null when the id has no such suffix
+     * (bundled groups, web `custom-<uuid>` groups, or legacy untimestamped ids). The
+     * plausible-epoch window guards against treating a slug word as a timestamp.
+     */
+    private fun phraseGroupCreatedAt(group: PhraseGroup): Long? {
+        group.createdAt?.let { millis ->
+            if (millis in 1_000_000_000_000L..10_000_000_000_000L) return millis
+        }
+        val id = group.id
+        val suffix = id.substringAfterLast('-', "")
+        val millis = suffix.toLongOrNull(36) ?: return null
+        return millis.takeIf { it in 1_000_000_000_000L..10_000_000_000_000L }
+    }
+
     fun addUserPhraseGroup(group: PhraseGroup) {
-        userPhrases.add(group)
+        val normalized = group.copy(sentences = normalizePhraseSentenceIndexes(group.sentences))
+        val existing = userPhrases.load().filterNot { it.id.equals(normalized.id, ignoreCase = true) }
+        userPhrases.replaceAll(listOf(normalized) + existing)
     }
 
     fun userPhraseGroups(): List<PhraseGroup> =
         userPhrases.load()
 
     fun replaceUserPhraseGroups(groups: List<PhraseGroup>) {
-        userPhrases.replaceAll(groups)
+        userPhrases.replaceAll(groups.map { it.copy(sentences = normalizePhraseSentenceIndexes(it.sentences)) })
     }
 
     fun addUserPhraseSentence(groupId: String, sentence: SentenceExample): PhraseGroup? {
         val group = lesson5().groups.firstOrNull { it.id.equals(groupId, ignoreCase = true) }
             ?: return null
-        val updated = group.copy(sentences = group.sentences + sentence)
+        val current = normalizePhraseSentenceIndexes(group.sentences).toMutableList()
+        val targetIndex = sentence.index?.coerceIn(1, current.size + 1) ?: (current.size + 1)
+        current.add(targetIndex - 1, sentence.copy(index = targetIndex))
+        val updated = group.copy(sentences = normalizePhraseSentenceIndexes(current))
+        userPhrases.add(updated)
+        return updated
+    }
+
+    fun replaceUserPhraseSentence(
+        groupId: String,
+        original: SentenceExample,
+        replacement: SentenceExample
+    ): PhraseGroup? {
+        val group = lesson5().groups.firstOrNull { it.id.equals(groupId, ignoreCase = true) }
+            ?: return null
+        val current = normalizePhraseSentenceIndexes(group.sentences).toMutableList()
+        val index = current.indexOfFirst {
+            it.pl == original.pl && it.en == original.en && it.literal == original.literal
+        }
+        if (index < 0) return null
+        val targetIndex = (replacement.index ?: original.index ?: (index + 1)).coerceIn(1, current.size)
+        current.removeAt(index)
+        current.add((targetIndex - 1).coerceIn(0, current.size), replacement.copy(index = targetIndex))
+        val updated = group.copy(sentences = normalizePhraseSentenceIndexes(current))
         userPhrases.add(updated)
         return updated
     }
@@ -327,6 +378,12 @@ class LessonRepository(
             )
         }
     )
+
+    private fun normalizePhraseSentenceIndexes(sentences: List<SentenceExample>): List<SentenceExample> =
+        sentences
+            .mapIndexed { fallback, sentence -> sentence.copy(index = sentence.index ?: fallback + 1) }
+            .sortedWith(compareBy<SentenceExample> { it.index ?: Int.MAX_VALUE })
+            .mapIndexed { index, sentence -> sentence.copy(index = index + 1) }
 
     fun clearCloudBackedBaseCache() {
         cachedLesson2Base = null

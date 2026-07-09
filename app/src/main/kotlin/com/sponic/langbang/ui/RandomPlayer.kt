@@ -15,7 +15,9 @@ import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.ensureCachedAudio
 import com.sponic.langbang.domain.englishConjugate
+import com.sponic.langbang.domain.SpeechRating
 import com.sponic.langbang.domain.playAudioAndAwait
+import com.sponic.langbang.domain.runSpeechRatingCycle
 import com.sponic.langbang.domain.sourceAudioVoice
 import com.sponic.langbang.domain.targetAudioVoice
 import com.sponic.langbang.domain.targetSlowVoice
@@ -322,11 +324,16 @@ internal class RandomPlayerState(
                 }
                 pub(s, "pl", pos)
                 playAndAwait(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
+                // Speech rating: when the mic latch is on, listen for the user to repeat
+                // this phrase and score it before advancing. A pause/next/rewind cancels
+                // the job (interrupting the mic capture), so this only completes in place.
+                app.runSpeechRatingCycle()
                 // Only advance if pause/rewind/restart didn't move us elsewhere.
                 if (currentIndex == i) {
                     currentIndex = i + 1
                     // Beat between items — user asked for a touch more breathing room.
-                    if (currentIndex < total) delay(1000)
+                    // Skip it while rating: the score hold already paces the loop.
+                    if (currentIndex < total && !SpeechRating.armed.value) delay(1000)
                 }
             }
             // Natural completion only reaches here (cancellation exits via exception).

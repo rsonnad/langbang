@@ -10,6 +10,7 @@ import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.PlaybackTransport
 import com.sponic.langbang.domain.awaitAudioPlayback
 import com.sponic.langbang.domain.ensureCachedAudio
+import com.sponic.langbang.domain.runSpeechRatingCycle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -83,6 +84,7 @@ class StudyQueuePlayer(
     fun start(
         total: Int,
         startIndex: Int = 0,
+        startParked: Boolean = false,
         rewindable: Boolean = true,
         nextable: Boolean = true,
         restartable: Boolean = true,
@@ -108,7 +110,10 @@ class StudyQueuePlayer(
                 isPaused = { isPaused },
             )
         )
-        launchLoop()
+        // Start paused/parked: show the item and the ▶ Resume control without
+        // auto-playing. The transport's pause→resume kicks off launchLoop() (see
+        // [resume], which calls launchLoop when no job is active).
+        if (startParked) parkAt(this.index) else launchLoop()
     }
 
     private fun launchLoop() {
@@ -126,6 +131,9 @@ class StudyQueuePlayer(
                     prefetchItem?.let { pf -> launch { runCatching { pf(nextItemIndex) } } }
                 }
                 body(itemIndex)
+                // When the mic latch is on, listen → score → hold before advancing. The
+                // gate keeps a held Pause honoured during the readout. No-op when disarmed.
+                app.runSpeechRatingCycle(pauseGate = { gate() })
                 index++
             }
             teardown()
@@ -139,11 +147,19 @@ class StudyQueuePlayer(
 
     /** Voice one clip: hold at the pause gate, ensure it's cached, then play to completion.
      *  A pause mid-clip holds it in place (the pooled player pauses); resume continues it. */
-    suspend fun say(text: String, locale: String, voice: String) {
+    suspend fun say(text: String, locale: String, voice: String): Boolean {
         gate()
-        if (text.isBlank()) return
-        val file = app.ensureCachedAudio(text, locale, voice) ?: return
+        if (text.isBlank()) return true
+        val fallbackVoice = slowVoiceFallback(voice)
+        val file = app.ensureCachedAudio(text, locale, voice)
+            ?: if (fallbackVoice != voice) {
+                app.ensureCachedAudio(text, locale, fallbackVoice)
+            } else {
+                null
+            }
+            ?: return false
         app.awaitAudioPlayback(file)
+        return true
     }
 
     /** A reveal / inter-item pause that honours pause (holds while paused instead of
@@ -255,4 +271,7 @@ class StudyQueuePlayer(
         pausedFlow.value = v
         PlaybackController.setPaused(v)
     }
+
+    private fun slowVoiceFallback(voice: String): String =
+        if ("|" in voice) voice.substringBefore("|") else voice
 }

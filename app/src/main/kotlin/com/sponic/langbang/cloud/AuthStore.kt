@@ -15,6 +15,7 @@ data class AuthState(
     val agentToken: String = "",
     val agentTokenPrefix: String = "",
     val agentInstructionsUrl: String = "",
+    val agentDailyUsed: Int = 0,
     val agentDailyLimit: Int = 100,
     val error: String? = null
 ) {
@@ -115,6 +116,7 @@ class AuthStore(context: Context) {
             agentToken = prefs.getString(KEY_AGENT_TOKEN, "") ?: "",
             agentTokenPrefix = prefs.getString(KEY_AGENT_TOKEN_PREFIX, "") ?: "",
             agentInstructionsUrl = prefs.getString(KEY_AGENT_INSTRUCTIONS_URL, "") ?: "",
+            agentDailyUsed = prefs.getInt(KEY_AGENT_DAILY_USED, 0),
             agentDailyLimit = prefs.getInt(KEY_AGENT_DAILY_LIMIT, 100),
             error = prefs.getString(KEY_ERROR, null)
         )
@@ -133,6 +135,7 @@ class AuthStore(context: Context) {
         private const val KEY_AGENT_TOKEN = "agent-token"
         private const val KEY_AGENT_TOKEN_PREFIX = "agent-token-prefix"
         private const val KEY_AGENT_INSTRUCTIONS_URL = "agent-instructions-url"
+        private const val KEY_AGENT_DAILY_USED = "agent-daily-used"
         private const val KEY_AGENT_DAILY_LIMIT = "agent-daily-limit"
         private const val KEY_ERROR = "error"
     }

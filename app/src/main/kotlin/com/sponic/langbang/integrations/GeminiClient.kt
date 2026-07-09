@@ -27,7 +27,6 @@ import java.net.URL
 class GeminiClient(
     private val usage: UsageTracker? = null
 ) {
-
     companion object {
         const val TENSE_PRESENT = "present"
         const val TENSE_PAST = "past"
@@ -39,7 +38,7 @@ class GeminiClient(
          * client downloader pulls from a fresh tree even if only one type bumped.
          * Cheap — Gemini calls for the whole canonical set are pennies.
          */
-        const val SENTENCE_PROMPT_VERSION = 5
+        const val SENTENCE_PROMPT_VERSION = 7
 
         /**
          * Per-type wipe versions. Bump ONE of these when its prompt changes so
@@ -54,6 +53,22 @@ class GeminiClient(
          * prompts added a `words` field, but the migration wiped verbs too —
          * costing the user ~45 min of on-device verb regen for content that
          * was already correct. These per-type keys make the wipe surgical.
+         *
+         * v7 (2026-06-14): verb bundles augmented with DIRECT-OBJECT PRONOUN examples
+         * ("Widzę go." / "Lubię ją.") for the transitive verbs, with the object pronoun
+         * tagged cat="pronoun" + a non-nominative caseKey so the Verbs-tab "(pro)noun"
+         * chip (noun OR object pronoun) surfaces them; four short verbs topped up to >=6
+         * adjective sentences. adj/adv/noun bundles copied unchanged from v6, so only
+         * [VERB_WIPE_VERSION] is bumped (5 → 6).
+         *
+         * v6 (2026-06-14): verb prompt now tags every token with a part-of-speech
+         * "cat" (pronoun/verb/helper/adjective/adverb/noun/other) and each sentence with
+         * "person" (1sg..3pl). The Verbs tab uses these to filter the cached LLM
+         * sentences by the Pronoun/helper/Adj/Adv/Nouns toggles + pronoun selection
+         * ("at-most" semantics) instead of synthesizing phrases on-device — fixing the
+         * convoluted/repeating/wrong-pronoun/ignored-checkmark bugs. R2 v6 = fresh tagged
+         * verb bundles + adj/adv/noun copied unchanged from v5, so only
+         * [VERB_WIPE_VERSION] is bumped (4 → 5).
          *
          * v5 (2026-06-05): verb sentence bundles were quality-filtered to remove
          * awkward "to home" English translations and the verb prompt gained explicit
@@ -80,7 +95,7 @@ class GeminiClient(
          * unchanged (R2 v3 verb bundles are identical bytes copied from v2), so users
          * don't get worse content — they just get all of it instead of 15 of it.
          */
-        const val VERB_WIPE_VERSION = 4
+        const val VERB_WIPE_VERSION = 6
         const val ADJECTIVE_WIPE_VERSION = 5
         const val ADVERB_WIPE_VERSION = 5
 
@@ -313,6 +328,14 @@ class GeminiClient(
             "infinitive, móc + infinitive, chcieć + infinitive, lubić + infinitive, " +
             "trzeba + infinitive, and da się + infinitive. Do not overuse them and " +
             "do not force them where the result sounds unnatural. " +
+            "OBJECT PRONOUNS: if \"${verb.lemma}\" naturally takes a direct or indirect " +
+            "object, include at least 6 sentences whose object is a personal pronoun " +
+            "(him/her/it/them/us/you/me) — accusative go / ją / je / ich / nas / was / " +
+            "cię / mnie, or dative mu / jej / im for give/help-type verbs — e.g. " +
+            "\"Widzę go\", \"Lubię ją\", \"Pomagam mu\". Tag that object pronoun " +
+            "cat=\"pronoun\" with a NON-nominative caseKey (acc/gen/dat); a subject " +
+            "pronoun stays caseKey=\"nom\". Skip this entirely for intransitive verbs " +
+            "(motion, modals, być) where an object pronoun would be ungrammatical. " +
             "Use only the most common everyday vocabulary that a beginner would know " +
             "(food, family, basic objects, places, body states). " +
             "CRITICAL NATURALNESS RULE: every sentence must be something a real person " +
@@ -355,17 +378,32 @@ class GeminiClient(
             "    This lets the learner see what each Polish word means individually. " +
             "(4) \"words\": an ARRAY of per-token mappings in the same left-to-right order " +
             "    as the Polish sentence. Each element is {\"pl\":\"polish-token\",\"en\":" +
-            "    \"english-gloss\"}. Tokens correspond to whitespace-separated Polish words " +
-            "    (collapse contractions into one token). When a Polish word maps to a multi-" +
-            "    word English gloss use a hyphen (\"I-am\"). The number of \"words\" entries " +
-            "    MUST equal the Polish word count exactly. " +
+            "    \"english-gloss\",\"cat\":\"...\"}. Tokens correspond to whitespace-separated " +
+            "    Polish words (collapse contractions into one token). When a Polish word maps " +
+            "    to a multi-word English gloss use a hyphen (\"I-am\"). The number of " +
+            "    \"words\" entries MUST equal the Polish word count exactly. " +
+            "(5) \"person\": the grammatical person+number of the sentence's SUBJECT, exactly " +
+            "    one of \"1sg\",\"2sg\",\"3sg\",\"1pl\",\"2pl\",\"3pl\", derived from the " +
+            "    conjugated verb (\"Jestem…\"→\"1sg\", \"Jesteś…\"→\"2sg\", \"Jesteśmy…\"→" +
+            "    \"1pl\", \"Oni/One…\"→\"3pl\"). Always include it, even when the Polish drops " +
+            "    the subject pronoun. " +
+            "WORD CATEGORY — the \"cat\" field is REQUIRED on EVERY token. Tag each token with " +
+            "EXACTLY one of: \"pronoun\" (a subject/object personal pronoun: ja, ty, on, ona, " +
+            "ono, my, wy, oni, one, mnie, cię, go…), \"helper\" (a modal/catenative verb that " +
+            "governs an infinitive: chcę, muszę, mogę, lubię, mam/ochotę, trzeba, da-się…), " +
+            "\"verb\" (the main verb or its infinitive, plus reflexive \"się\" and negation " +
+            "\"nie\"), \"adjective\", \"adverb\", \"noun\", or \"other\" (prepositions, " +
+            "conjunctions, particles, numbers). The app shows/hides whole sentences by these " +
+            "categories, so tag accurately — an adjective is never \"noun\", an adverb is never " +
+            "\"adjective\". " +
             "For each NOUN, PRONOUN, or ADJECTIVE token, ALSO include \"gender\" (\"m\", " +
             "\"f\", or \"n\") and \"caseKey\" (one of \"nom\", \"acc\", \"gen\", \"dat\", " +
             "\"inst\", \"loc\", \"voc\"); OMIT both keys for verbs, prepositions, adverbs, " +
             "and particles. " +
             "Return ONLY a JSON array (no prose, no markdown fence) where each element has " +
-            "the exact shape {\"pl\":\"...\",\"en\":\"...\",\"literal\":\"...\"," +
-            "\"words\":[{\"pl\":\"...\",\"en\":\"...\",\"gender\":\"m|f|n|omit\"," +
+            "the exact shape {\"pl\":\"...\",\"en\":\"...\",\"literal\":\"...\",\"person\":" +
+            "\"1sg|2sg|3sg|1pl|2pl|3pl\",\"words\":[{\"pl\":\"...\",\"en\":\"...\",\"cat\":" +
+            "\"pronoun|verb|helper|adjective|adverb|noun|other\",\"gender\":\"m|f|n|omit\"," +
             "\"caseKey\":\"nom|acc|gen|dat|inst|loc|voc|omit\"}]}."
     }
 
@@ -382,6 +420,8 @@ class GeminiClient(
                 val wo = w.jsonObject
                 val wpl = wo["pl"]?.jsonPrimitive?.content?.trim().orEmpty()
                 val wen = wo["en"]?.jsonPrimitive?.content?.trim().orEmpty()
+                val wcat = wo["cat"]?.jsonPrimitive?.content?.trim()?.lowercase()
+                    ?.takeIf { it.isNotEmpty() }
                 val wgender = wo["gender"]?.jsonPrimitive?.content?.trim()?.lowercase()
                     ?.takeIf { it.isNotEmpty() }
                 val wcase = wo["caseKey"]?.jsonPrimitive?.content?.trim()?.lowercase()
@@ -394,6 +434,7 @@ class GeminiClient(
                 else TokenPair(
                     pl = wpl,
                     en = wen,
+                    cat = wcat,
                     gender = wgender,
                     caseKey = wcase,
                     variableStart = variableStart,
@@ -401,8 +442,10 @@ class GeminiClient(
                     variableKind = variableKind
                 )
             }?.takeIf { it.isNotEmpty() }
+            val person = obj["person"]?.jsonPrimitive?.content?.trim()?.lowercase()
+                ?.takeIf { it.isNotEmpty() }
             if (pl.isEmpty() || en.isEmpty()) null
-            else SentenceExample(pl, en, literal, words)
+            else SentenceExample(pl, en, literal, words, person = person)
         }
         require(sentences.isNotEmpty()) { "Gemini returned no usable sentences" }
         return sentences.take(40)

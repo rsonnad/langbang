@@ -46,16 +46,27 @@ LOGO_SQUARE="$(data_url "image/png" "$SITE_DIR/assets/langbang-logo-square.png")
 LOGO_WORDMARK="$(data_url "image/png" "$SITE_DIR/assets/langbang-logo-wordmark.png")"
 INSTALL_QR="$(data_url "image/svg+xml" "$SITE_DIR/assets/install-qr.svg")"
 
+# The /app web app: build the single-file bundle if missing (or REBUILD_WEB=1) and inline it.
+WEB_DIST="$ROOT/web/dist/index.html"
+if [ ! -f "$WEB_DIST" ] || [ "${REBUILD_WEB:-0}" = "1" ]; then
+  echo "Building LangBang web app…"
+  ( cd "$ROOT/web" && npm install --no-audit --no-fund --silent && npm run build )
+fi
+[ -f "$WEB_DIST" ] || { echo "web app build missing at $WEB_DIST" >&2; exit 1; }
+APP_HTML_BASE64="$(base64 < "$WEB_DIST" | tr -d '\n')"
+
 TMP_WORKER="$(mktemp)"
 trap 'rm -f "$TMP_WORKER"' EXIT
 
 LOGO_SQUARE="$LOGO_SQUARE" \
 LOGO_WORDMARK="$LOGO_WORDMARK" \
 INSTALL_QR="$INSTALL_QR" \
+APP_HTML_BASE64="$APP_HTML_BASE64" \
 perl -0pe '
   s#__LOGO_SQUARE_DATA_URL__#$ENV{LOGO_SQUARE}#g;
   s#__LOGO_WORDMARK_DATA_URL__#$ENV{LOGO_WORDMARK}#g;
   s#__INSTALL_QR_DATA_URL__#$ENV{INSTALL_QR}#g;
+  s#__APP_HTML_BASE64__#$ENV{APP_HTML_BASE64}#g;
 ' "$TEMPLATE" > "$TMP_WORKER"
 
 RESPONSE="$(curl -sS -X PUT \

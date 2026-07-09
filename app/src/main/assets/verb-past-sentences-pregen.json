@@ -3851,12 +3851,14 @@
     },
     {
       "pl": "Oni płacili za czynsz.",
-      "en": "They paid for the rent.",
+      "en": "They paid the rent.",
       "literal": "They paid for rent.",
       "words": [
         {
           "pl": "Oni",
-          "en": "They"
+          "en": "they",
+          "gender": "m",
+          "caseKey": "nom"
         },
         {
           "pl": "płacili",
@@ -3868,7 +3870,9 @@
         },
         {
           "pl": "czynsz",
-          "en": "rent"
+          "en": "rent",
+          "gender": "m",
+          "caseKey": "acc"
         }
       ]
     },
@@ -5641,20 +5645,20 @@
     },
     {
       "pl": "Musieliśmy długo czekać.",
-      "en": "We had to wait long.",
-      "literal": "We-had-to long wait.",
+      "en": "We had to wait a long time.",
+      "literal": "We-had-to long to-wait.",
       "words": [
         {
           "pl": "Musieliśmy",
-          "en": "We-had-to"
+          "en": "we had to"
         },
         {
           "pl": "długo",
-          "en": "long"
+          "en": "a long time"
         },
         {
           "pl": "czekać",
-          "en": "wait"
+          "en": "to wait"
         }
       ]
     },
@@ -6048,17 +6052,19 @@
       ]
     },
     {
-      "pl": "Pisali słowo.",
-      "en": "They wrote a word.",
-      "literal": "Wrote-they word.",
+      "pl": "Pisali list.",
+      "en": "They were writing a letter.",
+      "literal": "They-wrote letter.",
       "words": [
         {
           "pl": "Pisali",
-          "en": "Wrote-they"
+          "en": "they were writing"
         },
         {
-          "pl": "słowo",
-          "en": "word"
+          "pl": "list",
+          "en": "letter",
+          "gender": "m",
+          "caseKey": "acc"
         }
       ]
     },
@@ -6265,21 +6271,22 @@
       ]
     },
     {
-      "pl": "Pisaliście słowo tutaj.",
-      "en": "You wrote a word here.",
-      "literal": "Wrote-you word here.",
+      "pl": "Pisaliście do nas.",
+      "en": "You wrote to us.",
+      "literal": "You-wrote to us.",
       "words": [
         {
           "pl": "Pisaliście",
-          "en": "Wrote-you"
+          "en": "you wrote"
         },
         {
-          "pl": "słowo",
-          "en": "word"
+          "pl": "do",
+          "en": "to"
         },
         {
-          "pl": "tutaj",
-          "en": "here"
+          "pl": "nas",
+          "en": "us",
+          "caseKey": "gen"
         }
       ]
     },
@@ -7120,12 +7127,14 @@
     },
     {
       "pl": "Oni pracowali z ojcem.",
-      "en": "They worked with father.",
+      "en": "They worked with their father.",
       "literal": "They worked with father.",
       "words": [
         {
           "pl": "Oni",
-          "en": "They"
+          "en": "they",
+          "gender": "m",
+          "caseKey": "nom"
         },
         {
           "pl": "pracowali",
@@ -7137,7 +7146,9 @@
         },
         {
           "pl": "ojcem",
-          "en": "father"
+          "en": "father",
+          "gender": "m",
+          "caseKey": "inst"
         }
       ]
     },
@@ -7841,20 +7852,21 @@
     },
     {
       "pl": "My spaliśmy długo.",
-      "en": "We slept long.",
-      "literal": "We slept long.",
+      "en": "We slept for a long time.",
+      "literal": "We we-slept long.",
       "words": [
         {
           "pl": "My",
-          "en": "We"
+          "en": "we",
+          "caseKey": "nom"
         },
         {
           "pl": "spaliśmy",
-          "en": "slept"
+          "en": "we slept"
         },
         {
           "pl": "długo",
-          "en": "long"
+          "en": "a long time"
         }
       ]
     },
@@ -7947,16 +7959,18 @@
       ]
     },
     {
-      "pl": "Dzieci spali w pokoju.",
+      "pl": "Dzieci spały w pokoju.",
       "en": "The children slept in the room.",
       "literal": "Children slept in room.",
       "words": [
         {
           "pl": "Dzieci",
-          "en": "Children"
+          "en": "children",
+          "gender": "n",
+          "caseKey": "nom"
         },
         {
-          "pl": "spali",
+          "pl": "spały",
           "en": "slept"
         },
         {
@@ -7965,7 +7979,9 @@
         },
         {
           "pl": "pokoju",
-          "en": "room"
+          "en": "room",
+          "gender": "m",
+          "caseKey": "loc"
         }
       ]
     },
@@ -8600,12 +8616,12 @@
   "pamiętać": [
     {
       "pl": "Pamiętałem o chlebie.",
-      "en": "I remembered about the bread.",
-      "literal": "Remembered about bread.",
+      "en": "I remembered the bread.",
+      "literal": "I-remembered about bread.",
       "words": [
         {
           "pl": "Pamiętałem",
-          "en": "I-remembered"
+          "en": "I remembered"
         },
         {
           "pl": "o",
@@ -8613,7 +8629,9 @@
         },
         {
           "pl": "chlebie",
-          "en": "bread"
+          "en": "bread",
+          "gender": "m",
+          "caseKey": "loc"
         }
       ]
     },
@@ -8657,12 +8675,12 @@
     },
     {
       "pl": "Pamiętałem o spotkaniu.",
-      "en": "I remembered about the meeting.",
-      "literal": "Remembered about meeting.",
+      "en": "I remembered the meeting.",
+      "literal": "I-remembered about meeting.",
       "words": [
         {
           "pl": "Pamiętałem",
-          "en": "I-remembered"
+          "en": "I remembered"
         },
         {
           "pl": "o",
@@ -8670,7 +8688,9 @@
         },
         {
           "pl": "spotkaniu",
-          "en": "meeting"
+          "en": "meeting",
+          "gender": "n",
+          "caseKey": "loc"
         }
       ]
     },
@@ -8866,12 +8886,12 @@
     },
     {
       "pl": "Pamiętaliśmy o zakupach.",
-      "en": "We remembered about the shopping.",
-      "literal": "Remembered about shopping.",
+      "en": "We remembered the shopping.",
+      "literal": "We-remembered about shopping.",
       "words": [
         {
           "pl": "Pamiętaliśmy",
-          "en": "We-remembered"
+          "en": "we remembered"
         },
         {
           "pl": "o",
@@ -8879,7 +8899,8 @@
         },
         {
           "pl": "zakupach",
-          "en": "shopping"
+          "en": "shopping",
+          "caseKey": "loc"
         }
       ]
     },
@@ -9126,12 +9147,12 @@
     },
     {
       "pl": "Tańczyłeś z bratem.",
-      "en": "You danced with brother.",
-      "literal": "Danced-you with brother.",
+      "en": "You danced with your brother.",
+      "literal": "You-danced with brother.",
       "words": [
         {
           "pl": "Tańczyłeś",
-          "en": "Danced-you"
+          "en": "you danced"
         },
         {
           "pl": "z",
@@ -9139,7 +9160,9 @@
         },
         {
           "pl": "bratem",
-          "en": "brother"
+          "en": "brother",
+          "gender": "m",
+          "caseKey": "inst"
         }
       ]
     },
@@ -9760,16 +9783,16 @@
     },
     {
       "pl": "Czekaliście długo.",
-      "en": "You waited long.",
-      "literal": "Waited-y'all long.",
+      "en": "You waited a long time.",
+      "literal": "You-waited long.",
       "words": [
         {
           "pl": "Czekaliście",
-          "en": "Waited-y'all"
+          "en": "you waited"
         },
         {
           "pl": "długo",
-          "en": "long"
+          "en": "a long time"
         }
       ]
     },
@@ -10156,21 +10179,29 @@
       ]
     },
     {
-      "pl": "Dzwoniłeś o obiad.",
+      "pl": "Dzwoniłeś w sprawie obiadu.",
       "en": "You called about dinner.",
-      "literal": "Called-you about dinner.",
+      "literal": "You-called in matter of-dinner.",
       "words": [
         {
           "pl": "Dzwoniłeś",
-          "en": "called-you"
+          "en": "you called"
         },
         {
-          "pl": "o",
-          "en": "about"
+          "pl": "w",
+          "en": "in"
         },
         {
-          "pl": "obiad",
-          "en": "dinner"
+          "pl": "sprawie",
+          "en": "matter",
+          "gender": "f",
+          "caseKey": "loc"
+        },
+        {
+          "pl": "obiadu",
+          "en": "dinner",
+          "gender": "m",
+          "caseKey": "gen"
         }
       ]
     },
@@ -10768,21 +10799,24 @@
       ]
     },
     {
-      "pl": "My kochaliśmy dom.",
-      "en": "We loved the house.",
-      "literal": "We loved house.",
+      "pl": "My kochaliśmy dziadków.",
+      "en": "We loved our grandparents.",
+      "literal": "We we-loved grandparents.",
       "words": [
         {
           "pl": "My",
-          "en": "We"
+          "en": "we",
+          "caseKey": "nom"
         },
         {
           "pl": "kochaliśmy",
-          "en": "loved"
+          "en": "we loved"
         },
         {
-          "pl": "dom",
-          "en": "house"
+          "pl": "dziadków",
+          "en": "grandparents",
+          "gender": "m",
+          "caseKey": "acc"
         }
       ]
     },

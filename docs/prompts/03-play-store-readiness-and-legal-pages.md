@@ -190,6 +190,8 @@ Prepare a document or checklist in the repo for the exact Play Console answers.
 Include:
 
 - App names, package names, app category, and short/long descriptions.
+  - Start from `docs/play-store-listing-copy.md` for the English-speaker
+    Polish-learning listing copy and claim audit.
 - Target audience and content rating inputs.
 - Data safety answers by package/flavor.
 - Permissions declaration answers, especially microphone. A Play artifact

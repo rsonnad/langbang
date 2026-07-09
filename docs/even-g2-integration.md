@@ -95,6 +95,51 @@ Why this path:
 - Supabase is already shared LangBang infrastructure.
 - A server bridge avoids putting R2/Supabase service secrets on either device.
 
+## Direct BLE Bypass Prototype
+
+`g2-gemini-bridge/` is the dedicated experimental LangBangTrans bypass app. It
+does not use Even Hub. It scans for G2 BLE advertisements, replays a configurable
+7-packet init sequence, streams 16 kHz microphone PCM to Gemini Live Translate,
+wraps Polish and English transcript text into a 28-column / 10-line HUD frame,
+and writes CRC-protected packets to the configured G2 write characteristic.
+
+The bridge deliberately keeps the proprietary pieces in environment variables:
+G2 service UUID, write/notify characteristic UUIDs, init packets, layout header,
+and CRC trailer encoding. Leave it in dry-run mode until those values are
+captured from hardware traces or confirmed against a known-good direct BLE
+session.
+
+## Native Android LangBangTrans APK
+
+`g2trans/` is the native Android version of the bypass bridge. This is the
+portable path for walking around with the glasses:
+
+```text
+G2 glasses <--BLE--> LangBangTrans APK <--Gemini Live WebSocket--> Gemini 3.5 Live Translate
+                         |
+                         +--> Android mic
+                         +--> Bluetooth headphones
+```
+
+Build it with:
+
+```bash
+./gradlew :g2trans:assembleDebug
+```
+
+The debug APK is written to:
+
+```text
+g2trans/build/outputs/apk/debug/g2trans-debug.apk
+```
+
+The APK defaults to `gemini-3.5-live-translate-preview` with `AUDIO` response
+modality so translated English audio can play through headphones while
+`outputAudioTranscription` feeds the G2 HUD. Runtime values come from
+`LANGBANGTRANS_*` keys in root `local.properties`. Keep `LANGBANGTRANS_G2_DRY_RUN`
+enabled until the proprietary direct-BLE G2 service UUIDs, 7 init packets,
+layout header, and CRC encoding are confirmed.
+
 The plugin already supports the expected feed shape through `VITE_LANGBANG_FEED_URL`:
 
 ```json

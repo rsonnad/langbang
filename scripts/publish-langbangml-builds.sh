@@ -13,7 +13,7 @@ for arg in "$@"; do
     --no-site-deploy) NO_SITE_DEPLOY=1 ;;
     --only=*) ONLY_CHANNEL="${arg#--only=}" ;;
     --only)
-      echo "--only requires a value: en-pl or pl-en" >&2
+      echo "--only requires a value: en-pl, pl-en, or g2trans" >&2
       exit 2
       ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
@@ -21,8 +21,8 @@ for arg in "$@"; do
 done
 
 case "$ONLY_CHANNEL" in
-  ""|"en-pl"|"pl-en") ;;
-  *) echo "--only must be en-pl or pl-en" >&2; exit 2 ;;
+  ""|"en-pl"|"pl-en"|"g2trans") ;;
+  *) echo "--only must be en-pl, pl-en, or g2trans" >&2; exit 2 ;;
 esac
 
 if [ "${LANGBANGML_SKIP_WORKTREE_AUDIT:-0}" != "1" ]; then
@@ -35,8 +35,10 @@ PUBLIC_BASE="https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev"
 API_BASE="https://langbangml-api.langbangml.workers.dev"
 SITE_BUILDS_URL="https://langbang.org/builds"
 SITE_DEPLOY_SCRIPT="$REPO_ROOT/scripts/deploy-langbang-org-site.sh"
+WRANGLER_CONFIG="$REPO_ROOT/cloudflare/langbangml/wrangler.toml"
 BUCKET="langbangml"
 R2_ITEM="Cloudflare R2 - LangBang S3 Admin"
+CF_ITEM="Cloudflare - LangBang Codex Claude Admin"
 
 need() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -49,6 +51,7 @@ need aws
 need bw
 need jq
 need curl
+need wrangler
 
 find_aapt2() {
   local sdk
@@ -71,11 +74,35 @@ field() {
   jq -r --arg n "$1" '.fields[]? | select(.name==$n) | .value' <<< "$BW_ITEM"
 }
 
+g2trans_bump_patch_version() {
+  local version_file="$REPO_ROOT/g2trans/version.properties"
+  local version_name version_code major minor patch
+  [ -f "$version_file" ] || {
+    printf 'versionName=0.1.0\nversionCode=1\n' > "$version_file"
+  }
+  version_name="$(sed -nE 's/^versionName=([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' "$version_file" | head -1)"
+  version_code="$(sed -nE 's/^versionCode=([0-9]+)$/\1/p' "$version_file" | head -1)"
+  [ -n "$version_name" ] && [ -n "$version_code" ] || {
+    echo "invalid g2trans version file: $version_file" >&2
+    exit 1
+  }
+  IFS=. read -r major minor patch <<< "$version_name"
+  version_name="${major}.${minor}.$((patch + 1))"
+  version_code="$((version_code + 1))"
+  printf 'versionName=%s\nversionCode=%s\n' "$version_name" "$version_code" > "$version_file"
+  echo "bumped g2trans to ${version_name} (${version_code})"
+}
+
 if [ "$SKIP_BUILD" -eq 0 ]; then
+  if [ "${LANGBANGTRANS_SKIP_VERSION_BUMP:-0}" != "1" ] &&
+    { [ -z "$ONLY_CHANNEL" ] || [ "$ONLY_CHANNEL" = "g2trans" ]; }; then
+    g2trans_bump_patch_version
+  fi
   case "$ONLY_CHANNEL" in
     en-pl) ./gradlew --no-configuration-cache :app:assembleEnPlDebug -q ;;
     pl-en) ./gradlew --no-configuration-cache :app:assemblePlEnDebug -q ;;
-    *) ./gradlew --no-configuration-cache :app:assembleEnPlDebug :app:assemblePlEnDebug -q ;;
+    g2trans) ./gradlew --no-configuration-cache :g2trans:assembleDebug -q ;;
+    *) ./gradlew --no-configuration-cache :app:assembleEnPlDebug :app:assemblePlEnDebug :g2trans:assembleDebug -q ;;
   esac
 fi
 
@@ -91,6 +118,11 @@ if [ -z "${BW_SESSION:-}" ] || ! bw status --session "$BW_SESSION" </dev/null 2>
   export BW_SESSION
 fi
 BW_ITEM="$(bw get item "$R2_ITEM" --session "$BW_SESSION" </dev/null)"
+CF_ITEM_JSON="$(bw get item "$CF_ITEM" --session "$BW_SESSION" </dev/null 2>/dev/null || true)"
+CF_API_TOKEN=""
+if [ -n "$CF_ITEM_JSON" ]; then
+  CF_API_TOKEN="$(jq -r '.fields[]? | select(.name == "Cloudflare Account API Token") | .value // empty' <<< "$CF_ITEM_JSON")"
+fi
 
 export AWS_ACCESS_KEY_ID="$(field "Access Key ID")"
 export AWS_SECRET_ACCESS_KEY="$(field "Secret Access Key")"
@@ -113,6 +145,69 @@ cleanup() {
 trap cleanup EXIT
 
 declare -a PAGE_ROWS=()
+
+s3_put() {
+  local source="$1"
+  local key="$2"
+  local content_type="$3"
+  local cache_control="${4:-}"
+  if [ -n "$CF_API_TOKEN" ] && [ -n "$ACCOUNT_ID" ]; then
+    local response_tmp curl_config_tmp
+    response_tmp="$(mktemp -t langbangml-r2-put.XXXXXX.json)"
+    curl_config_tmp="$(mktemp -t langbangml-r2-put.XXXXXX.curl)"
+    tmp_files+=("$response_tmp" "$curl_config_tmp")
+    {
+      printf 'fail\n'
+      printf 'show-error\n'
+      printf 'retry = 3\n'
+      printf 'retry-all-errors\n'
+      printf 'connect-timeout = 20\n'
+      printf 'max-time = 600\n'
+      printf 'request = "PUT"\n'
+      printf 'header = "Authorization: Bearer %s"\n' "$CF_API_TOKEN"
+      printf 'header = "Content-Type: %s"\n' "$content_type"
+      if [ -n "$cache_control" ]; then
+        printf 'header = "Cache-Control: %s"\n' "$cache_control"
+      fi
+      printf 'data-binary = "@%s"\n' "$source"
+      printf 'output = "%s"\n' "$response_tmp"
+      printf 'url = "https://api.cloudflare.com/client/v4/accounts/%s/r2/buckets/%s/objects/%s"\n' \
+        "$ACCOUNT_ID" "$BUCKET" "$key"
+    } > "$curl_config_tmp"
+    if curl --config "$curl_config_tmp" && jq -e '.success == true' "$response_tmp" >/dev/null; then
+      return
+    fi
+    echo "Cloudflare API upload failed for ${key}; trying wrangler/S3 fallback" >&2
+  fi
+  if [ -n "$CF_API_TOKEN" ]; then
+    local wrangler_args=(
+      r2 object put "${BUCKET}/${key}"
+      --file "$source"
+      --content-type "$content_type"
+      --config "$WRANGLER_CONFIG"
+      --remote
+    )
+    if [ -n "$cache_control" ]; then
+      wrangler_args+=(--cache-control "$cache_control")
+    fi
+    if env CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" wrangler "${wrangler_args[@]}" >/dev/null; then
+      return
+    fi
+    echo "wrangler upload failed for ${key}; falling back to S3 API" >&2
+  fi
+  local args=(
+    s3api put-object
+    --bucket "$BUCKET"
+    --key "$key"
+    --body "$source"
+    --endpoint-url "$ENDPOINT"
+    --content-type "$content_type"
+  )
+  if [ -n "$cache_control" ]; then
+    args+=(--cache-control "$cache_control")
+  fi
+  aws "${args[@]}" >/dev/null
+}
 
 publish_channel() {
   local flavor="$1"
@@ -140,14 +235,8 @@ publish_channel() {
   latest_url="${PUBLIC_BASE}/${latest_key}"
 
   echo "uploading ${display_name} ${full_version} (${version_code})"
-  aws s3 cp "$apk" "s3://${BUCKET}/${pinned_key}" \
-    --endpoint-url "$ENDPOINT" \
-    --content-type application/vnd.android.package-archive \
-    --no-progress
-  aws s3 cp "$apk" "s3://${BUCKET}/${latest_key}" \
-    --endpoint-url "$ENDPOINT" \
-    --content-type application/vnd.android.package-archive \
-    --no-progress
+  s3_put "$apk" "$pinned_key" "application/vnd.android.package-archive"
+  s3_put "$apk" "$latest_key" "application/vnd.android.package-archive"
 
   manifest_tmp="$(mktemp -t langbangml-${direction}.XXXXXX.json)"
   tmp_files+=("$manifest_tmp")
@@ -176,11 +265,7 @@ publish_channel() {
       publicR2Base: $publicR2Base,
       notes: $notes
     }' > "$manifest_tmp"
-  aws s3 cp "$manifest_tmp" "s3://${BUCKET}/${manifest_key}" \
-    --endpoint-url "$ENDPOINT" \
-    --content-type application/json \
-    --cache-control "no-cache, max-age=0" \
-    --no-progress
+  s3_put "$manifest_tmp" "$manifest_key" "application/json" "no-cache, max-age=0"
 
   for url in "$pinned_url" "$latest_url" "${PUBLIC_BASE}/${manifest_key}"; do
     local code
@@ -191,12 +276,123 @@ publish_channel() {
   PAGE_ROWS+=("${display_name}|v${version_code}|${full_version}|${latest_url}|${pinned_url}|${PUBLIC_BASE}/${manifest_key}")
 }
 
+publish_g2trans_channel() {
+  local apk="g2trans/build/outputs/apk/debug/g2trans-debug.apk"
+  [ -f "$apk" ] || { echo "APK not found for g2trans" >&2; exit 1; }
+
+  local badging version_code full_version size_bytes pinned_key latest_key manifest_key pinned_url latest_url manifest_tmp
+  badging="$(apk_info "$apk")"
+  version_code="$(sed -nE "s/.*versionCode='([0-9]+)'.*/\1/p" <<< "$badging" | head -1)"
+  full_version="$(sed -nE "s/.*versionName='([^']+)'.*/\1/p" <<< "$badging" | head -1)"
+  size_bytes="$(stat -f%z "$apk")"
+  [ -n "$version_code" ] && [ -n "$full_version" ] || {
+    echo "could not read version metadata from $apk" >&2
+    exit 1
+  }
+
+  pinned_key="langbang/builds/g2trans/langbangtrans-v${version_code}.apk"
+  latest_key="langbang/builds/g2trans/langbangtrans-latest.apk"
+  manifest_key="langbang/builds/g2trans/latest.json"
+  pinned_url="${PUBLIC_BASE}/${pinned_key}"
+  latest_url="${PUBLIC_BASE}/${latest_key}"
+
+  echo "uploading LangBangTrans G2 Translate ${full_version} (${version_code})"
+  s3_put "$apk" "$pinned_key" "application/vnd.android.package-archive"
+  s3_put "$apk" "$latest_key" "application/vnd.android.package-archive"
+
+  manifest_tmp="$(mktemp -t langbangtrans-g2.XXXXXX.json)"
+  tmp_files+=("$manifest_tmp")
+  jq -n \
+    --arg instanceId "com.sponic.langbangtrans" \
+    --arg displayName "LangBangTrans G2 Translate" \
+    --arg direction "g2trans" \
+    --arg versionName "$full_version" \
+    --arg url "$latest_url" \
+    --arg pinnedUrl "$pinned_url" \
+    --arg apiBase "$API_BASE" \
+    --arg publicR2Base "$PUBLIC_BASE" \
+    --arg notes "Native Android G2 translation bridge for Gemini 3.5 Live Translate." \
+    --argjson versionCode "$version_code" \
+    --argjson sizeBytes "$size_bytes" \
+    '{
+      instanceId: $instanceId,
+      displayName: $displayName,
+      direction: $direction,
+      versionCode: $versionCode,
+      versionName: $versionName,
+      url: $url,
+      pinnedUrl: $pinnedUrl,
+      sizeBytes: $sizeBytes,
+      apiBase: $apiBase,
+      publicR2Base: $publicR2Base,
+      notes: $notes
+    }' > "$manifest_tmp"
+  s3_put "$manifest_tmp" "$manifest_key" "application/json" "no-cache, max-age=0"
+
+  for url in "$pinned_url" "$latest_url" "${PUBLIC_BASE}/${manifest_key}"; do
+    local code
+    code="$(curl -sI -o /dev/null -w '%{http_code}' "${url}?verify=$(date +%s)")"
+    [ "$code" = "200" ] || { echo "verify failed: $url -> HTTP $code" >&2; exit 1; }
+  done
+}
+
+append_page_row_from_manifest() {
+  local anchor="$1"
+  local tab="$2"
+  local fallback_display="$3"
+  local manifest_url="$4"
+  local latest_fallback="$5"
+  local pinned_fallback="$6"
+  local manifest_json display version_code version_name latest pinned
+  manifest_json="$(curl -fsS -H "Cache-Control: no-cache" "${manifest_url}?page=$(date +%s)" 2>/dev/null || true)"
+  if [ -n "$manifest_json" ] && jq -e . >/dev/null 2>&1 <<< "$manifest_json"; then
+    display="$(jq -r --arg fallback "$fallback_display" '.displayName // $fallback' <<< "$manifest_json")"
+    version_code="$(jq -r '.versionCode // empty' <<< "$manifest_json")"
+    version_name="$(jq -r '.versionName // "pending publish"' <<< "$manifest_json")"
+    latest="$(jq -r --arg fallback "$latest_fallback" '.url // $fallback' <<< "$manifest_json")"
+    pinned="$(jq -r --arg fallback "$pinned_fallback" '.pinnedUrl // $fallback' <<< "$manifest_json")"
+  else
+    display="$fallback_display"
+    version_code=""
+    version_name="pending publish"
+    latest="$latest_fallback"
+    pinned="$pinned_fallback"
+  fi
+  PAGE_ROWS+=("${anchor}|${tab}|${display}|${version_code:+v${version_code}}|${version_name}|${latest}|${pinned}|${manifest_url}")
+}
+
 if [ -z "$ONLY_CHANNEL" ] || [ "$ONLY_CHANNEL" = "en-pl" ]; then
   publish_channel "enPl" "en-pl" "langbangml-en-pl" "English speakers learning Polish"
 fi
 if [ -z "$ONLY_CHANNEL" ] || [ "$ONLY_CHANNEL" = "pl-en" ]; then
   publish_channel "plEn" "pl-en" "langbangml-pl-en" "Polish speakers learning English"
 fi
+if [ -z "$ONLY_CHANNEL" ] || [ "$ONLY_CHANNEL" = "g2trans" ]; then
+  publish_g2trans_channel
+fi
+
+PAGE_ROWS=()
+append_page_row_from_manifest \
+  "en-pl" \
+  "English to Polish" \
+  "English speakers learning Polish" \
+  "${PUBLIC_BASE}/langbang/builds/en-pl/latest.json" \
+  "${PUBLIC_BASE}/langbang/builds/en-pl/langbangml-en-pl-latest.apk" \
+  "${PUBLIC_BASE}/langbang/builds/en-pl/langbangml-en-pl-latest.apk"
+append_page_row_from_manifest \
+  "pl-en" \
+  "Polish to English" \
+  "Polish speakers learning English" \
+  "${PUBLIC_BASE}/langbang/builds/pl-en/latest.json" \
+  "${PUBLIC_BASE}/langbang/builds/pl-en/langbangml-pl-en-latest.apk" \
+  "${PUBLIC_BASE}/langbang/builds/pl-en/langbangml-pl-en-latest.apk"
+append_page_row_from_manifest \
+  "g2trans" \
+  "G2 Translate" \
+  "LangBangTrans G2 Translate" \
+  "${PUBLIC_BASE}/langbang/builds/g2trans/latest.json" \
+  "${PUBLIC_BASE}/langbang/builds/g2trans/langbangtrans-latest.apk" \
+  "${PUBLIC_BASE}/langbang/builds/g2trans/langbangtrans-latest.apk"
 
 page_tmp="$(mktemp -t langbangml-builds.XXXXXX.html)"
 tmp_files+=("$page_tmp")
@@ -220,15 +416,17 @@ tmp_files+=("$page_tmp")
 </head>
 <body><main>
   <h1>LangBangML builds</h1>
-  <p>APK channel downloads from the new Cloudflare account. Each published channel has its own latest APK, pinned APK, and update manifest.</p>
-  <nav class="tabs"><a href="#en-pl">English to Polish</a><a href="#pl-en">Polish to English</a></nav>
 HTML
+  echo '  <p>APK channel downloads from the new Cloudflare account. Each published channel has its own latest APK, pinned APK, and update manifest.</p>'
+  printf '  <nav class="tabs">'
   for row in "${PAGE_ROWS[@]}"; do
-    IFS='|' read -r display version full latest pinned manifest <<< "$row"
-    anchor="en-pl"
-    case "$display" in
-      Polish*) anchor="pl-en" ;;
-    esac
+    IFS='|' read -r anchor tab _display _version _full _latest _pinned _manifest <<< "$row"
+    printf '<a href="#%s">%s</a>' "$anchor" "$tab"
+  done
+  printf '</nav>\n'
+  for row in "${PAGE_ROWS[@]}"; do
+    IFS='|' read -r anchor _tab display version full latest pinned manifest <<< "$row"
+    [ -n "$version" ] || version="latest"
     cat <<HTML
   <section id="$anchor">
     <h2>$display</h2>
@@ -246,16 +444,8 @@ HTML
 HTML
 } > "$page_tmp"
 
-aws s3 cp "$page_tmp" "s3://${BUCKET}/langbang/builds/index.html" \
-  --endpoint-url "$ENDPOINT" \
-  --content-type text/html \
-  --cache-control "no-cache, max-age=0" \
-  --no-progress
-aws s3 cp "$page_tmp" "s3://${BUCKET}/langbang/builds/builds.html" \
-  --endpoint-url "$ENDPOINT" \
-  --content-type text/html \
-  --cache-control "no-cache, max-age=0" \
-  --no-progress
+s3_put "$page_tmp" "langbang/builds/index.html" "text/html" "no-cache, max-age=0"
+s3_put "$page_tmp" "langbang/builds/builds.html" "text/html" "no-cache, max-age=0"
 
 if [ "$NO_SITE_DEPLOY" -eq 0 ] && [ -x "$SITE_DEPLOY_SCRIPT" ]; then
   "$SITE_DEPLOY_SCRIPT"
@@ -277,7 +467,8 @@ done
 echo
 echo "published LangBangML build channels:"
 for row in "${PAGE_ROWS[@]}"; do
-  IFS='|' read -r display version full latest pinned manifest <<< "$row"
+  IFS='|' read -r _anchor _tab display version full latest pinned manifest <<< "$row"
+  [ -n "$version" ] || version="latest"
   echo "  ${display}: ${version} ${latest}"
 done
 echo "  builds page: ${PUBLIC_BASE}/langbang/builds/index.html"

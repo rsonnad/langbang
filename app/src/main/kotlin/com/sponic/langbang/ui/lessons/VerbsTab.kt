@@ -117,6 +117,12 @@ private val AwkwardVerbPhraseEnglishRegexes = listOf(
     Regex("\\bmust to \\w+\\b"),
     Regex("\\bfeel like to \\w+\\b")
 )
+private val PhraseBalanceIgnoredPolishTokens = setOf(
+    "ja", "ty", "on", "ona", "my", "wy", "oni", "one", "do", "ochotę"
+)
+private val PhraseBalanceIgnoredGlosses = setOf(
+    "i", "you", "he", "she", "we", "they", "to", "desire"
+)
 
 private data class ConjugationCue(
     val lemma: String,
@@ -240,7 +246,7 @@ internal class VerbsTabState(
     fun selectVerb(verb: VerbEntry?) {
         if (selected?.lemma == verb?.lemma) return
         selected = verb
-        sentences = verb?.let { loadCombinedSentences(it) } ?: emptyList()
+        sentences = verb?.let { selectedSentences(it) } ?: emptyList()
         error = null
     }
 
@@ -249,6 +255,103 @@ internal class VerbsTabState(
         val past = if (verb.past_forms.isNullOrEmpty()) emptyList()
         else app.lessonRepo.sentencesFor(verb.lemma, VerbSentenceStore.TENSE_PAST)
         return present + past
+    }
+
+    /**
+     * The display + playback sentence pool for [verb], reduced to the learner's current
+     * selection: the per-tense pronoun filter, and the Pronoun/helper/Adj/Adv/Nouns
+     * toggles under "at-most" semantics (a sentence qualifies only when every tagged
+     * token belongs to a currently-allowed category). This is the single source of truth
+     * that replaced the old on-device slot-template assembler — we now surface ONLY the
+     * natural LLM-authored cached sentences, never synthesized ones, so phrases are always
+     * grammatical. De-duped by Polish text; callers shuffle for variety.
+     */
+    private fun selectedSentences(verb: VerbEntry): List<SentenceExample> {
+        val present = if (includedPresentKeys.isEmpty()) emptyList()
+        else app.lessonRepo.sentencesFor(verb.lemma, VerbSentenceStore.TENSE_PRESENT)
+            .filter { sentenceVisible(it) && personAllowed(personOf(verb, it, isPast = false), isPast = false) }
+        val past = if (includedPastKeys.isEmpty() || verb.past_forms.isNullOrEmpty()) emptyList()
+        else app.lessonRepo.sentencesFor(verb.lemma, VerbSentenceStore.TENSE_PAST)
+            .filter { sentenceVisible(it) && personAllowed(personOf(verb, it, isPast = true), isPast = true) }
+        return (present + past).distinctBy { it.pl }
+    }
+
+    /** Recompute the displayed sentence list for the selected verb after a filter change. */
+    private fun refreshSelectedSentences() {
+        sentences = selected?.let { selectedSentences(it) } ?: emptyList()
+    }
+
+    /**
+     * Visibility gate for a cached sentence, combining two ideas:
+     *  - STRUCTURAL narrowing (at-most): hide a sentence that uses a structural category the
+     *    learner turned off — an explicit subject pronoun (Pronoun chip) or a helper verb
+     *    (helper chip).
+     *  - CONTENT selection (strict / at-least): the Adj, Adv and (pro)noun chips choose which
+     *    word types to practise. When any of them is on, the sentence must FEATURE at least one
+     *    of the chosen types, so the example list surfaces real adjective / adverb / object
+     *    phrases instead of the bare conjugations that already live in the grid above. When all
+     *    three are off we show only "plain" sentences carrying none of those content words.
+     *
+     *  "(pro)noun" = a noun OR an object pronoun (go / ją / je…), told apart from a subject
+     *  pronoun by its non-nominative [TokenPair.caseKey]. Fully untagged legacy sentences
+     *  (no cat on any token) are always shown.
+     */
+    private fun sentenceVisible(sentence: SentenceExample): Boolean {
+        val words = sentence.words ?: return true
+        if (words.none { !it.cat.isNullOrBlank() }) return true
+        val roles = words.map { tokenRole(it) }
+        // Structural at-most narrowing.
+        if (!includePronouns && TokenRole.SUBJECT_PRONOUN in roles) return false
+        if (!includeHelperVerb && TokenRole.HELPER in roles) return false
+        // Content selection (strict).
+        val hasAdjective = TokenRole.ADJECTIVE in roles
+        val hasAdverb = TokenRole.ADVERB in roles
+        val hasObject = TokenRole.OBJECT in roles
+        val anyContentChecked = includeAdjectives || includeAdverbs || includeNouns
+        return if (anyContentChecked) {
+            (includeAdjectives && hasAdjective) ||
+                (includeAdverbs && hasAdverb) ||
+                (includeNouns && hasObject)
+        } else {
+            !hasAdjective && !hasAdverb && !hasObject
+        }
+    }
+
+    /** Coarse part-of-speech role a token maps to for the Verbs-tab chip filter. */
+    private enum class TokenRole { SUBJECT_PRONOUN, OBJECT, HELPER, ADJECTIVE, ADVERB, NEUTRAL }
+
+    private fun tokenRole(token: TokenPair): TokenRole = when (token.cat?.lowercase()) {
+        "pronoun", "pron" ->
+            if (isObjectPronoun(token)) TokenRole.OBJECT else TokenRole.SUBJECT_PRONOUN
+        "helper", "helperverb", "modal", "aux" -> TokenRole.HELPER
+        "adjective", "adj" -> TokenRole.ADJECTIVE
+        "adverb", "adv" -> TokenRole.ADVERB
+        "noun" -> TokenRole.OBJECT
+        else -> TokenRole.NEUTRAL
+    }
+
+    /** A pronoun in any non-nominative case is an object ("go", "ją", "mnie"), not a subject
+     *  ("ja", "ty") — so it belongs to the "(pro)noun" object slot, not the Pronoun chip. */
+    private fun isObjectPronoun(token: TokenPair): Boolean {
+        val case = token.caseKey?.lowercase()
+        return case != null && case != "nom"
+    }
+
+    /** Subject person of a sentence: the explicit [SentenceExample.person] tag when present,
+     *  otherwise derived from whichever conjugated form of [verb] appears in the Polish. */
+    private fun personOf(verb: VerbEntry, sentence: SentenceExample, isPast: Boolean): String? {
+        sentence.person?.lowercase()?.takeIf { it in PERSON_KEYS }?.let { return it }
+        val forms = if (isPast) verb.past_forms.orEmpty() else verb.forms
+        val tokens = sentence.pl.lessonPolishTokens().map { it.lowercase() }.toSet()
+        return PERSON_KEYS.firstOrNull { key ->
+            forms[key]?.lowercase()?.let { it.isNotBlank() && it in tokens } == true
+        }
+    }
+
+    private fun personAllowed(person: String?, isPast: Boolean): Boolean {
+        val allowed = if (isPast) includedPastKeys else includedPresentKeys
+        if (allowed.isEmpty()) return false
+        return person == null || person in allowed
     }
 
     fun toggleVerbChecked(lemma: String, checked: Boolean) {
@@ -283,26 +386,31 @@ internal class VerbsTabState(
     fun updateIncludePronouns(enabled: Boolean) {
         includePronouns = enabled
         app.practicePrefs.setVerbPhraseIncludePronouns(enabled)
+        refreshSelectedSentences()
     }
 
     fun updateIncludeHelperVerb(enabled: Boolean) {
         includeHelperVerb = enabled
         app.practicePrefs.setVerbPhraseIncludeHelperVerb(enabled)
+        refreshSelectedSentences()
     }
 
     fun updateIncludeAdjectives(enabled: Boolean) {
         includeAdjectives = enabled
         app.practicePrefs.setVerbPhraseIncludeAdjectives(enabled)
+        refreshSelectedSentences()
     }
 
     fun updateIncludeAdverbs(enabled: Boolean) {
         includeAdverbs = enabled
         app.practicePrefs.setVerbPhraseIncludeAdverbs(enabled)
+        refreshSelectedSentences()
     }
 
     fun updateIncludeNouns(enabled: Boolean) {
         includeNouns = enabled
         app.practicePrefs.setVerbPhraseIncludeNouns(enabled)
+        refreshSelectedSentences()
     }
 
     private fun playLimit(): Int =
@@ -321,20 +429,30 @@ internal class VerbsTabState(
         return if (randomOrder) targets.shuffled() else targets
     }
 
-    suspend fun targetPlayCount(allVerbs: List<VerbEntry>): Int {
-        val targetCount = resolveTargets(allVerbs).size
-        if (!wordTypeVariationsEnabled()) return targetCount
+    fun targetVerbCount(allVerbs: List<VerbEntry>): Int =
+        resolveTargets(allVerbs).size
+
+    fun conjugationPlayCount(allVerbs: List<VerbEntry>): Int =
+        buildConjugationQueue(resolveTargets(allVerbs)).size
+
+    suspend fun wordTypeVariationPlayCount(allVerbs: List<VerbEntry>): Int {
         val limit = playLimit()
         if (limit <= 0) return 0
         return resolveTargets(allVerbs).sumOf { wordTypeVariationCountFor(it, limit) }
     }
 
-    fun quickTargetPlayCount(allVerbs: List<VerbEntry>): Int {
-        val targetCount = resolveTargets(allVerbs).size
-        if (!wordTypeVariationsEnabled()) return targetCount
+    fun quickWordTypeVariationPlayCount(allVerbs: List<VerbEntry>): Int {
         val limit = playLimit()
         if (limit <= 0) return 0
         return resolveTargets(allVerbs).sumOf { quickWordTypeVariationCountFor(it, limit) }
+    }
+
+    suspend fun targetPlayCount(allVerbs: List<VerbEntry>): Int {
+        return targetVerbCount(allVerbs)
+    }
+
+    fun quickTargetPlayCount(allVerbs: List<VerbEntry>): Int {
+        return targetVerbCount(allVerbs)
     }
 
     fun wordTypeVariationsEnabled(): Boolean = selectedPhraseComponentCount() > 0
@@ -364,6 +482,7 @@ internal class VerbsTabState(
         } else {
             includedPresentKeys = if (included) includedPresentKeys + key else includedPresentKeys - key
         }
+        refreshSelectedSentences()
     }
 
     /** Tick/untick every person for one tense at once — backs the "all" box per column. */
@@ -372,6 +491,7 @@ internal class VerbsTabState(
         val all = if (included) PERSON_KEYS.toSet() else emptySet()
         if (tense == PronounFilterStore.TENSE_PAST) includedPastKeys = all
         else includedPresentKeys = all
+        refreshSelectedSentences()
     }
 
     fun generate(allVerbs: List<VerbEntry> = emptyList()) {
@@ -581,7 +701,7 @@ internal class VerbsTabState(
                 }
             }
         }
-        val combined = loadCombinedSentences(target)
+        val combined = selectedSentences(target)
         if (target.lemma == selected?.lemma) sentences = combined
         return combined
     }
@@ -590,80 +710,32 @@ internal class VerbsTabState(
         verb: VerbEntry,
         limitPerType: Int
     ): List<SentenceExample> {
-        val requirements = phraseRequirementSnapshot()
-        val allowedForms = allowedFormsFor(verb, requirements)
-        if (allowedForms.isEmpty() || limitPerType <= 0) return emptyList()
-
-        generateProgress = "Checking phrase variants · ${verb.lemma}"
-        val cached = matchingPhraseCandidates(
-            verb = verb,
-            candidates = phraseCandidateSentencesFor(verb),
-            allowedForms = allowedForms,
-            requirements = requirements
-        )
-        val local = if (cached.size < limitPerType) {
-            buildLocalPhraseSentences(verb, limitPerType - cached.size)
-        } else {
-            emptyList()
-        }
-        var matching = mergePhraseCandidates(
-            existing = cached,
-            local = local,
-            randomOrder = requirements.randomOrder
-        )
+        if (limitPerType <= 0) return emptyList()
+        val matching = selectedSentences(verb)
         if (matching.size < limitPerType) {
+            // Not enough natural sentences match this selection yet — pull more from R2 /
+            // generate in the background, and tell the user rather than inventing awkward ones.
             app.sentenceRegen.startIfNeeded()
             showPhraseGenerationNotice()
-        } else if (local.isNotEmpty()) {
-            showPhraseQualityNotice(
-                "Using temporary local phrase variants while richer examples are generated and validated."
-            )
         }
-        return matching.take(limitPerType)
+        // Shuffle so consecutive plays vary instead of replaying the same first N.
+        return matching.shuffled().take(limitPerType)
     }
 
-    private suspend fun wordTypeVariationCountFor(
+    private fun wordTypeVariationCountFor(
         verb: VerbEntry,
         limitPerType: Int
     ): Int {
-        val requirements = phraseRequirementSnapshot()
-        val allowedForms = allowedFormsFor(verb, requirements)
-        if (allowedForms.isEmpty() || limitPerType <= 0) return 0
-        val cached = matchingPhraseCandidates(
-            verb = verb,
-            candidates = phraseCandidateSentencesFor(verb),
-            allowedForms = allowedForms,
-            requirements = requirements
-        )
-        val local = if (cached.size < limitPerType) {
-            buildLocalPhraseSentences(
-                verb = verb,
-                limit = limitPerType - cached.size,
-                recordRejected = false
-            )
-        } else {
-            emptyList()
-        }
-        return mergePhraseCandidates(
-            existing = cached,
-            local = local,
-            randomOrder = requirements.randomOrder
-        ).take(limitPerType).size
+        if (limitPerType <= 0) return 0
+        return selectedSentences(verb).size.coerceAtMost(limitPerType)
     }
 
     private fun quickWordTypeVariationCountFor(
         verb: VerbEntry,
         limitPerType: Int
     ): Int {
-        val requirements = phraseRequirementSnapshot()
-        val allowedForms = allowedFormsFor(verb, requirements)
-        if (allowedForms.isEmpty() || limitPerType <= 0) return 0
-        return buildLocalPhraseSentences(
-            verb = verb,
-            limit = limitPerType,
-            recordRejected = false,
-            applyUsageGate = false
-        ).take(limitPerType).size
+        if (limitPerType <= 0) return 0
+        return selectedSentences(verb).size.coerceAtMost(limitPerType)
     }
 
     private fun showPhraseGenerationNotice() {
@@ -756,7 +828,7 @@ internal class VerbsTabState(
 
         val cuePool = if (randomOrder) cues.shuffled() else cues
         var rejected = 0
-        val candidates = (0 until (limit * 4).coerceAtLeast(limit)).mapNotNull { index ->
+        val candidates = (0 until (limit * 8).coerceAtLeast(limit)).mapNotNull { index ->
             val cue = cuePool[index % cuePool.size]
             val sentence = if (includeHelperVerb) {
                 helperVerbPhraseSentence(verb, cue, index)
@@ -779,7 +851,7 @@ internal class VerbsTabState(
         if (recordRejected && rejected > 0) {
             showPhraseQualityNotice("Skipped $rejected awkward phrase variant(s).")
         }
-        return candidates.take(limit)
+        return spaceLocalPhraseCandidates(candidates, limit)
     }
 
     private fun phraseVerbCuesFor(verb: VerbEntry): List<PhraseVerbCue> = buildList {
@@ -1072,19 +1144,19 @@ internal class VerbsTabState(
         val objectPart = when (verb.lemma) {
             "iść", "jechać", "wracać" -> destinationPart(index)
             "pić" -> objectPartFor(
-                nounLemmas = listOf("kawa", "herbata", "woda"),
+                nounLemmas = commonObjectNounsForVerb("pić"),
                 index = index
             )
             "jeść" -> objectPartFor(
-                nounLemmas = listOf("jedzenie", "chleb"),
+                nounLemmas = commonObjectNounsForVerb("jeść"),
                 index = index
             )
             "czytać" -> objectPartFor(
-                nounLemmas = listOf("książka"),
+                nounLemmas = commonObjectNounsForVerb("czytać"),
                 index = index
             )
             "kupować" -> objectPartFor(
-                nounLemmas = listOf("kawa", "chleb", "książka"),
+                nounLemmas = commonObjectNounsForVerb("kupować"),
                 index = index
             )
             else -> null
@@ -1100,7 +1172,11 @@ internal class VerbsTabState(
     }
 
     private fun destinationPart(index: Int): PhrasePart? {
-        val noun = nounByLemma(listOf("sklep", "szkoła", "praca", "dom", "miasto"), index) ?: return null
+        val noun = nounByLemma(
+            listOf("sklep", "szkoła", "praca", "dom", "miasto", "mieszkanie"),
+            index,
+            "destination"
+        ) ?: return null
         val adjective = phraseAdjectiveForNoun(noun, index)
         if (includeAdjectives && adjective == null) return null
         val words = mutableListOf<TokenPair>()
@@ -1132,7 +1208,7 @@ internal class VerbsTabState(
     }
 
     private fun objectPartFor(nounLemmas: List<String>, index: Int): PhrasePart? {
-        val noun = nounByLemma(nounLemmas, index) ?: return null
+        val noun = nounByLemma(nounLemmas, index, nounLemmas.joinToString("|")) ?: return null
         val adjective = phraseAdjectiveForNoun(noun, index)
         if (includeAdjectives && adjective == null) return null
         val words = mutableListOf<TokenPair>()
@@ -1163,15 +1239,38 @@ internal class VerbsTabState(
     }
 
     private fun phraseNounForVerb(verb: VerbEntry, index: Int): NounEntry? {
-        val lemmas = when (verb.lemma) {
-            "mieć", "widzieć", "lubić", "kochać" -> listOf("dom", "kawa", "książka", "telefon", "samochód")
-            "pić" -> listOf("kawa", "herbata", "woda")
-            "jeść" -> listOf("chleb", "jedzenie")
-            "czytać" -> listOf("książka")
-            "kupować" -> listOf("kawa", "chleb", "książka", "telefon")
-            else -> emptyList()
-        }
-        return nounByLemma(lemmas, index)
+        return nounByLemma(commonObjectNounsForVerb(verb.lemma), index, verb.lemma)
+    }
+
+    private fun commonObjectNounsForVerb(lemma: String): List<String> = when (lemma) {
+        "mieć" -> listOf(
+            "telefon", "komputer", "samochód", "mieszkanie", "dom", "karta kredytowa",
+            "książka", "praca", "stół", "krzesło"
+        )
+        "widzieć" -> listOf(
+            "kobieta", "mężczyzna", "dziecko", "człowiek", "telefon", "samochód",
+            "dom", "sklep", "szkoła", "miasto", "ulica", "okno", "stół", "krzesło"
+        )
+        "lubić" -> listOf(
+            "kawa", "herbata", "woda", "chleb", "jedzenie", "książka", "telefon",
+            "komputer", "samochód", "dom", "mieszkanie", "miasto", "praca", "noc"
+        )
+        "kochać" -> listOf(
+            "kobieta", "mężczyzna", "dziecko", "mama", "brat", "siostra", "syn",
+            "chłopak", "dziewczyna", "dom", "miasto", "noc", "miłość"
+        )
+        "brać", "dawać" -> listOf(
+            "telefon", "książka", "chleb", "kawa", "herbata", "komputer", "krzesło",
+            "karta kredytowa"
+        )
+        "kupować" -> listOf(
+            "kawa", "herbata", "woda", "chleb", "jedzenie", "książka", "telefon",
+            "komputer", "samochód", "stół", "krzesło"
+        )
+        "pić" -> listOf("woda", "herbata", "kawa")
+        "jeść" -> listOf("jedzenie", "chleb")
+        "czytać", "pisać" -> listOf("książka")
+        else -> emptyList()
     }
 
     private fun phraseAdjectiveForNoun(noun: NounEntry, index: Int): AdjectiveEntry? {
@@ -1199,37 +1298,106 @@ internal class VerbsTabState(
             "musieć" -> listOf("teraz", "dzisiaj", "szybko")
             "móc" -> listOf("teraz", "dzisiaj", "szybko")
             "mieć_ochotę" -> listOf("dzisiaj", "teraz")
-            "pić", "jeść", "czytać", "kupować" -> listOf("teraz", "dzisiaj")
+            "pić", "jeść", "czytać", "kupować" -> listOf("teraz", "dzisiaj", "jutro", "tutaj", "chętnie")
             "spać" -> listOf("dobrze", "teraz")
             "czuć" -> listOf("dobrze", "trochę")
-            else -> listOf("dzisiaj", "teraz", "szybko")
+            else -> listOf("dzisiaj", "teraz", "jutro", "tutaj", "szybko", "chętnie")
         }
-        return adverbByLemma(lemmas, index)
+        return adverbByLemma(lemmas, index, "${helperLemma ?: verb.lemma}:adverb")
     }
 
     private fun verbByLemma(lemmas: List<String>, index: Int): VerbEntry? {
         val all = app.lessonRepo.lesson2().verbs
         val candidates = lemmas.mapNotNull { lemma -> all.firstOrNull { it.lemma == lemma } }
-        return candidates.getOrNull(index % candidates.size.coerceAtLeast(1))
+        return evenlySpacedCandidate(candidates, index, lemmas.joinToString("|"))
     }
 
-    private fun nounByLemma(lemmas: List<String>, index: Int): NounEntry? {
+    private fun nounByLemma(lemmas: List<String>, index: Int, salt: String): NounEntry? {
         val selected = selectedNouns()
         val candidates = lemmas.mapNotNull { lemma -> selected.firstOrNull { it.lemma == lemma } }
-        return candidates.getOrNull(index % candidates.size.coerceAtLeast(1))
+        return evenlySpacedCandidate(candidates, index, salt)
     }
 
     private fun adjectiveByLemma(lemmas: List<String>, index: Int): AdjectiveEntry? {
         val selected = selectedAdjectives()
         val candidates = lemmas.mapNotNull { lemma -> selected.firstOrNull { it.lemma == lemma } }
-        return candidates.getOrNull(index % candidates.size.coerceAtLeast(1))
+        return evenlySpacedCandidate(candidates, index, lemmas.joinToString("|"))
     }
 
-    private fun adverbByLemma(lemmas: List<String>, index: Int): AdverbEntry? {
+    private fun adverbByLemma(lemmas: List<String>, index: Int, salt: String): AdverbEntry? {
         val selected = selectedAdverbs()
         val candidates = lemmas.mapNotNull { lemma -> selected.firstOrNull { it.lemma == lemma } }
-        return candidates.getOrNull(index % candidates.size.coerceAtLeast(1))
+        return evenlySpacedCandidate(candidates, index, salt)
     }
+
+    private fun <T> evenlySpacedCandidate(candidates: List<T>, index: Int, salt: String): T? {
+        if (candidates.isEmpty()) return null
+        val size = candidates.size
+        val offset = salt.stablePositiveHash() % size
+        val step = spacedStepFor(size)
+        return candidates[(offset + index * step) % size]
+    }
+
+    private fun spacedStepFor(size: Int): Int {
+        if (size <= 2) return 1
+        val preferred = listOf(5, 3, 7, 11, 13, 17)
+        return preferred.firstOrNull { it < size && gcd(it, size) == 1 }
+            ?: (2 until size).firstOrNull { gcd(it, size) == 1 }
+            ?: 1
+    }
+
+    private fun gcd(a: Int, b: Int): Int {
+        var x = kotlin.math.abs(a)
+        var y = kotlin.math.abs(b)
+        while (y != 0) {
+            val t = x % y
+            x = y
+            y = t
+        }
+        return x
+    }
+
+    private fun String.stablePositiveHash(): Int =
+        fold(0) { acc, ch -> (acc * 31 + ch.code) and 0x7fffffff }
+
+    private fun spaceLocalPhraseCandidates(
+        candidates: List<SentenceExample>,
+        limit: Int
+    ): List<SentenceExample> {
+        val remaining = candidates.toMutableList()
+        val selected = mutableListOf<SentenceExample>()
+        val usage = mutableMapOf<String, Int>()
+        while (remaining.isNotEmpty() && selected.size < limit) {
+            val previousKeys = selected.lastOrNull()?.phraseBalanceKeys().orEmpty().toSet()
+            val bestIndex = remaining.indices.minByOrNull { idx ->
+                val keys = remaining[idx].phraseBalanceKeys().distinct()
+                val repeatPenalty = keys.sumOf { (usage[it] ?: 0) * 100 }
+                val adjacentPenalty = keys.count { it in previousKeys } * 250
+                val emptyPenalty = if (keys.isEmpty()) 500 else 0
+                repeatPenalty + adjacentPenalty + emptyPenalty
+            } ?: break
+            val next = remaining.removeAt(bestIndex)
+            selected += next
+            next.phraseBalanceKeys().distinct().forEach { key ->
+                usage[key] = (usage[key] ?: 0) + 1
+            }
+        }
+        return selected
+    }
+
+    private fun SentenceExample.phraseBalanceKeys(): List<String> =
+        words.orEmpty().mapNotNull { token ->
+            if (token.variableKind in setOf("conjugation", "infinitive")) return@mapNotNull null
+            val pl = token.pl.lessonPolishTokens().firstOrNull()
+            val gloss = token.en.primaryGloss().lowercase()
+            when {
+                pl == null -> null
+                pl in PhraseBalanceIgnoredPolishTokens -> null
+                gloss in PhraseBalanceIgnoredGlosses -> null
+                gloss.isNotBlank() -> gloss
+                else -> pl
+            }
+        }
 
     private fun verbToken(verb: VerbEntry, form: String, en: String): TokenPair =
         TokenPair(
@@ -1556,19 +1724,18 @@ internal class VerbsTabState(
         // Sentence playback doesn't set playingLemma (only the conjugation drill does), so
         // the per-verb sentence-list highlight stays scoped to the conjugation flow.
         playingLemma = null
-        val speakEnglish = quiz || app.practicePrefs.speakEnglishFirst()
-        val slowFirst = app.practicePrefs.slowFirst()
-        val slowPlVoice = app.targetSlowVoice()
         player.start(
             total = items.size,
             publishParked = { i -> publishQuiz("pause", items[i], "${i + 1}/${items.size}", plHidden = quiz) },
             prefetchItem = { i ->
                 val s = items[i]
+                val speakEnglish = quiz || app.practicePrefs.speakEnglishFirst()
+                val slowFirst = app.practicePrefs.slowFirst()
                 if (speakEnglish) {
                     app.ensureCachedAudio(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 }
                 app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
-                if (slowFirst && !quiz) app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, slowPlVoice)
+                if (slowFirst && !quiz) app.ensureCachedAudio(s.pl, app.targetAudioVoice().locale, app.targetSlowVoice())
             },
         ) { i ->
             val s = items[i]
@@ -1586,13 +1753,15 @@ internal class VerbsTabState(
                 publishQuiz("pl", s, position, plHidden = false)
                 say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
             } else {
+                val speakEnglish = app.practicePrefs.speakEnglishFirst()
+                val slowFirst = app.practicePrefs.slowFirst()
                 if (speakEnglish) {
                     setLang("en", s, position)
                     say(s.en, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 }
                 if (slowFirst) {
                     setLang("pl-slow", s, position)
-                    say(s.pl, app.targetAudioVoice().locale, slowPlVoice)
+                    say(s.pl, app.targetAudioVoice().locale, app.targetSlowVoice())
                 }
                 setLang("pl", s, position)
                 say(s.pl, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
@@ -1682,19 +1851,18 @@ internal class VerbsTabState(
 
     private fun startConjugationQueue(cues: List<ConjugationCue>, mode: String) {
         val quiz = mode != "play"
-        val speakEnglish = quiz || app.practicePrefs.speakEnglishFirst()
-        val slowFirst = app.practicePrefs.slowFirst()
-        val slowPlVoice = app.targetSlowVoice()
         player.start(
             total = cues.size,
             publishParked = { i -> publishConjugation(cues[i], i, cues.size, mode, "pause", plHidden = quiz) },
             prefetchItem = { i ->
                 val cue = cues[i]
+                val speakEnglish = quiz || app.practicePrefs.speakEnglishFirst()
+                val slowFirst = app.practicePrefs.slowFirst()
                 if (speakEnglish) {
                     app.ensureCachedAudio(cue.englishGloss, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                 }
                 app.ensureCachedAudio(cue.combined, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
-                if (slowFirst && !quiz) app.ensureCachedAudio(cue.combined, app.targetAudioVoice().locale, slowPlVoice)
+                if (slowFirst && !quiz) app.ensureCachedAudio(cue.combined, app.targetAudioVoice().locale, app.targetSlowVoice())
             },
         ) { i ->
             val cue = cues[i]
@@ -1712,13 +1880,15 @@ internal class VerbsTabState(
                     say(cue.combined, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
                 }
                 else -> {
+                    val speakEnglish = app.practicePrefs.speakEnglishFirst()
+                    val slowFirst = app.practicePrefs.slowFirst()
                     if (speakEnglish) {
                         publishConjugation(cue, i, total, mode, "en", plHidden = false)
                         say(cue.englishGloss, app.sourceAudioVoice().locale, app.sourceAudioVoice().voice)
                     }
                     if (slowFirst) {
                         publishConjugation(cue, i, total, mode, "pl-slow", plHidden = false)
-                        say(cue.combined, app.targetAudioVoice().locale, slowPlVoice)
+                        say(cue.combined, app.targetAudioVoice().locale, app.targetSlowVoice())
                     }
                     publishConjugation(cue, i, total, mode, "pl", plHidden = false)
                     say(cue.combined, app.targetAudioVoice().locale, app.targetAudioVoice().voice)
@@ -1784,19 +1954,38 @@ internal fun VerbsTab(
     val state = rememberVerbsTabState(app)
     val activeNowVoicing by NowVoicingBus.state.collectAsState()
 
-    // Initialise/refresh the selection when the lesson list changes.
-    if (state.selected == null || lesson.verbs.none { it.lemma == state.selected?.lemma }) {
-        state.selectVerb(lesson.verbs.firstOrNull())
-    }
-
-    LaunchedEffect(activeNowVoicing?.pl, activeNowVoicing?.words, lesson.verbs) {
-        nowVoicingVerb(activeNowVoicing, lesson.verbs)?.let { state.selectVerb(it) }
-    }
-
     val grouped = remember(lesson) {
         lesson.verbs
             .groupBy { it.conjugationClass() }
             .toSortedMap(compareBy { it.ordinal })
+    }
+    // Top-to-bottom order exactly as the left list renders it (class groups by ordinal,
+    // verbs in lesson order within each class). Paging + the "top verb" snap follow what
+    // the learner actually sees, not raw lesson order (where być sorts first).
+    val displayOrder = remember(grouped) { grouped.values.flatten() }
+    // When the learner has ticked a subset of verbs, scope the right-hand paradigm and the
+    // prev/next arrows to exactly those verbs (in list order); otherwise fall back to the
+    // whole verb list. `checkedLemmas` is observable, so this recomputes as boxes are ticked.
+    val checkedInOrder = displayOrder.filter { it.lemma in state.checkedLemmas }
+    val navVerbs = if (checkedInOrder.isNotEmpty()) checkedInOrder else lesson.verbs
+
+    // Initialise/refresh the selection when the lesson list changes. Prefer the top ticked
+    // verb so entering the tab with a saved selection lands on it.
+    if (state.selected == null || lesson.verbs.none { it.lemma == state.selected?.lemma }) {
+        state.selectVerb(checkedInOrder.firstOrNull() ?: lesson.verbs.firstOrNull())
+    }
+
+    // Ticking/unticking re-scopes the viewer: if the displayed verb isn't among the ticked
+    // subset, snap to the top ticked verb. No-op when nothing is ticked (free browsing).
+    LaunchedEffect(state.checkedLemmas, displayOrder) {
+        val checked = displayOrder.filter { it.lemma in state.checkedLemmas }
+        if (checked.isNotEmpty() && checked.none { it.lemma == state.selected?.lemma }) {
+            state.selectVerb(checked.first())
+        }
+    }
+
+    LaunchedEffect(activeNowVoicing?.pl, activeNowVoicing?.words, lesson.verbs) {
+        nowVoicingVerb(activeNowVoicing, lesson.verbs)?.let { state.selectVerb(it) }
     }
 
     Row(modifier = Modifier.fillMaxSize()) {
@@ -1830,7 +2019,7 @@ internal fun VerbsTab(
                     VerbParadigm(
                         verb = it,
                         state = state,
-                        allVerbs = lesson.verbs
+                        navVerbs = navVerbs
                     )
                 }
             }
@@ -1846,6 +2035,7 @@ private fun TopBar(
     showControls: Boolean
 ) {
     var playCountPreview by remember { mutableStateOf<Int?>(null) }
+    var playUsesWordTypeVariations by remember { mutableStateOf(false) }
     LaunchedEffect(
         showControls,
         allVerbs.size,
@@ -1862,15 +2052,23 @@ private fun TopBar(
         state.includedPastKeys
     ) {
         playCountPreview = null
+        var playWordTypeVariations = false
         if (showControls) {
             val quickCount = state.quickTargetPlayCount(allVerbs)
             if (quickCount > 0) {
                 playCountPreview = quickCount
                 yield()
             }
+            val exactVariationCount = if (state.wordTypeVariationsEnabled()) {
+                state.wordTypeVariationPlayCount(allVerbs)
+            } else {
+                0
+            }
             val exactCount = state.targetPlayCount(allVerbs)
             playCountPreview = exactCount
+            playWordTypeVariations = exactVariationCount > 0
         }
+        playUsesWordTypeVariations = playWordTypeVariations
     }
     Surface(color = LbColors.SurfaceRaised, modifier = Modifier.fillMaxWidth()) {
         Column {
@@ -1911,7 +2109,7 @@ private fun TopBar(
                             onCheckedChange = { state.updateIncludeAdverbs(it) }
                         )
                         PhraseCategoryToggle(
-                            label = "Nouns",
+                            label = "(pro)noun",
                             checked = state.includeNouns,
                             enabled = !state.playing,
                             onCheckedChange = { state.updateIncludeNouns(it) }
@@ -1929,7 +2127,7 @@ private fun TopBar(
                             count = playCountPreview,
                             playLabel = if (playCountPreview == null) "Play ..." else null,
                             onPlay = {
-                                if (state.wordTypeVariationsEnabled()) {
+                                if (playUsesWordTypeVariations) {
                                     state.playAll(allVerbs, includeWordTypeVariations = true)
                                 } else {
                                     state.playAllConjugations(allVerbs)
@@ -2141,7 +2339,7 @@ private fun VerbList(
 private fun VerbParadigm(
     verb: VerbEntry,
     state: VerbsTabState,
-    allVerbs: List<VerbEntry>
+    navVerbs: List<VerbEntry>
 ) {
     Column(
         modifier = Modifier
@@ -2177,7 +2375,7 @@ private fun VerbParadigm(
             )
             Spacer(Modifier.weight(1f))
             SelectionNavButtons(
-                items = allVerbs,
+                items = navVerbs,
                 selected = verb,
                 onSelect = { state.selectVerb(it) }
             )
@@ -2296,6 +2494,7 @@ private fun SentencesList(
                     sentence = s,
                     highlighted = i == state.playingIndex &&
                         state.playingLemma == verb.lemma,
+                    onWordClick = { state.playPolishOnce(it) },
                     onPlay = { state.playSentenceOnce(s) }
                 )
             }
@@ -2311,6 +2510,7 @@ private fun SentencesList(
 private fun SentenceRow(
     sentence: SentenceExample,
     highlighted: Boolean = false,
+    onWordClick: (String) -> Unit,
     onPlay: () -> Unit
 ) {
     Card(
@@ -2337,7 +2537,8 @@ private fun SentenceRow(
                     sentence = sentence,
                     plFontSize = 16.sp,
                     plFontWeight = FontWeight.Bold,
-                    glossFontSize = 10.sp
+                    glossFontSize = 10.sp,
+                    onPlWordClick = onWordClick
                 )
             }
         }

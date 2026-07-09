@@ -84,12 +84,14 @@ import com.sponic.langbang.data.IncludeMode
 import com.sponic.langbang.data.PlayMode
 import com.sponic.langbang.data.RandomConfig
 import com.sponic.langbang.domain.AudioActivityBus
+import com.sponic.langbang.domain.ExternalNowVoicingBus
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
 import com.sponic.langbang.domain.PrefetchProgress
 import com.sponic.langbang.domain.PrefetchWorker
 import com.sponic.langbang.ui.common.NowVoicingPanel
+import com.sponic.langbang.ui.external.ExternalNowVoicingScreen
 import com.sponic.langbang.ui.lessons.AdjectivesScreen
 import com.sponic.langbang.ui.lessons.AdverbsScreen
 import com.sponic.langbang.ui.lessons.LessonScreen
@@ -112,6 +114,7 @@ private enum class Section(val labelKey: String, val fallbackLabel: String) {
     Phrases("tabs.phrases", "Phrases"),
     Quizzes("tabs.quizzes", "Quiz"),
     Numbers("tabs.numbers", "Num"),
+    External("tabs.external", "LLM"),
     Settings("tabs.settings", "Settings")
 }
 
@@ -123,7 +126,8 @@ private val TabSections = listOf(
     Section.Adverbs,
     Section.Nouns,
     Section.Phrases,
-    Section.Quizzes
+    Section.Quizzes,
+    Section.External
 )
 
 @Composable
@@ -188,6 +192,12 @@ fun LangbangApp(app: LangbangApplication) {
         PlaybackController.stop()
         NowVoicingBus.clear()
         pinnedVoicing = null
+    }
+    LaunchedEffect(Unit) {
+        ExternalNowVoicingBus.focusRequests.collect {
+            section = Section.External
+            lastTabSection = Section.External
+        }
     }
     val showInstallerThenLaunch: (java.io.File) -> Unit = { apk ->
         installingUpdate = true
@@ -303,11 +313,14 @@ fun LangbangApp(app: LangbangApplication) {
                     )
                 }
             }
-            UpdateBanner(
-                app = app,
-                onInstallPermissionNeeded = showInstallPermissionMissing,
-                onInstallReady = showInstallerThenLaunch
-            )
+            // Sideload self-update is debug-only; Play builds update through Google Play.
+            if (com.sponic.langbang.BuildConfig.DEBUG) {
+                UpdateBanner(
+                    app = app,
+                    onInstallPermissionNeeded = showInstallPermissionMissing,
+                    onInstallReady = showInstallerThenLaunch
+                )
+            }
             SentenceRegenBanner(app = app)
             // App-wide Now Voicing surface. Audio can start from any tab (for example,
             // the global Play Phrases button while Pronunciation is open), so the
@@ -323,7 +336,9 @@ fun LangbangApp(app: LangbangApplication) {
                     syllableShading = liveConfig.syllableShading
                 )
             }
-            if (nowVoicing != null || playbackTransport != null || randomPlayer.playing || randomPlayer.paused) {
+            if (section != Section.External &&
+                (nowVoicing != null || playbackTransport != null || randomPlayer.playing || randomPlayer.paused)
+            ) {
                 nowVoicingSlot()
             }
             val noNowVoicingSlot: @Composable () -> Unit = {}
@@ -350,6 +365,7 @@ fun LangbangApp(app: LangbangApplication) {
                             )
                             Section.Phrases -> PhrasesScreen(app = app, nowVoicing = noNowVoicingSlot)
                             Section.Numbers -> NumbersScreen(app = app)
+                            Section.External -> ExternalNowVoicingScreen(app = app)
                             Section.Quizzes -> QuizzesScreen(
                                 app = app,
                                 nowVoicing = noNowVoicingSlot,
@@ -464,40 +480,18 @@ private fun AppHeader(
                         .padding(start = 4.dp, end = 13.dp)
                 ) {
                     Image(
-                        painter = painterResource(R.drawable.langbang_logo_square),
-                        contentDescription = label(labels, "app.title", "LangBangML"),
-                        modifier = Modifier.size(31.dp),
-                        contentScale = ContentScale.Fit
-                    )
-                    Image(
                         painter = painterResource(R.drawable.langbang_logo_wordmark),
-                        contentDescription = null,
+                        contentDescription = label(labels, "app.title", "LangBang"),
                         modifier = Modifier
-                            .padding(start = 7.dp)
-                            .width(108.dp)
-                            .height(32.dp),
-                        contentScale = ContentScale.Fit
+                            .height(22.dp),
+                        contentScale = ContentScale.FillHeight
                     )
-                    Surface(
-                        color = LbColors.Primary.copy(alpha = 0.18f),
-                        shape = RoundedCornerShape(6.dp),
-                        border = BorderStroke(1.dp, LbColors.Primary.copy(alpha = 0.5f)),
-                        modifier = Modifier.padding(start = 8.dp)
-                    ) {
-                        Text(
-                            languagePairBadge(),
-                            color = LbColors.AudioBright,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
                     Text(
-                        " v${BuildConfig.BUILD_NUMBER}",
+                        "${languagePairBadge()} v.${BuildConfig.BUILD_NUMBER}",
                         color = LbColors.OnDark2,
-                        fontSize = 9.sp,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(start = 5.dp, top = 1.dp)
+                        modifier = Modifier.padding(start = 8.dp)
                     )
                 }
                 Row(
@@ -674,7 +668,7 @@ private fun TabPill(label: String, selected: Boolean, onClick: () -> Unit) {
                 label,
                 color = if (selected) LbColors.Primary else LbColors.OnDark,
                 fontSize = 11.sp,
-                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Bold,
                 maxLines = 1,
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp)
             )

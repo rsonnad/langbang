@@ -2,23 +2,29 @@ package com.sponic.langbang.ui.common
 
 import com.sponic.langbang.ui.theme.LbColors
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -50,6 +56,8 @@ fun NowVoicingBody(
     onPlWordClick: (String) -> Unit = {},
     idlePlaceholder: String = "Tap “Play Phrases” to start drilling phrases.",
     syllableShading: Boolean = true,
+    largeFormat: Boolean = false,
+    composing: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     if (pinned == null) {
@@ -107,41 +115,18 @@ fun NowVoicingBody(
     val statusLabel = statusLines.firstOrNull().orEmpty()
     val statusDetail = statusLines.drop(1).joinToString(" · ")
 
+    Box(modifier = modifier.fillMaxWidth()) {
     Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(if (largeFormat) 8.dp else 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Top
-        ) {
-            Column(
-                modifier = Modifier.width(136.dp),
-                verticalArrangement = Arrangement.spacedBy(1.dp)
-            ) {
-                if (statusLabel.isNotBlank()) {
-                    Text(
-                        statusLabel,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = LbColors.Label,
-                        maxLines = 1
-                    )
-                }
-                if (statusDetail.isNotBlank()) {
-                    Text(
-                        statusDetail,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = LbColors.Label,
-                        maxLines = 1
-                    )
-                }
-            }
+        if (largeFormat && statusLabel.isBlank() && statusDetail.isBlank() && grammarReference == null) {
             Text(
                 text = englishText,
-                fontSize = 16.sp,
+                fontSize = if (largeFormat && englishText.length > 90) 20.sp
+                    else if (largeFormat) 23.sp
+                    else 16.sp,
                 fontWeight = if (enActive) FontWeight.Bold else FontWeight.SemiBold,
                 color = when {
                     !showEnglish -> Color.Transparent
@@ -149,24 +134,71 @@ fun NowVoicingBody(
                     else -> secondaryText
                 },
                 textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 8.dp, top = 14.dp, end = 8.dp),
-                maxLines = 1
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = if (largeFormat) 3 else 1
             )
-            Box(
-                modifier = Modifier.width(170.dp),
-                contentAlignment = Alignment.TopEnd
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top
             ) {
-                grammarReference?.let { reference ->
-                    Text(
-                        reference,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = mutedText,
-                        textAlign = TextAlign.End,
-                        maxLines = 1
-                    )
+                Column(
+                    modifier = Modifier.width(136.dp),
+                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                ) {
+                    if (statusLabel.isNotBlank()) {
+                        Text(
+                            statusLabel,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = LbColors.Label,
+                            maxLines = 1
+                        )
+                    }
+                    if (statusDetail.isNotBlank()) {
+                        Text(
+                            statusDetail,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = LbColors.Label,
+                            maxLines = 1
+                        )
+                    }
+                }
+                Text(
+                    text = englishText,
+                    fontSize = if (largeFormat && englishText.length > 90) 20.sp
+                        else if (largeFormat) 23.sp
+                        else 16.sp,
+                    fontWeight = if (enActive) FontWeight.Bold else FontWeight.SemiBold,
+                    color = when {
+                        !showEnglish -> Color.Transparent
+                        enActive -> primaryText
+                        else -> secondaryText
+                    },
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 8.dp, top = 14.dp, end = 8.dp),
+                    maxLines = if (largeFormat) 3 else 1
+                )
+                Box(
+                    // Reserve the grammar-reference gutter only when there's a reference to
+                    // show; otherwise give the width back to the English line so it doesn't
+                    // wrap a trailing word against empty space (phrases have no reference).
+                    modifier = Modifier.width(if (grammarReference != null) 170.dp else 0.dp),
+                    contentAlignment = Alignment.TopEnd
+                ) {
+                    grammarReference?.let { reference ->
+                        Text(
+                            reference,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = mutedText,
+                            textAlign = TextAlign.End,
+                            maxLines = 1
+                        )
+                    }
                 }
             }
         }
@@ -177,6 +209,11 @@ fun NowVoicingBody(
         // (sentence) renderings.
         val totalChars = plTokens.sumOf { it.length } + (plTokens.size - 1).coerceAtLeast(0) * 2
         val polishFontSize = when {
+            largeFormat && totalChars > 140 -> 24.sp
+            largeFormat && totalChars > 95 -> 28.sp
+            largeFormat && totalChars > 65 -> 32.sp
+            largeFormat && totalChars > 45 -> 36.sp
+            largeFormat -> 44.sp
             totalChars > 55 -> 28.sp
             totalChars > 46 -> 32.sp
             totalChars > 38 -> 36.sp
@@ -186,23 +223,48 @@ fun NowVoicingBody(
             else -> 52.sp
         }
         val glossFontSize = when {
+            largeFormat && totalChars > 95 -> 11.sp
+            largeFormat -> 13.sp
             totalChars > 46 -> 11.sp
             totalChars > 38 -> 12.sp
             else -> 14.sp
         }
-        val tokenPad = if (totalChars > 38) 4.dp else 8.dp
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        val tokenPad = if (totalChars > 38) 8.dp else 16.dp
+        val selection = rememberPolishTokenSelectionState()
+        val selectedIndexes = selection.selectedIndexes
+        val tokenContainer: @Composable (@Composable () -> Unit) -> Unit = { content ->
+            // Always wrap. A single non-wrapping Row clipped the tail words of long phrases
+            // (e.g. a 13-word affirmation) off the right edge. FlowRow flows the overflow
+            // tokens onto new lines, and the shell renders this card at wrap-content height,
+            // so the card grows to fit every word instead of hiding the end of the phrase.
+            FlowRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(selection.dragModifier(plTokens)),
+                horizontalArrangement = Arrangement.Center,
+                verticalArrangement = Arrangement.spacedBy(if (largeFormat) 4.dp else 2.dp)
+            ) {
+                content()
+            }
+        }
+        tokenContainer {
             plTokens.forEachIndexed { i, plTok ->
                 val gloss = glossTokens.getOrNull(i).orEmpty()
                 val token = structuredWords?.getOrNull(i)
-                val wordModifier = Modifier.clickable { onPlWordClick(plTok) }
+                val wordModifier = Modifier.clickable {
+                    onPlWordClick(selection.selectionOrTokenText(i, plTokens))
+                }
+                val selected = i in selectedIndexes
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(horizontal = tokenPad)
+                    modifier = Modifier
+                        .padding(horizontal = tokenPad)
+                        .onGloballyPositioned { selection.updateBounds(i, it) }
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            if (selected) LbColors.Audio.copy(alpha = 0.14f)
+                            else Color.Transparent
+                        )
                 ) {
                     val displayed = if (plHidden) "•".repeat(plTok.length.coerceAtLeast(2))
                                     else plTok
@@ -228,8 +290,8 @@ fun NowVoicingBody(
                             variableStart = variableToken.variableStart,
                             variableEnd = variableToken.variableEnd,
                             fallbackWholeWord = variableToken.variableStart == null,
-                            maxLines = 1,
-                            softWrap = false,
+                            maxLines = if (largeFormat) 4 else 1,
+                            softWrap = largeFormat,
                             syllableShades = shades,
                             modifier = wordModifier
                         )
@@ -240,8 +302,8 @@ fun NowVoicingBody(
                             variableColor = fixedColor,
                             fontSize = polishFontSize,
                             fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false,
+                            maxLines = if (largeFormat) 4 else 1,
+                            softWrap = largeFormat,
                             syllableShades = shades,
                             modifier = wordModifier
                         )
@@ -251,12 +313,12 @@ fun NowVoicingBody(
                             fontSize = polishFontSize,
                             fontWeight = FontWeight.Bold,
                             color = fixedColor,
-                            maxLines = 1,
-                            softWrap = false,
+                            maxLines = if (largeFormat) 4 else 1,
+                            softWrap = largeFormat,
                             modifier = wordModifier
                         )
                     }
-                    if (showEnglish && !plHidden && gloss.isNotEmpty()) {
+                    if (!plHidden && gloss.isNotEmpty()) {
                         Text(
                             gloss,
                             fontSize = glossFontSize,
@@ -269,6 +331,22 @@ fun NowVoicingBody(
                         Spacer(Modifier.height((glossFontSize.value + 2f).dp))
                     }
                 }
+            }
+        }
+    }
+        if (composing) {
+            Surface(
+                color = LbColors.WarningSoft,
+                shape = RoundedCornerShape(7.dp),
+                modifier = Modifier.align(Alignment.TopEnd)
+            ) {
+                Text(
+                    "Composing...",
+                    color = LbColors.Warning,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                )
             }
         }
     }

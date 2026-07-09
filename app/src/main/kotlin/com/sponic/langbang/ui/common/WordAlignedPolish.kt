@@ -2,6 +2,7 @@ package com.sponic.langbang.ui.common
 
 import com.sponic.langbang.ui.theme.LbColors
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -11,9 +12,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -73,9 +77,11 @@ fun WordAlignedPolish(
         key = "${sentence.pl}\n${sentence.en}\n${sentence.literal.orEmpty()}",
         delayMillis = glossDelayMillis
     )
+    val selection = rememberPolishTokenSelectionState()
+    val selectedIndexes = selection.selectedIndexes
 
     FlowRow(
-        modifier = modifier,
+        modifier = modifier.then(selection.dragModifier(plTokens)),
         horizontalArrangement = Arrangement.spacedBy(horizontalSpacing),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
@@ -84,11 +90,18 @@ fun WordAlignedPolish(
             val token = structuredTokens.getOrNull(i)
             val variableColor = token?.let { GrammarVisuals.Variable.color(it) }
             val wordModifier = if (onPlWordClick != null) {
-                Modifier.clickable { onPlWordClick(plTok) }
+                Modifier.clickable { onPlWordClick(selection.selectionOrTokenText(i, plTokens)) }
             } else {
                 Modifier
             }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            val selected = i in selectedIndexes
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .onGloballyPositioned { selection.updateBounds(i, it) }
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(if (selected) LbColors.Audio.copy(alpha = 0.14f) else Color.Transparent)
+            ) {
                 if (variableColor != null) {
                     VariablePolishText(
                         text = plTok,

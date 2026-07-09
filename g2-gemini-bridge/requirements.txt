@@ -1,0 +1,4 @@
+bleak>=0.22.3
+sounddevice>=0.4.7
+websockets>=12.0
+
