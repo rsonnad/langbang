@@ -10,9 +10,17 @@
          self-update) are declared in src/debug/AndroidManifest.xml so they are
          merged into debug builds only and never ship in a Play release. -->
 
+    <!-- Permission used to protect the exported ExternalNowVoicingReceiver.
+         Only apps signed with the same key can drive external voicing (used by
+         companion devices/tools). This prevents arbitrary apps from injecting
+         content into the voicing UI on a Play-installed app. -->
+    <permission
+        android:name="com.sponic.langbangml.permission.DRIVE_NOW_VOICING"
+        android:protectionLevel="signature" />
+
     <uses-feature
         android:name="android.hardware.microphone"
-        android:required="true" />
+        android:required="false" />
 
     <application
         android:name=".LangbangApplication"
@@ -44,7 +52,8 @@
         <receiver
             android:name=".ExternalNowVoicingReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:permission="com.sponic.langbangml.permission.DRIVE_NOW_VOICING">
             <intent-filter>
                 <action android:name="com.sponic.langbangml.DRIVE_NOW_VOICING" />
             </intent-filter>
