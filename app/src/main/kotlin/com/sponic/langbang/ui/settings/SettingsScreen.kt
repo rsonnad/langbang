@@ -5,6 +5,8 @@ import com.sponic.langbang.ui.theme.LbColors
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,19 +19,28 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -104,33 +115,35 @@ fun SettingsScreen(app: LangbangApplication) {
         SlowAudioStyleCard(app = app)
         SettingsGroupHeader(
             title = "System",
-            description = "Usage estimates and tablet backup setup."
+            description = "Usage estimates" + if (BuildConfig.DEBUG) " and tablet backup setup." else "."
         )
         AzureUsageCard(usage = usage)
-        BackupCard(
-            host = backup.config.host,
-            port = backup.config.port,
-            user = backup.config.user,
-            remoteDir = backup.config.remoteDir,
-            publicKey = backup.publicKeyOpenSsh,
-            destinationLabel = backup.destinationLabel,
-            lastBackupAtMs = backup.lastBackupAtMs,
-            lastBackupFile = backup.lastBackupFile,
-            lastStatus = backup.lastStatus,
-            inProgress = backup.inProgress,
-            onSaveConfig = { h, p, u, r -> app.backup.updateConfig(h, p, u, r) },
-            onBackup = {
-                scope.launch {
-                    val result = app.backup.runBackup()
-                    val msg = result.fold(
-                        onSuccess = { name -> "Backup uploaded — $name" },
-                        onFailure = { t -> "Backup failed: ${t.message ?: t.javaClass.simpleName}" }
-                    )
-                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                }
-            },
-            onCopyKey = { copyToClipboard(context, "SSH public key", backup.publicKeyOpenSsh) }
-        )
+        if (BuildConfig.DEBUG) {
+            BackupCard(
+                host = backup.config.host,
+                port = backup.config.port,
+                user = backup.config.user,
+                remoteDir = backup.config.remoteDir,
+                publicKey = backup.publicKeyOpenSsh,
+                destinationLabel = backup.destinationLabel,
+                lastBackupAtMs = backup.lastBackupAtMs,
+                lastBackupFile = backup.lastBackupFile,
+                lastStatus = backup.lastStatus,
+                inProgress = backup.inProgress,
+                onSaveConfig = { h, p, u, r -> app.backup.updateConfig(h, p, u, r) },
+                onBackup = {
+                    scope.launch {
+                        val result = app.backup.runBackup()
+                        val msg = result.fold(
+                            onSuccess = { name -> "Backup uploaded — $name" },
+                            onFailure = { t -> "Backup failed: ${t.message ?: t.javaClass.simpleName}" }
+                        )
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                    }
+                },
+                onCopyKey = { copyToClipboard(context, "SSH public key", backup.publicKeyOpenSsh) }
+            )
+        }
     }
 }
 
@@ -228,6 +241,44 @@ private fun AccountSyncCard(
                             }
                         }
                     ) { Text("Sign out") }
+                    var showDeleteConfirm by remember { mutableStateOf(false) }
+                    OutlinedButton(
+                        enabled = !busy,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = LbColors.Danger),
+                        onClick = { showDeleteConfirm = true }
+                    ) { Text("Delete account") }
+                    if (showDeleteConfirm) {
+                        AlertDialog(
+                            onDismissRequest = { showDeleteConfirm = false },
+                            title = { Text("Delete account?") },
+                            text = {
+                                Text(
+                                    "Permanently deletes your account, sign-in, and all custom " +
+                                        "phrases and words synced to LangBang. This cannot be undone."
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    showDeleteConfirm = false
+                                    scope.launch {
+                                        busy = true
+                                        status = app.cloudBackend.deleteAccount(auth.sessionToken).fold(
+                                            onSuccess = {
+                                                runCatching { GoogleSignInHelper(context).clearCredentialState() }
+                                                app.authStore.clear()
+                                                "Account deleted"
+                                            },
+                                            onFailure = { t -> "Delete failed: ${t.message ?: t.javaClass.simpleName}" }
+                                        )
+                                        busy = false
+                                    }
+                                }) { Text("Delete") }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+                            }
+                        )
+                    }
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -356,10 +407,11 @@ private suspend fun signInWithGoogle(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AgentApiCard(
+internal fun AgentApiCard(
     app: LangbangApplication,
     scope: kotlinx.coroutines.CoroutineScope,
-    context: Context
+    context: Context,
+    onDismiss: (() -> Unit)? = null
 ) {
     val auth by app.authStore.state.collectAsState()
     val instanceId = app.cloudConfig.state.value.selectedInstanceId
@@ -377,104 +429,256 @@ private fun AgentApiCard(
         )
     }
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, LbColors.Line),
+        shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    SectionHeader("Claude/Codex API token")
+                    SectionHeader("Programmatic Agentic Integration (LLM)")
+                    Text(
+                        "LangBang loves to be banged by your favorite chatbot or coding agent.",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = LbColors.TextPrimary
+                    )
+                    Text(
+                        "Just paste the info below into your favorite AI system, then ask it to drive LangBang with whatever content you want. You still get LangBang's display capabilities in the Now Voicing screen, plus the ability to hear specific words and phrases and see how they all fit together.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                    )
                     Text(
                         if (auth.signedIn) {
-                            "Copy this token plus the setup instructions into a coding agent to add or delete your personal phrases and words."
+                            "Copy Setup into a coding agent or chatbot/LLM. It includes the token, docs URL, and instructions to add or delete your personal phrases and words, or to drive this LLM practice panel."
                         } else {
                             "Sign in first to create a personal API token."
                         },
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
                 }
+                if (auth.agentToken.isNotBlank()) {
+                    OutlinedButton(
+                        enabled = auth.signedIn && !busy,
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                app.cloudBackend.createAgentToken(
+                                    sessionToken = auth.sessionToken,
+                                    instanceId = instanceId,
+                                    rotate = true
+                                ).fold(
+                                    onSuccess = { response ->
+                                        app.authStore.saveAgentToken(response)
+                                        status = "Token rotated"
+                                    },
+                                    onFailure = { t ->
+                                        status = "Rotate failed: ${t.message ?: t.javaClass.simpleName}"
+                                    }
+                                )
+                                busy = false
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) { Text("Rotate Token", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
+                }
                 if (busy) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                if (onDismiss != null) {
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "Dismiss",
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
+                    }
+                }
             }
-            Text("Instructions", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
-            SelectionContainer {
-                Text(
-                    instructionsUrl,
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-            CloudRow("Daily API calls", "${auth.agentDailyLimit}")
-            if (auth.agentToken.isNotBlank()) {
-                SelectionContainer {
-                    Text(
-                        auth.agentToken,
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                FlowRow(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (auth.agentToken.isBlank()) {
+                        AgentActionButton(
+                            label = "Create token",
+                            enabled = auth.signedIn && !busy,
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    app.cloudBackend.createAgentToken(
+                                        sessionToken = auth.sessionToken,
+                                        instanceId = instanceId,
+                                        rotate = false
+                                    ).fold(
+                                        onSuccess = { response ->
+                                            app.authStore.saveAgentToken(response)
+                                            status = "Token ready"
+                                        },
+                                        onFailure = { t ->
+                                            status = "Token failed: ${t.message ?: t.javaClass.simpleName}"
+                                        }
+                                    )
+                                    busy = false
+                                }
+                            }
+                        )
+                    }
+                    AgentActionButton(
+                        label = "Send email",
+                        enabled = auth.agentToken.isNotBlank() && !busy,
+                        primary = true,
+                        onClick = {
+                            emailAgentSetup(context, setupPrompt)
+                            status = "Email draft opened"
+                        }
+                    )
+                    AgentCopyButton(
+                        label = "Token",
+                        enabled = auth.agentToken.isNotBlank(),
+                        onClick = {
+                            copyToClipboard(context, "LangBangML agent token", auth.agentToken)
+                            status = "Token copied"
+                        }
+                    )
+                    AgentCopyButton(
+                        label = "Setup",
+                        enabled = auth.agentToken.isNotBlank(),
+                        onClick = {
+                            copyToClipboard(context, "LangBangML agent setup", setupPrompt)
+                            status = "Setup copied"
+                        }
                     )
                 }
-            } else {
-                Text("No token created yet.", fontSize = 11.sp, color = LbColors.TextMuted)
-            }
-            status?.let {
-                Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
-            }
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Button(
-                    enabled = auth.signedIn && !busy,
-                    onClick = {
-                        scope.launch {
-                            busy = true
-                            app.cloudBackend.createAgentToken(
-                                sessionToken = auth.sessionToken,
-                                instanceId = instanceId,
-                                rotate = auth.agentToken.isNotBlank()
-                            ).fold(
-                                onSuccess = { response ->
-                                    app.authStore.saveAgentToken(response)
-                                    status = "Token ready"
-                                },
-                                onFailure = { t ->
-                                    status = "Token failed: ${t.message ?: t.javaClass.simpleName}"
-                                }
-                            )
-                            busy = false
-                        }
-                    }
-                ) {
-                    Text(if (auth.agentToken.isBlank()) "Create token" else "Rotate token")
+                status?.let {
+                    Text(
+                        it,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
                 }
-                OutlinedButton(
-                    enabled = auth.agentToken.isNotBlank(),
-                    onClick = {
-                        copyToClipboard(context, "LangBangML agent token", auth.agentToken)
-                        status = "Token copied"
+            }
+            Surface(
+                color = LbColors.SurfaceTint,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, LbColors.Line),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "API setup",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = LbColors.TextSecondary
+                        )
+                        Text(
+                            "${auth.agentDailyUsed}/${auth.agentDailyLimit} calls/day",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = LbColors.TextMuted
+                        )
                     }
-                ) { Text("Copy token") }
-                OutlinedButton(
-                    enabled = auth.agentToken.isNotBlank(),
-                    onClick = {
-                        copyToClipboard(context, "LangBangML agent setup", setupPrompt)
-                        status = "Setup prompt copied"
+                    SelectionContainer {
+                        Text(
+                            instructionsUrl,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
-                ) { Text("Copy setup") }
-                OutlinedButton(
-                    onClick = {
-                        copyToClipboard(context, "LangBangML API docs", instructionsUrl)
-                        status = "Instructions URL copied"
-                    }
-                ) { Text("Copy docs URL") }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun AgentActionButton(
+    label: String,
+    enabled: Boolean,
+    primary: Boolean = false,
+    onClick: () -> Unit
+) {
+    Button(
+        enabled = enabled,
+        onClick = onClick,
+        shape = RoundedCornerShape(8.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (primary) LbColors.Audio else LbColors.SurfaceTint,
+            contentColor = LbColors.TextPrimary,
+            disabledContainerColor = LbColors.SurfaceTint.copy(alpha = 0.55f),
+            disabledContentColor = LbColors.TextMuted
+        ),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp)
+    ) {
+        Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun AgentCopyButton(
+    label: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    Button(
+        enabled = enabled,
+        onClick = onClick,
+        shape = RoundedCornerShape(8.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = LbColors.SurfaceTint,
+            contentColor = LbColors.TextPrimary,
+            disabledContainerColor = LbColors.SurfaceTint.copy(alpha = 0.55f),
+            disabledContentColor = LbColors.TextMuted
+        ),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Filled.ContentCopy,
+            contentDescription = null,
+            modifier = Modifier.size(15.dp)
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+private fun emailAgentSetup(context: Context, setupPrompt: String) {
+    val intent = Intent(Intent.ACTION_SENDTO).apply {
+        data = Uri.parse("mailto:")
+        putExtra(Intent.EXTRA_SUBJECT, "LangBangML agent setup")
+        putExtra(Intent.EXTRA_TEXT, setupPrompt)
+    }
+    runCatching {
+        val gmailIntent = Intent(intent).setPackage("com.google.android.gm")
+        val launchIntent = if (gmailIntent.resolveActivity(context.packageManager) != null) {
+            gmailIntent
+        } else {
+            Intent.createChooser(intent, "Email LangBangML setup")
+        }
+        context.startActivity(launchIntent)
+    }.onFailure {
+        Toast.makeText(context, "No email app available", Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -486,13 +690,13 @@ private fun buildAgentSetupPrompt(
 ): String =
     """
     Use the LangBangML Agent API to edit my personal study content.
-    Instructions: $instructionsUrl
+    Docs URL: $instructionsUrl
     Instance ID: $instanceId
     Token: $token
 
     Use Authorization: Bearer $token on every /v1/agent request.
     Daily limit: $dailyLimit authenticated agent API calls.
-    Add/delete phrases and add/delete words in Verbs, Nouns, Adj, and Adv only through the personal agent endpoints.
+    Add/delete phrases and add/delete words in Verbs, Nouns, Adj, and Adv through the personal agent endpoints, or drive the LLM practice panel.
     Do not print or store the token in files, commits, logs, screenshots, or chat summaries.
     Never ask for the LangBangML admin content token.
     """.trimIndent()
@@ -851,12 +1055,39 @@ private fun AudioDownloadCard(
 
 @Composable
 private fun VersionHeader() {
+    val context = LocalContext.current
     Text(
         "langbang v${BuildConfig.BUILD_NUMBER} · ${BuildConfig.BUILD_TIMESTAMP}",
         fontSize = 12.sp,
         fontFamily = FontFamily.Monospace,
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
     )
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.padding(top = 4.dp)
+    ) {
+        val linkColor = MaterialTheme.colorScheme.primary
+        Text(
+            "Privacy Policy",
+            fontSize = 12.sp,
+            color = linkColor,
+            modifier = Modifier.clickable {
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse("https://langbang.org/privacy"))
+                )
+            }
+        )
+        Text(
+            "Terms",
+            fontSize = 12.sp,
+            color = linkColor,
+            modifier = Modifier.clickable {
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse("https://langbang.org/terms"))
+                )
+            }
+        )
+    }
 }
 
 /**
