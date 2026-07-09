@@ -156,9 +156,14 @@ android {
 
     buildTypes {
         getByName("release") {
-            // R8 left OFF for now: Azure Speech SDK / ktor / kotlinx-serialization
-            // need keep rules before shrinking is safe (follow-up AND-7b).
+            // R8 keep rules added (proguard-rules.pro). Flip isMinifyEnabled after
+            // validating a release bundle does not regress core flows (Azure SDK,
+            // serialization, Compose navigation, WorkManager). See AND-7b.
             isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             // Sign with the Play upload key when configured, else debug (so the
             // build never fails); only a release-keystore-signed AAB is uploadable.
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
