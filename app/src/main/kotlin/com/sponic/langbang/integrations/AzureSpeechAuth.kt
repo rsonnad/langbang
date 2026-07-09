@@ -62,6 +62,8 @@ object AzureSpeechAuth {
                 t to r
             } catch (_: Throwable) {
                 null
+            } finally {
+                runCatching { conn.disconnect() }
             }
         }
     }
