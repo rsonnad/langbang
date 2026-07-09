@@ -120,6 +120,7 @@ class LangbangApplication : Application() {
         tts = AzureTtsClient(usage, network)
         pron = AzurePronunciationClient(this, usage, network)
         gemini = GeminiClient(usage)
+        gemini.setSessionToken(authStore.state.value.sessionToken)
         backup = BackupService(this)
         prefetch = PrefetchService(tts, audioCache, lessonRepo)
         r2Audio = R2AudioDownloader(audioCache, lessonRepo, network)
@@ -169,6 +170,9 @@ class LangbangApplication : Application() {
                         null
                     }
                 )
+                // Propagate session token to GeminiClient so /v1/gemini/generate calls
+                // can be attributed to the signed-in user for per-user quotas/rate limits.
+                gemini.setSessionToken(state.sessionToken)
             }
         }
     }
