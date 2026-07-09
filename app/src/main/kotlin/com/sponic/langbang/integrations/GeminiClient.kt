@@ -27,6 +27,14 @@ import java.net.URL
 class GeminiClient(
     private val usage: UsageTracker? = null
 ) {
+    // Optional bearer to send on /v1/gemini/generate so the backend can attribute
+    // per-user quotas (when signed in). Set by the app when auth state changes.
+    @Volatile private var sessionBearer: String? = null
+
+    fun setSessionToken(token: String?) {
+        sessionBearer = token?.takeIf { it.isNotBlank() }
+    }
+
     companion object {
         const val TENSE_PRESENT = "present"
         const val TENSE_PAST = "past"
@@ -190,6 +198,9 @@ class GeminiClient(
         conn.readTimeout = 45000
         conn.setRequestProperty("Content-Type", "application/json")
         conn.setRequestProperty("Accept", "application/json")
+        sessionBearer?.let {
+            conn.setRequestProperty("Authorization", "Bearer $it")
+        }
 
         conn.outputStream.use {
             it.write(buildServerRequestBody(prompt, model).toByteArray(Charsets.UTF_8))
