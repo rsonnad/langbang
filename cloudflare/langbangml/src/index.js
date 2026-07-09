@@ -223,7 +223,8 @@ export default {
       if (error instanceof HttpError) {
         return withCors(json({ error: error.message, details: error.details }, error.status), allowOrigin);
       }
-      return withCors(json({ error: error?.message || String(error) }, 500), allowOrigin);
+      // Do not leak internal error details or stack to callers.
+      return withCors(json({ error: "internal error" }, 500), allowOrigin);
     }
   },
 };
@@ -242,10 +243,24 @@ function requireAdmin(request, env) {
     throw new HttpError(503, "CONTENT_API_TOKEN is not configured");
   }
   const auth = request.headers.get("Authorization") || "";
-  const token = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
-  if (token !== expected) {
+  const token = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || "";
+  if (!constantTimeStringEqual(token, expected)) {
     throw new HttpError(401, "admin token required");
   }
+}
+
+// Length-independent constant-time string compare. Does not short-circuit.
+function constantTimeStringEqual(a, b) {
+  const s1 = String(a || "");
+  const s2 = String(b || "");
+  const len = Math.max(s1.length, s2.length);
+  let diff = s1.length ^ s2.length;
+  for (let i = 0; i < len; i++) {
+    const c1 = i < s1.length ? s1.charCodeAt(i) : 0;
+    const c2 = i < s2.length ? s2.charCodeAt(i) : 0;
+    diff |= c1 ^ c2;
+  }
+  return diff === 0;
 }
 
 // Non-throwing admin check — exempts the owner's own tooling (bulk content
