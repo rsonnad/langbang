@@ -323,12 +323,26 @@ struct StudyRootView: View {
     @ViewBuilder
     private func header(for b: CloudBootstrap) -> some View {
         let lp = b.languagePair
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image("LangBangWordmark")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(height: 26)
+                    .accessibilityLabel("LangBang")
+
+                Spacer(minLength: 0)
+
+                Text("v\(appVersion) (\(appBuild))")
+                    .font(.caption2.monospaced().weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.72))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(Color(red: 0.08, green: 0.09, blue: 0.12), in: RoundedRectangle(cornerRadius: 12))
+
             Text("\(lp.sourceLanguage) → \(lp.targetLanguage)")
                 .font(.headline)
-            Text("LangBang v\(appVersion) (\(appBuild))")
-                .font(.caption2.monospaced())
-                .foregroundStyle(.tertiary)
             if let ver = b.content.versionId {
                 Text(ver).font(.caption2).foregroundStyle(.tertiary)
             }
