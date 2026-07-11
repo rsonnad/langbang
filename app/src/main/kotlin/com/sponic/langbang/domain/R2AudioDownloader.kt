@@ -45,13 +45,16 @@ class R2AudioDownloader(
      * that batch is skipped and counted as failed; the next batch still runs. Re-running
      * later picks up whatever's still missing (idempotent — cache.has skips done files).
      */
-    suspend fun downloadAll(onProgress: suspend (Int, Int, String) -> Unit): Result<DownloadSummary> =
+    suspend fun downloadAll(
+        shouldContinue: () -> Boolean = { true },
+        onProgress: suspend (Int, Int, String) -> Unit
+    ): Result<DownloadSummary> =
         withContext(Dispatchers.IO) {
             if (!network.isOnline()) {
                 return@withContext Result.failure(IOException("Offline — download skipped."))
             }
             val phrases = buildManifestPhrases()
-            downloadMissing(phrases, onProgress)
+            downloadMissing(phrases, onProgress, shouldContinue)
         }
 
     suspend fun downloadPhrases(
@@ -93,8 +96,10 @@ class R2AudioDownloader(
 
     private suspend fun downloadMissing(
         phrases: List<Phrase>,
-        onProgress: suspend (Int, Int, String) -> Unit
+        onProgress: suspend (Int, Int, String) -> Unit,
+        shouldContinue: () -> Boolean = { true }
     ): Result<DownloadSummary> {
+        if (!shouldContinue()) return Result.failure(IOException("Audio download superseded."))
         val missing = phrases.filter { p ->
             !cache.has(cache.fileFor(p.locale, p.voice, p.text))
         }
@@ -108,6 +113,7 @@ class R2AudioDownloader(
         var done = 0
         val total = missing.size
         for (batch in missing.chunked(BATCH_SIZE)) {
+            if (!shouldContinue()) return Result.failure(IOException("Audio download superseded."))
             val manifest = try {
                 fetchManifest(batch)
             } catch (_: Throwable) {
@@ -118,6 +124,7 @@ class R2AudioDownloader(
                 continue
             }
             for (m in manifest) {
+                if (!shouldContinue()) return Result.failure(IOException("Audio download superseded."))
                 done++
                 onProgress(done, total, m.text)
                 val file = cache.fileFor(m.locale, m.voice, m.text)
@@ -129,6 +136,7 @@ class R2AudioDownloader(
                     conn.connectTimeout = 15000
                     conn.readTimeout = 30000
                     if (conn.responseCode !in 200..299) { failed++; continue }
+                    if (!shouldContinue()) return Result.failure(IOException("Audio download superseded."))
                     file.parentFile?.mkdirs()
                     conn.inputStream.use { input ->
                         file.outputStream().use { out -> input.copyTo(out) }

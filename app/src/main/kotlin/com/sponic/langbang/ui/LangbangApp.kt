@@ -81,6 +81,7 @@ import com.sponic.langbang.R
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.BuildConfig
 import com.sponic.langbang.data.IncludeMode
+import com.sponic.langbang.data.LanguagePackStatus
 import com.sponic.langbang.data.PlayMode
 import com.sponic.langbang.data.RandomConfig
 import com.sponic.langbang.domain.AudioActivityBus
@@ -132,6 +133,26 @@ private val TabSections = listOf(
 
 @Composable
 fun LangbangApp(app: LangbangApplication) {
+    val cloudState by app.cloudConfig.state.collectAsState()
+    val languagePack by app.languagePacks.state.collectAsState()
+    val selectedInstanceId = languagePack.selectedInstanceId
+    val bootstrap = cloudState.bootstrap
+    val selectedBootstrap = bootstrap?.takeIf { it.instance.id == selectedInstanceId }
+    val packReady = selectedBootstrap != null && app.languagePacks.isReady(
+        selectedBootstrap.instance.id,
+        selectedBootstrap.content.versionId
+    )
+
+    when {
+        !languagePack.selectionMade -> LanguagePackGate(app = app)
+        !packReady -> LanguagePackGate(app = app)
+        else -> LangbangStudyApp(app)
+    }
+}
+
+/** The study shell is unreachable until the learner's selected language pack is ready. */
+@Composable
+private fun LangbangStudyApp(app: LangbangApplication) {
     val context = LocalContext.current
     val workFlow = remember {
         WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(PrefetchWorker.UNIQUE_NAME)
@@ -404,6 +425,167 @@ fun LangbangApp(app: LangbangApplication) {
 }
 
 @Composable
+private fun LanguagePackGate(app: LangbangApplication) {
+    val cloud by app.cloudConfig.state.collectAsState()
+    val pack by app.languagePacks.state.collectAsState()
+    val selected = cloud.instances.firstOrNull { it.id == pack.selectedInstanceId }
+    val selectedBootstrap = cloud.bootstrap?.takeIf { it.instance.id == pack.selectedInstanceId }
+    val contentVersion = selectedBootstrap?.content?.versionId
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .systemBarsPadding()
+            .displayCutoutPadding()
+            .background(LbColors.Canvas)
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                "LangBang",
+                fontSize = 32.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = LbColors.Primary
+            )
+            if (!pack.selectionMade) {
+                Text(
+                    "Choose the language you want to learn",
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = LbColors.TextPrimary
+                )
+                Text(
+                    "LangBang downloads the lessons and spoken audio for your choice. You can change it later in Settings.",
+                    fontSize = 13.sp,
+                    color = LbColors.TextMuted,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (cloud.instances.isEmpty()) {
+                    Text(
+                        if (cloud.syncing) "Finding available language packs…"
+                        else cloud.error ?: "Connecting to download language packs…",
+                        fontSize = 13.sp,
+                        color = LbColors.TextMuted
+                    )
+                    if (!cloud.syncing) {
+                        Surface(
+                            color = LbColors.Primary,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.clickable { app.syncCloudConfig() }
+                        ) {
+                            Text(
+                                "Try again",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 11.dp)
+                            )
+                        }
+                    }
+                } else {
+                    cloud.instances.forEach { instance ->
+                        val pair = instance.languagePair
+                        Surface(
+                            color = LbColors.Surface,
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, LbColors.Line),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { app.selectCloudInstance(instance.id) }
+                        ) {
+                            Column(Modifier.padding(16.dp)) {
+                                Text(
+                                    "${pair.sourceLanguage} → ${pair.targetLanguage}",
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = LbColors.TextPrimary
+                                )
+                                Text(
+                                    "Download lessons and offline spoken audio",
+                                    fontSize = 12.sp,
+                                    color = LbColors.TextMuted,
+                                    modifier = Modifier.padding(top = 3.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                val name = selected?.languagePair?.let {
+                    "${it.sourceLanguage} → ${it.targetLanguage}"
+                } ?: "your language pack"
+                Text(
+                    "Preparing $name",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = LbColors.TextPrimary
+                )
+                when (pack.status) {
+                    LanguagePackStatus.ERROR -> {
+                        Text(
+                            pack.error ?: "The language pack could not be downloaded.",
+                            fontSize = 13.sp,
+                            color = LbColors.Danger
+                        )
+                        Surface(
+                            color = LbColors.Primary,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.clickable { app.retrySelectedLanguagePack() }
+                        ) {
+                            Text(
+                                "Retry download",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 11.dp)
+                            )
+                        }
+                    }
+                    else -> {
+                        Text(
+                            if (selectedBootstrap == null) "Downloading lesson details…"
+                            else "Downloading spoken audio for offline study…",
+                            fontSize = 13.sp,
+                            color = LbColors.TextMuted
+                        )
+                        if (pack.total > 0) {
+                            LinearProgressIndicator(
+                                progress = { pack.downloaded.toFloat() / pack.total.coerceAtLeast(1) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                "${pack.downloaded}/${pack.total}",
+                                fontSize = 12.sp,
+                                color = LbColors.TextMuted
+                            )
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
+                        if (contentVersion == null && !cloud.syncing) {
+                            Surface(
+                                color = LbColors.Primary,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.clickable { app.retrySelectedLanguagePack() }
+                            ) {
+                                Text(
+                                    "Retry",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 11.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun InstallerOverlay(message: String) {
     Box(
         modifier = Modifier
@@ -546,6 +728,7 @@ private fun AppHeader(
 
 private fun languagePairBadge(): String = when (BuildConfig.LANGBANGML_INSTANCE_ID) {
     "langbangml-pl-en" -> "PL/EN"
+    "langbangml-en-ja" -> "EN/JA"
     else -> "EN/PL"
 }
 

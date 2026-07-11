@@ -36,10 +36,10 @@ fun LessonRepository.targetLanguageLabel(): String =
     languageLabel(cloudLanguagePair()?.targetLanguage, "Polish")
 
 fun LessonRepository.targetSubjectFor(personKey: String): String =
-    if (targetAudioVoice().locale == AzureTtsClient.LOCALE_EN) {
-        englishSubjectFor(personKey)
-    } else {
-        audioPronoun(personKey)
+    when (targetAudioVoice().locale) {
+        AzureTtsClient.LOCALE_EN -> englishSubjectFor(personKey)
+        AzureTtsClient.LOCALE_JA -> japaneseSubjectFor(personKey)
+        else -> audioPronoun(personKey)
     }
 
 fun LangbangApplication.sourceAudioVoice(): StudyAudioVoice =
@@ -69,6 +69,17 @@ private fun languageLabel(code: String?, fallback: String): String =
     when (code?.lowercase()) {
         "en", "english" -> "English"
         "pl", "polish" -> "Polish"
+        "ja", "japanese" -> "Japanese"
         "es", "spanish" -> "Spanish"
         else -> fallback
     }
+
+private fun japaneseSubjectFor(personKey: String): String = when (personKey) {
+    "1sg" -> "私は"
+    "2sg" -> "あなたは"
+    "3sg" -> "彼は"
+    "1pl" -> "私たちは"
+    "2pl" -> "あなたたちは"
+    "3pl" -> "彼らは"
+    else -> ""
+}

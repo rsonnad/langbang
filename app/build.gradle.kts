@@ -153,6 +153,17 @@ android {
                 "\"https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev/langbang/builds/pl-en/latest.json\""
             )
         }
+        create("enJa") {
+            dimension = "direction"
+            applicationIdSuffix = ".enja"
+            resValue("string", "app_name", "LangBang EN-JA")
+            buildConfigField("String", "LANGBANGML_INSTANCE_ID", "\"langbangml-en-ja\"")
+            buildConfigField(
+                "String",
+                "LANGBANGML_UPDATE_MANIFEST_URL",
+                "\"https://pub-5bfcb836ff7946b785556c2d8131cba5.r2.dev/langbang/builds/en-ja/latest.json\""
+            )
+        }
     }
 
     buildTypes {
@@ -216,7 +227,7 @@ val checkTabletRegressions by tasks.registering(Exec::class) {
 }
 
 tasks.matching {
-    it.name == "preEnPlDebugBuild" || it.name == "prePlEnDebugBuild"
+    it.name == "preEnPlDebugBuild" || it.name == "prePlEnDebugBuild" || it.name == "preEnJaDebugBuild"
 }.configureEach {
     dependsOn(checkTabletRegressions)
 }

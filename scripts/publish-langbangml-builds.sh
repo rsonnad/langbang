@@ -7,13 +7,17 @@ cd "$REPO_ROOT"
 SKIP_BUILD=0
 NO_SITE_DEPLOY=0
 ONLY_CHANNEL=""
+ALLOW_CURRENT_DIRTY=0
+ALLOW_UNRELATED_BRANCH_GAPS=0
 for arg in "$@"; do
   case "$arg" in
     --skip-build) SKIP_BUILD=1 ;;
     --no-site-deploy) NO_SITE_DEPLOY=1 ;;
+    --allow-current-dirty) ALLOW_CURRENT_DIRTY=1 ;;
+    --allow-unrelated-branch-gaps) ALLOW_UNRELATED_BRANCH_GAPS=1 ;;
     --only=*) ONLY_CHANNEL="${arg#--only=}" ;;
     --only)
-      echo "--only requires a value: en-pl, pl-en, or g2trans" >&2
+      echo "--only requires a value: en-pl, pl-en, en-ja, or g2trans" >&2
       exit 2
       ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
@@ -21,12 +25,15 @@ for arg in "$@"; do
 done
 
 case "$ONLY_CHANNEL" in
-  ""|"en-pl"|"pl-en"|"g2trans") ;;
-  *) echo "--only must be en-pl, pl-en, or g2trans" >&2; exit 2 ;;
+  ""|"en-pl"|"pl-en"|"en-ja"|"g2trans") ;;
+  *) echo "--only must be en-pl, pl-en, en-ja, or g2trans" >&2; exit 2 ;;
 esac
 
 if [ "${LANGBANGML_SKIP_WORKTREE_AUDIT:-0}" != "1" ]; then
-  scripts/check-worktree-integrity.sh
+  audit_args=()
+  [ "$ALLOW_CURRENT_DIRTY" -eq 1 ] && audit_args+=(--allow-current-dirty)
+  [ "$ALLOW_UNRELATED_BRANCH_GAPS" -eq 1 ] && audit_args+=(--allow-unrelated-branch-gaps)
+  scripts/check-worktree-integrity.sh "${audit_args[@]}"
 else
   scripts/check-tablet-regressions.sh
 fi
@@ -52,6 +59,7 @@ need bw
 need jq
 need curl
 need wrangler
+need python3
 
 find_aapt2() {
   local sdk
@@ -101,13 +109,39 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
   case "$ONLY_CHANNEL" in
     en-pl) ./gradlew --no-configuration-cache :app:assembleEnPlDebug -q ;;
     pl-en) ./gradlew --no-configuration-cache :app:assemblePlEnDebug -q ;;
+    en-ja) ./gradlew --no-configuration-cache :app:assembleEnJaDebug -q ;;
     g2trans) ./gradlew --no-configuration-cache :g2trans:assembleDebug -q ;;
-    *) ./gradlew --no-configuration-cache :app:assembleEnPlDebug :app:assemblePlEnDebug :g2trans:assembleDebug -q ;;
+    *) ./gradlew --no-configuration-cache :app:assembleEnPlDebug :app:assemblePlEnDebug :app:assembleEnJaDebug :g2trans:assembleDebug -q ;;
   esac
 fi
 
 AAPT2="$(find_aapt2)"
 [ -n "$AAPT2" ] || { echo "aapt2 not found in Android SDK build-tools" >&2; exit 1; }
+
+verify_en_ja_content_and_audio() {
+  local bootstrap
+  bootstrap="$(curl -fsS "${API_BASE}/v1/instances/langbangml-en-ja/bootstrap")"
+  jq -e '
+    .instance.id == "langbangml-en-ja" and
+    .content.versionId == "en-ja-v1" and
+    .languagePair.sourceLocale == "en-US" and
+    .languagePair.targetLocale == "ja-JP" and
+    .languagePair.targetVoice == "ja-JP-NanamiNeural" and
+    ([.content.lessons[] | select(.type == "verbs") | .payload.verbs[]] | length) == 10 and
+    ([.content.lessons[] | select(.type == "adjectives") | .payload.adjectives[]] | length) == 10 and
+    ([.content.lessons[] | select(.type == "nouns") | .payload.nouns[]] | length) == 10 and
+    ([.content.lessons[] | select(.type == "phrases") | .payload.groups[].sentences[]] | length) == 25
+  ' >/dev/null <<<"$bootstrap" || {
+    echo "EN-JA Cloudflare content preflight failed; apply its D1 migration before publishing." >&2
+    exit 1
+  }
+  echo "warming and verifying EN-JA Worker/R2 audio"
+  python3 scripts/populate-langbangml-audio.py --instance langbangml-en-ja
+}
+
+if [ -z "$ONLY_CHANNEL" ] || [ "$ONLY_CHANNEL" = "en-ja" ]; then
+  verify_en_ja_content_and_audio
+fi
 
 if [ -z "${BW_SESSION:-}" ] || ! bw status --session "$BW_SESSION" </dev/null 2>/dev/null | jq -e '.status == "unlocked"' >/dev/null; then
   BW_PASSWORD="$(security find-generic-password -a "rahulioson@gmail.com" -s "bitwarden-cli" -w 2>/dev/null || true)"
@@ -367,6 +401,9 @@ fi
 if [ -z "$ONLY_CHANNEL" ] || [ "$ONLY_CHANNEL" = "pl-en" ]; then
   publish_channel "plEn" "pl-en" "langbangml-pl-en" "Polish speakers learning English"
 fi
+if [ -z "$ONLY_CHANNEL" ] || [ "$ONLY_CHANNEL" = "en-ja" ]; then
+  publish_channel "enJa" "en-ja" "langbangml-en-ja" "English speakers learning Japanese"
+fi
 if [ -z "$ONLY_CHANNEL" ] || [ "$ONLY_CHANNEL" = "g2trans" ]; then
   publish_g2trans_channel
 fi
@@ -386,6 +423,13 @@ append_page_row_from_manifest \
   "${PUBLIC_BASE}/langbang/builds/pl-en/latest.json" \
   "${PUBLIC_BASE}/langbang/builds/pl-en/langbangml-pl-en-latest.apk" \
   "${PUBLIC_BASE}/langbang/builds/pl-en/langbangml-pl-en-latest.apk"
+append_page_row_from_manifest \
+  "en-ja" \
+  "English to Japanese" \
+  "English speakers learning Japanese" \
+  "${PUBLIC_BASE}/langbang/builds/en-ja/latest.json" \
+  "${PUBLIC_BASE}/langbang/builds/en-ja/langbangml-en-ja-latest.apk" \
+  "${PUBLIC_BASE}/langbang/builds/en-ja/langbangml-en-ja-latest.apk"
 append_page_row_from_manifest \
   "g2trans" \
   "G2 Translate" \

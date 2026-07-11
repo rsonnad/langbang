@@ -16,14 +16,17 @@ import java.io.File
  */
 class JsonListStore<T>(
     context: Context,
-    fileName: String,
+    private val fileName: () -> String,
     serializer: KSerializer<T>,
     private val keyOf: (T) -> String,
 ) {
-    private val file = File(context.filesDir, fileName)
+    private val directory = context.filesDir
     private val listSerializer = ListSerializer(serializer)
 
+    private fun file(): File = File(directory, fileName())
+
     fun load(): List<T> {
+        val file = file()
         if (!file.exists()) return emptyList()
         return runCatching { LbJson.pretty.decodeFromString(listSerializer, file.readText()) }
             .getOrDefault(emptyList())
@@ -33,7 +36,7 @@ class JsonListStore<T>(
         val current = load().toMutableList()
         current.removeAll { keyOf(it).equals(keyOf(entry), ignoreCase = true) }
         current.add(entry)
-        file.writeText(LbJson.pretty.encodeToString(listSerializer, current))
+        file().writeText(LbJson.pretty.encodeToString(listSerializer, current))
     }
 
     fun replaceAll(entries: List<T>) {
@@ -42,11 +45,11 @@ class JsonListStore<T>(
             acc.add(entry)
             acc
         }
-        file.writeText(LbJson.pretty.encodeToString(listSerializer, deduped))
+        file().writeText(LbJson.pretty.encodeToString(listSerializer, deduped))
     }
 
     fun remove(key: String) {
         val current = load().filterNot { keyOf(it).equals(key, ignoreCase = true) }
-        file.writeText(LbJson.pretty.encodeToString(listSerializer, current))
+        file().writeText(LbJson.pretty.encodeToString(listSerializer, current))
     }
 }

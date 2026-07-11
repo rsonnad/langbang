@@ -1244,17 +1244,24 @@ function languageVersionToInstanceId(value) {
   if (key === "plen" || key === "polishenglish" || key === "langbangmlplen" || key === "langbangplen") {
     return "langbangml-pl-en";
   }
+  if (key === "enja" || key === "englishjapanese" || key === "langbangmlenja" || key === "langbangenja") {
+    return "langbangml-en-ja";
+  }
   return "";
 }
 
 function agentInstanceVersion(instanceId) {
   if (instanceId === "langbangml-pl-en") return "PLEN";
+  if (instanceId === "langbangml-en-ja") return "ENJA";
   return "ENPL";
 }
 
 function languagePairForInstanceId(instanceId) {
   if (instanceId === "langbangml-pl-en") {
     return { sourceLanguage: "Polish", targetLanguage: "English" };
+  }
+  if (instanceId === "langbangml-en-ja") {
+    return { sourceLanguage: "English", targetLanguage: "Japanese" };
   }
   return { sourceLanguage: "English", targetLanguage: "Polish" };
 }
@@ -3854,8 +3861,8 @@ Use Authorization: Bearer PASTE_TOKEN_HERE on every /v1/agent request.
 Do not print or store the token in project files, git commits, logs, or screenshots.
 Daily limit: ${agentDailyLimit(env)} authenticated agent API calls per token.
 Before adding content, GET /v1/agent/phrases?groupsOnly=true to see existing groups for the token's default language pair.
-Omit version/instanceId to use the token's default language pair. Set version "ENPL" or "PLEN" only when you need a different direction.
-For phrases, you may send english, polish, or both. LangBang will fill the missing side plus literal and word alignment.
+Omit version/instanceId to use the token's default language pair. Set version "ENPL", "PLEN", or "ENJA" only when you need a different direction.
+For phrases, use english plus the target-language text when you have it. For ENJA, Japanese belongs in target (or the legacy app-native pl compatibility field), never Polish. LangBang will fill a missing side plus literal and word alignment.
 Set atomic:true to keep one phrase, or atomic:false to let LangBang split long text into short display-safe phrases.
 Use groupTitle/groupName for a human phrase-group name. Keep it to ${MAX_AGENT_GROUP_TITLE_CHARS} characters or less.
 Omit groupId for normal new groups; LangBang will create a timestamped id so groups sort newest-first. Provide sortOrder only when you need an explicit order override.
@@ -3883,11 +3890,11 @@ Never ask for the LangBang admin content token.</pre>
     <section>
       <h2>Phrase Rules</h2>
       <ul>
-        <li>Omit <code>version</code> and <code>instanceId</code> to use the token's default language pair. Set <code>version:"ENPL"</code> for English cue to Polish answer, or <code>version:"PLEN"</code> for Polish cue to English answer. The older <code>instanceId</code> values still work.</li>
+        <li>Omit <code>version</code> and <code>instanceId</code> to use the token's default language pair. Set <code>version:"ENPL"</code> for English cue to Polish, <code>version:"PLEN"</code> for Polish cue to English, or <code>version:"ENJA"</code> for English cue to Japanese. The older <code>instanceId</code> values still work.</li>
         <li>The selected version controls which Android app flavor downloads the content. Signed-in APKs pull their version's custom phrases on launch, sign-in, instance switch, and the Settings/Phrases sync actions.</li>
         <li>Use <code>groupTitle</code> or <code>groupName</code> for readable names such as <code>Discussion Conversation</code>. The limit is <code>${MAX_AGENT_GROUP_TITLE_CHARS}</code> characters.</li>
         <li>Default ordering is reverse chronological. Omit <code>groupId</code> for a new group and LangBang generates a timestamped id plus <code>createdAt</code>. Send <code>sortOrder</code> only when you want an explicit order override.</li>
-        <li>Phrase input may use real-language fields: <code>english</code>, <code>polish</code>, or both. App-native <code>en</code>/<code>pl</code> also works for existing integrations.</li>
+        <li>Phrase input may use real-language fields such as <code>english</code> plus <code>target</code>. For ENJA, put Japanese in <code>target</code> (or legacy app-native <code>pl</code>); <code>polish</code> is only for Polish-target packs. App-native <code>en</code>/<code>pl</code> remains supported for existing integrations.</li>
         <li>Fast path: provide <code>pl</code>, <code>en</code>, <code>literal</code>, and non-empty <code>words[]</code>; the API saves the structured phrase directly.</li>
         <li>LLM path: when translation, literal gloss, or word alignment is missing, LangBang uses Gemini Flash before saving. This is useful for rough input, but slower and more failure-prone for poetic fragments.</li>
         <li>Use <code>atomic:true</code> when the text should stay as one phrase. Use <code>atomic:false</code> to split long or compound input into short display-safe phrases before saving.</li>

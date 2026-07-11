@@ -14,9 +14,12 @@ import java.io.File
  * keys (always present-tense) — those are read as present on load so existing caches
  * survive upgrade, and we migrate them lazily the next time the user generates.
  */
-class VerbSentenceStore(context: Context) {
+class VerbSentenceStore(
+    context: Context,
+    private val fileName: () -> String = { "verb-sentences.json" }
+) {
 
-    private val file = File(context.filesDir, "verb-sentences.json")
+    private val directory = context.filesDir
     private val json = LbJson.pretty
     private val serializer = MapSerializer(
         String.serializer(),
@@ -34,16 +37,21 @@ class VerbSentenceStore(context: Context) {
      * @Volatile + synchronized double-check is fine: parse is idempotent.
      */
     @Volatile private var memo: MutableMap<String, List<SentenceExample>>? = null
+    @Volatile private var memoFileName: String? = null
+
+    private fun file(): File = File(directory, fileName())
 
     private fun loadAll(): MutableMap<String, List<SentenceExample>> {
-        memo?.let { return it }
+        val file = file()
+        memo?.takeIf { memoFileName == file.name }?.let { return it }
         return synchronized(this) {
-            memo ?: run {
+            memo?.takeIf { memoFileName == file.name } ?: run {
                 val loaded = if (!file.exists()) mutableMapOf()
                 else runCatching {
                     json.decodeFromString(serializer, file.readText()).toMutableMap()
                 }.getOrDefault(mutableMapOf())
                 memo = loaded
+                memoFileName = file.name
                 loaded
             }
         }
@@ -67,7 +75,7 @@ class VerbSentenceStore(context: Context) {
             // If the legacy bare key still exists and we're saving present, drop it so
             // the tense-aware key is canonical going forward.
             if (tense == TENSE_PRESENT) all.remove(lemma.lowercase())
-            file.writeText(json.encodeToString(serializer, all))
+            file().writeText(json.encodeToString(serializer, all))
         }
     }
 
@@ -75,6 +83,8 @@ class VerbSentenceStore(context: Context) {
     fun clearAll() {
         synchronized(this) {
             memo = null
+            memoFileName = null
+            val file = file()
             if (file.exists()) file.delete()
         }
     }

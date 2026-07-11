@@ -5,8 +5,22 @@ repo_root="$(git rev-parse --show-toplevel)"
 current_root="$repo_root"
 
 allow_current_dirty=0
-if [[ "${1:-}" == "--allow-current-dirty" ]]; then
-  allow_current_dirty=1
+allow_unrelated_branch_gaps=0
+for arg in "$@"; do
+  case "$arg" in
+    --allow-current-dirty) allow_current_dirty=1 ;;
+    --allow-unrelated-branch-gaps) allow_unrelated_branch_gaps=1 ;;
+    *) echo "unknown argument: $arg" >&2; exit 2 ;;
+  esac
+done
+
+if [[ ( "$allow_current_dirty" -eq 1 || "$allow_unrelated_branch_gaps" -eq 1 ) &&
+      "${LANGBANGML_CONFIRM_INTEGRITY_BYPASS:-0}" != "1" ]]; then
+  echo "Integrity bypass requested. Set LANGBANGML_CONFIRM_INTEGRITY_BYPASS=1 only after confirming the exact worktree exception." >&2
+  exit 2
+fi
+if [[ "$allow_current_dirty" -eq 1 || "$allow_unrelated_branch_gaps" -eq 1 ]]; then
+  echo "WARNING: worktree integrity bypass is explicitly confirmed for this invocation." >&2
 fi
 
 echo "LangBangML worktree audit"
@@ -52,7 +66,9 @@ while IFS= read -r worktree; do
     if [[ -n "$missing" ]]; then
       echo "  commits on $branch not in current branch:"
       echo "$missing" | sed 's/^/    /'
-      if [[ "$allow_preserved_wip" == "1" ]] && \
+      if [[ "$allow_unrelated_branch_gaps" == "1" ]]; then
+        echo "  unrelated branch gap allowed for this release invocation"
+      elif [[ "$allow_preserved_wip" == "1" ]] && \
         git -C "$current_root" log --format=%s "HEAD..$branch" | grep -Evq "^${preserved_wip_prefix}"; then
         branch_gap=1
       elif [[ "$allow_preserved_wip" == "1" ]]; then
