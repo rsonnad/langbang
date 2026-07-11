@@ -41,9 +41,10 @@ object AzureSpeechAuth {
             if (again != null && System.currentTimeMillis() - fetchedAtMs < TTL_MS) {
                 return@withLock again to region
             }
+            var conn: HttpURLConnection? = null
             try {
                 val url = URL("${BuildConfig.LANGBANGML_API_BASE.trimEnd('/')}/v1/azure/speech-token")
-                val conn = (url.openConnection() as HttpURLConnection).apply {
+                conn = (url.openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
                     doOutput = true
                     connectTimeout = 10000
@@ -63,7 +64,7 @@ object AzureSpeechAuth {
             } catch (_: Throwable) {
                 null
             } finally {
-                runCatching { conn.disconnect() }
+                runCatching { conn?.disconnect() }
             }
         }
     }
