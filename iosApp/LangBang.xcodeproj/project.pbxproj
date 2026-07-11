@@ -10,6 +10,9 @@
 		111111111111111111111111 /* LangBangApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 222222222222222222222222 /* LangBangApp.swift */; };
 		333333333333333333333333 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444444444444444444444444 /* ContentView.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2B3C4D5E6F708192A3B4C5D /* Assets.xcassets */; };
+		ABCD1234EFAB567890123456 /* CloudModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDEF2345ABCD678901234567 /* CloudModels.swift */; };
+		BCDE2345FABC678901234568 /* CloudClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEFG3456BCDE789012345678 /* CloudClient.swift */; };
+		CDEF3456ABCD789012345679 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFGH4567CDEF890123456789 /* AudioManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -18,6 +21,9 @@
 		444444444444444444444444 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		666666666666666666666666 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A2B3C4D5E6F708192A3B4C5D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		CDEF2345ABCD678901234567 /* CloudModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudModels.swift; sourceTree = "<group>"; };
+		DEFG3456BCDE789012345678 /* CloudClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudClient.swift; sourceTree = "<group>"; };
+		EFGH4567CDEF890123456789 /* AudioManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -44,6 +50,9 @@
 			children = (
 				222222222222222222222222 /* LangBangApp.swift */,
 				444444444444444444444444 /* ContentView.swift */,
+				CDEF2345ABCD678901234567 /* CloudModels.swift */,
+				DEFG3456BCDE789012345678 /* CloudClient.swift */,
+				EFGH4567CDEF890123456789 /* AudioManager.swift */,
 				666666666666666666666666 /* Info.plist */,
 				A2B3C4D5E6F708192A3B4C5D /* Assets.xcassets */,
 			);
@@ -151,6 +160,9 @@
 			files = (
 				111111111111111111111111 /* LangBangApp.swift in Sources */,
 				333333333333333333333333 /* ContentView.swift in Sources */,
+				ABCD1234EFAB567890123456 /* CloudModels.swift in Sources */,
+				BCDE2345FABC678901234568 /* CloudClient.swift in Sources */,
+				CDEF3456ABCD789012345679 /* AudioManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -276,7 +288,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = 9QHUBZYQ86;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -320,7 +332,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "iPhone Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = 9QHUBZYQ86;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;

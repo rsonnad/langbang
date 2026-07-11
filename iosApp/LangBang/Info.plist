@@ -29,9 +29,11 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
-	<string>5</string>
+	<string>6</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LANGBANG_API_BASE</key>
+	<string>https://langbangml-api.langbangml.workers.dev</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>LangBang uses the microphone for pronunciation practice.</string>
 	<key>UIApplicationSceneManifest</key>

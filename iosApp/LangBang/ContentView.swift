@@ -1,129 +1,658 @@
 import SwiftUI
-import LangBangShared
 
-@MainActor
-final class PracticeViewState: ObservableObject {
-    private let model: LangBangShared.PracticeModel
+// MARK: - Root
 
-    @Published private(set) var state: LangBangShared.PracticeModel.UiState
+struct ContentView: View {
+    @StateObject private var audio = AudioManager.shared
+    @State private var instances: [CloudInstanceSummary] = []
+    @State private var isLoadingInstances = false
+    @State private var instancesError: String?
 
-    init() {
-        let model = LangBangShared.LangBangFactory.shared.createPracticeModel()
-        self.model = model
-        self.state = Self.readState(from: model)
-        self.model.onEvent(event: LangBangShared.PracticeModel.EventStart.shared)
-        refresh()
+    @State private var bootstrap: CloudBootstrap?
+    @State private var isLoadingBootstrap = false
+
+    var body: some View {
+        Group {
+            if audio.selectedInstanceId == nil {
+                PackPickerView(
+                    instances: instances,
+                    isLoading: isLoadingInstances,
+                    error: instancesError,
+                    onRefresh: loadInstances,
+                    onSelect: { inst in
+                        Task { await selectPack(inst) }
+                    }
+                )
+            } else {
+                StudyRootView(
+                    bootstrap: $bootstrap,
+                    isLoading: isLoadingBootstrap,
+                    onSwitchPack: {
+                        audio.clearSelection()
+                        bootstrap = nil
+                    },
+                    onRetryAudio: {
+                        if let b = bootstrap { Task { await preloadAndShow(b) } }
+                    }
+                )
+            }
+        }
+        .task {
+            await loadInstances()
+            // If a pack was persisted, auto-resume it (but do NOT auto-select on a fresh first launch without persisted state)
+            if let id = audio.selectedInstanceId, bootstrap == nil {
+                await resumePersistedPack(id)
+            }
+        }
     }
 
-    func send(_ event: LangBangShared.PracticeModel.Event) {
-        model.onEvent(event: event)
-        refresh()
+    private func loadInstances() async {
+        isLoadingInstances = true
+        instancesError = nil
+        do {
+            let list = try await CloudClient.shared.fetchInstances()
+            // Sort so EN-JA is prominent but still data-driven
+            instances = list.sorted { a, b in
+                if a.id.contains("en-ja") { return true }
+                if b.id.contains("en-ja") { return false }
+                return a.displayName < b.displayName
+            }
+        } catch {
+            instancesError = error.localizedDescription
+        }
+        isLoadingInstances = false
     }
 
-    func refresh() {
-        state = Self.readState(from: model)
+    private func selectPack(_ summary: CloudInstanceSummary) async {
+        isLoadingBootstrap = true
+        do {
+            let b = try await CloudClient.shared.fetchBootstrap(instanceId: summary.id)
+            bootstrap = b
+            audio.setSelectedPack(instanceId: summary.id, bootstrap: b)
+            await preloadAndShow(b)
+        } catch {
+            // A previously downloaded pack remains usable while offline. The
+            // picker stays visible for an uncached pack and explains the failure.
+            if let cached = audio.cachedBootstrap(for: summary.id) {
+                bootstrap = cached
+                audio.setSelectedPack(instanceId: summary.id, bootstrap: cached)
+                await preloadAndShow(cached)
+            } else {
+                instancesError = "Could not open \(summary.displayName): \(error.localizedDescription)"
+            }
+        }
+        isLoadingBootstrap = false
     }
 
-    private static func readState(from model: LangBangShared.PracticeModel) -> LangBangShared.PracticeModel.UiState {
-        model.state.value
+    private func resumePersistedPack(_ instanceId: String) async {
+        isLoadingBootstrap = true
+        do {
+            let b = try await CloudClient.shared.fetchBootstrap(instanceId: instanceId)
+            bootstrap = b
+            audio.setSelectedPack(instanceId: instanceId, bootstrap: b)
+            // Reuse cached audio if present; still run preload to fill gaps and show honest state
+            await preloadAndShow(b)
+        } catch {
+            // If we cannot reach backend, still allow cached bootstrap if we have it
+            if let cached = audio.cachedBootstrap(for: instanceId) {
+                bootstrap = cached
+                audio.setSelectedPack(instanceId: instanceId, bootstrap: cached)
+                // Reuse the local pack and fill any missing clips if service
+                // has returned since the initial bootstrap request failed.
+                await preloadAndShow(cached)
+            } else {
+                instancesError = "Could not resume the selected pack: \(error.localizedDescription)"
+                // Force user back to picker if we truly have nothing
+                audio.clearSelection()
+            }
+        }
+        isLoadingBootstrap = false
+    }
+
+    @MainActor
+    private func preloadAndShow(_ b: CloudBootstrap) async {
+        await audio.preloadAudio(for: b)
+        // Even on preload error we show content (user can tap to play individual clips which will try on-demand)
     }
 }
 
-struct ContentView: View {
-    @StateObject private var practice = PracticeViewState()
+// MARK: - Pack Picker (first launch, data-driven, no auto default)
+
+struct PackPickerView: View {
+    let instances: [CloudInstanceSummary]
+    let isLoading: Bool
+    let error: String?
+    let onRefresh: () async -> Void
+    let onSelect: (CloudInstanceSummary) -> Void
 
     var body: some View {
-        NavigationView {
-            VStack(spacing: 18) {
-                Text("LangBang Practice")
-                    .font(.largeTitle.bold())
-
-                Text("One shared model, native SwiftUI renderer")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("EN cue").font(.caption)
-
-                    if let item = practice.state.current {
-                        Text(item.prompt)
-                            .font(.title2.weight(.semibold))
-
-                        if practice.state.isRevealed {
-                            Text(item.answerPl)
-                                .font(.largeTitle.weight(.bold))
-                                .foregroundStyle(.blue)
-                            Text(item.context)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text("Hidden")
-                                .font(.title3)
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        Text("No practice items")
-                            .font(.title3)
-                    }
+        NavigationStack {
+            VStack(spacing: 16) {
+                VStack(spacing: 8) {
+                    Text("LangBang")
+                        .font(.largeTitle.bold())
+                    Text("Choose a language pack")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
-                .background(Color(.secondarySystemBackground))
-                .cornerRadius(8)
+                .padding(.top, 24)
 
-                Text("Item \(practice.state.total == 0 ? 0 : practice.state.index + 1) / \(practice.state.total)")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                if isLoading && instances.isEmpty {
+                    ProgressView("Loading packs…")
+                        .padding()
+                }
 
-                if !practice.state.statusMessage.isEmpty {
-                    Text(practice.state.statusMessage)
+                if let error {
+                    VStack(spacing: 8) {
+                        Text("Could not load packs")
+                            .font(.headline)
+                        Text(error)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("Retry", action: { Task { await onRefresh() } })
+                    }
+                    .padding()
+                }
+
+                if !instances.isEmpty {
+                    Text("Select a pack to begin. No pack is pre-selected.")
                         .font(.footnote)
-                }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal)
 
-                HStack(spacing: 10) {
-                    Button {
-                        practice.send(LangBangShared.PracticeModel.EventPrevious.shared)
-                    } label: {
-                        Label("Previous", systemImage: "chevron.left")
+                    List(instances) { inst in
+                        Button {
+                            onSelect(inst)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(inst.displayName)
+                                        .font(.headline)
+                                    Text("\(inst.languagePair.sourceLanguage) → \(inst.languagePair.targetLanguage)")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                    Text(inst.id)
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.tertiary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Double tap to study \(inst.displayName)")
                     }
-
-                    Button {
-                        practice.send(LangBangShared.PracticeModel.EventReveal.shared)
-                    } label: {
-                        Label("Reveal", systemImage: "eye")
-                    }
-                    .disabled(practice.state.current == nil || practice.state.isRevealed)
-
-                    Button {
-                        practice.send(LangBangShared.PracticeModel.EventPlayAudio.shared)
-                    } label: {
-                        Label("Play", systemImage: "speaker.wave.2")
-                    }
-                    .disabled(practice.state.current == nil)
-
-                    Button {
-                        practice.send(LangBangShared.PracticeModel.EventNext.shared)
-                    } label: {
-                        Label("Next", systemImage: "chevron.right")
-                    }
-                }
-                .labelStyle(.iconOnly)
-
-                Button {
-                    practice.send(LangBangShared.PracticeModel.EventRestart.shared)
-                } label: {
-                    Label("Restart", systemImage: "arrow.clockwise")
+                    .listStyle(.insetGrouped)
                 }
 
                 Spacer()
+
+                if isLoading && !instances.isEmpty {
+                    ProgressView().padding(.bottom, 8)
+                }
+            }
+            .navigationTitle("Language Packs")
+            .refreshable { await onRefresh() }
+        }
+    }
+}
+
+// MARK: - Study Root (after selection)
+
+struct StudyRootView: View {
+    @Binding var bootstrap: CloudBootstrap?
+    let isLoading: Bool
+    let onSwitchPack: () -> Void
+    let onRetryAudio: () -> Void
+
+    @StateObject private var audio = AudioManager.shared
+    @State private var selectedTab: StudyTab = .phrases
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading && bootstrap == nil {
+                    ProgressView("Loading content…")
+                } else if let b = bootstrap {
+                    VStack(spacing: 0) {
+                        // Header
+                        header(for: b)
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+
+                        if audio.isPreloading {
+                            preloadBanner
+                        } else if let err = audio.preloadError {
+                            errorBanner(err)
+                        } else if let status = audio.playbackStatus {
+                            playbackBanner(status)
+                        }
+
+                        TabView(selection: $selectedTab) {
+                            PronunciationSection(bootstrap: b)
+                                .tabItem { Label("Pronunciation", systemImage: "speaker.wave.2") }
+                                .tag(StudyTab.pronunciation)
+
+                            VerbsSection(bootstrap: b)
+                                .tabItem { Label("Verbs", systemImage: "textformat.abc") }
+                                .tag(StudyTab.verbs)
+
+                            AdjectivesSection(bootstrap: b)
+                                .tabItem { Label("Adjectives", systemImage: "textformat") }
+                                .tag(StudyTab.adjectives)
+
+                            NounsSection(bootstrap: b)
+                                .tabItem { Label("Nouns", systemImage: "character.book.closed") }
+                                .tag(StudyTab.nouns)
+
+                            PhrasesSection(bootstrap: b)
+                                .tabItem { Label("Phrases", systemImage: "text.bubble") }
+                                .tag(StudyTab.phrases)
+
+                            AdverbsSection(bootstrap: b)
+                                .tabItem { Label("Adverbs", systemImage: "clock") }
+                                .tag(StudyTab.adverbs)
+                        }
+                        .tint(.accentColor)
+                    }
+                } else {
+                    Text("Select a pack to begin.")
+                }
+            }
+            .navigationTitle(titleForCurrentPack)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("Switch Language Pack", action: onSwitchPack)
+                        if audio.isPreloading {
+                            Text("Downloading audio…")
+                        } else {
+                            Button("Retry Audio Download", action: onRetryAudio)
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
+        }
+    }
+
+    private var titleForCurrentPack: String {
+        if let b = bootstrap {
+            if b.instance.id.contains("en-ja") { return "Japanese Study" }
+            return b.instance.displayName
+        }
+        return "Study"
+    }
+
+    @ViewBuilder
+    private func header(for b: CloudBootstrap) -> some View {
+        let lp = b.languagePair
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(lp.sourceLanguage) → \(lp.targetLanguage)")
+                .font(.headline)
+            if let ver = b.content.versionId {
+                Text(ver).font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, 4)
+    }
+
+    private var preloadBanner: some View {
+        VStack(spacing: 6) {
+            ProgressView(value: audio.preloadProgress)
+                .progressViewStyle(.linear)
+            Text(audio.preloadMessage)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(Color(.secondarySystemBackground))
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        HStack {
+            Image(systemName: "exclamationmark.triangle")
+            Text(message).font(.footnote)
+            Spacer()
+            Button("Retry", action: onRetryAudio)
+        }
+        .padding(8)
+        .background(Color(.tertiarySystemFill))
+        .padding(.horizontal)
+    }
+
+    private func playbackBanner(_ message: String) -> some View {
+        HStack {
+            if message == "Loading audio…" {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: "speaker.slash")
+            }
+            Text(message).font(.footnote)
+            Spacer()
+            if message != "Loading audio…" {
+                Button("Retry", action: onRetryAudio)
+            }
+        }
+        .padding(8)
+        .background(Color(.tertiarySystemFill))
+        .padding(.horizontal)
+    }
+}
+
+private enum StudyTab: Hashable {
+    case pronunciation, verbs, adjectives, nouns, phrases, adverbs
+}
+
+// MARK: - Sections (real EN -> JA content, Japanese prominent)
+
+struct PronunciationSection: View {
+    let bootstrap: CloudBootstrap
+    @StateObject private var audio = AudioManager.shared
+
+    var body: some View {
+        let payload: PronunciationPayload? = findLessonPayload(in: bootstrap, type: "pronunciation")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                sectionHeader(title: "Pronunciation", summary: payload?.summary)
+                if let p = payload {
+                    ForEach(p.phonemes, id: \.letter) { ph in
+                        Card {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text(ph.letter).font(.system(size: 36, weight: .bold))
+                                    VStack(alignment: .leading) {
+                                        Text(ph.name).font(.headline)
+                                        Text(ph.ipa).font(.subheadline).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    playButton {
+                                        audio.playTarget(bootstrap: bootstrap, text: ph.examples.first?.target ?? "", slowFirst: true)
+                                    }
+                                }
+                                if !ph.englishApproximation.isEmpty {
+                                    Text(ph.englishApproximation).font(.footnote)
+                                }
+                                if let desc = ph.description, !desc.isEmpty {
+                                    Text(desc).font(.footnote).foregroundStyle(.secondary)
+                                }
+                                if !ph.examples.isEmpty {
+                                    Text("Examples").font(.caption.bold()).padding(.top, 4)
+                                    FlowLayout {
+                                    ForEach(ph.examples, id: \.target) { ex in
+                                        Button {
+                                                audio.playTarget(bootstrap: bootstrap, text: ex.target, slowFirst: true)
+                                        } label: {
+                                                Text(ex.target).font(.body)
+                                            }
+                                            .buttonStyle(.bordered)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    emptyLesson
+                }
             }
             .padding()
-            .navigationTitle("Practice")
-            .onAppear {
-                practice.refresh()
+        }
+    }
+}
+
+struct VerbsSection: View {
+    let bootstrap: CloudBootstrap
+    @StateObject private var audio = AudioManager.shared
+
+    var body: some View {
+        let payload: VerbsPayload? = findLessonPayload(in: bootstrap, type: "verbs")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                sectionHeader(title: "Verbs", summary: payload?.summary)
+                if let p = payload, !p.verbs.isEmpty {
+                    ForEach(p.verbs, id: \.lemma) { v in
+                        Card {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text(v.lemma).font(.title3.bold())
+                                    Spacer()
+                                    Text(v.en).foregroundStyle(.secondary)
+                                }
+                                if !v.forms.isEmpty {
+                                    FormGrid(title: "Present", forms: v.forms) { form in
+                                        audio.playTarget(bootstrap: bootstrap, text: form, slowFirst: false)
+                                    }
+                                }
+                                if let past = v.past_forms, !past.isEmpty {
+                                    FormGrid(title: "Past", forms: past) { form in
+                                        audio.playTarget(bootstrap: bootstrap, text: form, slowFirst: false)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else { emptyLesson }
             }
+            .padding()
+        }
+    }
+}
+
+struct AdjectivesSection: View {
+    let bootstrap: CloudBootstrap
+    @StateObject private var audio = AudioManager.shared
+
+    var body: some View {
+        let payload: AdjectivesPayload? = findLessonPayload(in: bootstrap, type: "adjectives")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                sectionHeader(title: "Adjectives", summary: payload?.summary)
+                if let p = payload {
+                    ForEach(p.adjectives, id: \.lemma) { a in
+                        Card {
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(a.lemma).font(.title3.bold())
+                                    Text(a.en).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                playButton { audio.playTarget(bootstrap: bootstrap, text: a.nom.values.first ?? a.lemma, slowFirst: true) }
+                            }
+                            FormGrid(title: "Forms", forms: a.nom.merging(a.acc, uniquingKeysWith: { $1 })) { form in
+                                audio.playTarget(bootstrap: bootstrap, text: form)
+                            }
+                        }
+                    }
+                } else { emptyLesson }
+            }
+            .padding()
+        }
+    }
+}
+
+struct NounsSection: View {
+    let bootstrap: CloudBootstrap
+    @StateObject private var audio = AudioManager.shared
+
+    var body: some View {
+        let payload: NounsPayload? = findLessonPayload(in: bootstrap, type: "nouns")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                sectionHeader(title: "Nouns", summary: payload?.summary)
+                if let p = payload {
+                    ForEach(p.nouns, id: \.lemma) { n in
+                        Card {
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(n.lemma).font(.title3.bold())
+                                    Text(n.en).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                playButton { audio.playTarget(bootstrap: bootstrap, text: n.nom.values.first ?? n.lemma) }
+                            }
+                        }
+                    }
+                } else { emptyLesson }
+            }
+            .padding()
+        }
+    }
+}
+
+struct AdverbsSection: View {
+    let bootstrap: CloudBootstrap
+    @StateObject private var audio = AudioManager.shared
+
+    var body: some View {
+        let payload: AdverbsPayload? = findLessonPayload(in: bootstrap, type: "adverbs")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                sectionHeader(title: "Adverbs", summary: payload?.summary)
+                if let p = payload {
+                    ForEach(p.adverbs, id: \.lemma) { a in
+                        Card {
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(a.lemma).font(.title3.bold())
+                                    Text(a.en).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                playButton { audio.playTarget(bootstrap: bootstrap, text: a.lemma) }
+                            }
+                        }
+                    }
+                } else { emptyLesson }
+            }
+            .padding()
+        }
+    }
+}
+
+struct PhrasesSection: View {
+    let bootstrap: CloudBootstrap
+    @StateObject private var audio = AudioManager.shared
+
+    var body: some View {
+        let payload: PhrasesPayload? = findLessonPayload(in: bootstrap, type: "phrases")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                sectionHeader(title: "Phrases", summary: payload?.summary ?? "25 essential phrases organized by group.")
+                if let p = payload, !p.groups.isEmpty {
+                    ForEach(p.groups) { g in
+                        Card {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(g.title).font(.headline)
+                                if let sub = g.subtitle { Text(sub).font(.subheadline).foregroundStyle(.secondary) }
+                                ForEach(Array(g.sentences.enumerated()), id: \.offset) { _, s in
+                                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(s.target).font(.body.weight(.semibold)) // Japanese prominent
+                                            Text(s.en).font(.subheadline).foregroundStyle(.secondary)
+                                            if let lit = s.literal, !lit.isEmpty {
+                                                Text(lit).font(.caption.italic()).foregroundStyle(.tertiary)
+                                            }
+                                        }
+                                        Spacer()
+                                        Button {
+                                            audio.playTarget(bootstrap: bootstrap, text: s.target, slowFirst: true)
+                                        } label: {
+                                            Image(systemName: "speaker.wave.2")
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .accessibilityLabel("Play \(s.en)")
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                            }
+                        }
+                    }
+                } else { emptyLesson }
+            }
+            .padding()
+        }
+    }
+}
+
+// MARK: - Small UI helpers
+
+private func sectionHeader(title: String, summary: String?) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+        Text(title).font(.title2.bold())
+        if let s = summary, !s.isEmpty {
+            Text(s).font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+}
+
+private func playButton(action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+        Image(systemName: "speaker.wave.2.fill")
+    }
+    .buttonStyle(.borderedProminent)
+}
+
+private var emptyLesson: some View {
+    Text("This lesson could not load. Refresh the pack and try again.")
+        .foregroundStyle(.secondary)
+        .padding()
+}
+
+struct Card<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            content
+        }
+        .padding(12)
+        .background(Color(.secondarySystemBackground))
+        .cornerRadius(12)
+    }
+}
+
+struct FormGrid: View {
+    let title: String
+    let forms: [String: String]
+    let onPlay: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption.bold()).foregroundStyle(.secondary)
+            let items = forms.sorted { $0.key < $1.key }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
+                ForEach(items, id: \.key) { key, value in
+                    Button {
+                        onPlay(value)
+                    } label: {
+                        VStack(spacing: 2) {
+                            Text(value).font(.callout.weight(.semibold))
+                            Text(key).font(.caption2).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(8)
+                        .background(Color(.tertiarySystemFill))
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+// Simple flow layout for chips
+struct FlowLayout<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        // Minimal horizontal wrapping using a LazyVGrid trick
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], spacing: 8) {
+            content
         }
     }
 }
