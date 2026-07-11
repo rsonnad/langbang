@@ -2,6 +2,27 @@ package com.sponic.langbang.data.model
 
 import kotlinx.serialization.Serializable
 
+/**
+ * Explicit learner-facing Japanese readings for the EN→JA pack. The canonical
+ * Japanese string remains in the existing `pl`, `lemma`, and form fields so
+ * audio and older clients continue to use the native script unchanged.
+ */
+@Serializable
+data class JapaneseReading(
+    val japanese: String,
+    val kana: String,
+    val romaji: String
+)
+
+fun Map<String, JapaneseReading>.romanizedText(script: String): String =
+    this[script]?.romaji?.takeIf { it.isNotBlank() } ?: script
+
+fun Map<String, JapaneseReading>.readingSupport(script: String): String? =
+    this[script]?.let { reading ->
+        if (reading.kana == reading.japanese) reading.kana
+        else "${reading.kana} · ${reading.japanese}"
+    }
+
 @Serializable
 data class Lesson(
     val id: String,
@@ -9,7 +30,8 @@ data class Lesson(
     val summary: String,
     val verbs: List<VerbEntry>,
     val pronouns: List<PronounEntry>,
-    val phrases: List<PhraseEntry>
+    val phrases: List<PhraseEntry>,
+    val readings: Map<String, JapaneseReading> = emptyMap()
 )
 
 @Serializable
@@ -103,7 +125,8 @@ data class AdjectiveLesson(
     val id: String,
     val title: String,
     val summary: String,
-    val adjectives: List<AdjectiveEntry>
+    val adjectives: List<AdjectiveEntry>,
+    val readings: Map<String, JapaneseReading> = emptyMap()
 )
 
 @Serializable
@@ -119,7 +142,8 @@ data class AdverbLesson(
     val id: String,
     val title: String,
     val summary: String,
-    val adverbs: List<AdverbEntry>
+    val adverbs: List<AdverbEntry>,
+    val readings: Map<String, JapaneseReading> = emptyMap()
 )
 
 /**
@@ -138,7 +162,8 @@ data class NounLesson(
     val id: String,
     val title: String,
     val summary: String,
-    val nouns: List<NounEntry>
+    val nouns: List<NounEntry>,
+    val readings: Map<String, JapaneseReading> = emptyMap()
 )
 
 /**
@@ -167,7 +192,8 @@ data class PhrasesLesson(
     val id: String,
     val title: String,
     val summary: String,
-    val groups: List<PhraseGroup>
+    val groups: List<PhraseGroup>,
+    val readings: Map<String, JapaneseReading> = emptyMap()
 )
 
 @Serializable

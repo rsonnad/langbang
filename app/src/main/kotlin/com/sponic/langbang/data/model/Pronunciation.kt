@@ -7,7 +7,8 @@ data class PronunciationData(
     val id: String,
     val title: String,
     val summary: String,
-    val phonemes: List<PhonemeEntry>
+    val phonemes: List<PhonemeEntry>,
+    val readings: Map<String, JapaneseReading> = emptyMap()
 )
 
 @Serializable

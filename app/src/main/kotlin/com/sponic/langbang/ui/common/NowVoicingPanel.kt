@@ -90,9 +90,23 @@ fun NowVoicingPanel(
     // which pauses the clip without republishing NowVoicing) flips the icon immediately;
     // OR-ing the transport's own flag keeps screens not yet on the controller correct too.
     val pausedSignal by PlaybackController.paused.collectAsState()
+    val targetLinesSwapped by app.practicePrefs.nowVoicingTargetLinesSwappedState.collectAsState()
     val paused = pausedSignal || transport?.isPaused?.invoke() == true
     val effectiveLive = remember(live, paused) { if (paused) live?.copy(lang = "pause") else live }
     val wordDrill = rememberNowVoicingWordDrill(app, pinned)
+    val cloudState by app.cloudConfig.state.collectAsState()
+    val targetPresentation = remember(
+        pinned,
+        cloudState.bootstrap?.languagePair?.targetLocale,
+        targetLinesSwapped
+    ) {
+        nowVoicingTargetPresentation(
+            nowVoicing = pinned,
+            targetLocale = cloudState.bootstrap?.languagePair?.targetLocale,
+            japaneseReading = pinned?.let { app.lessonRepo.targetReadingFor(it.pl) },
+            swapped = targetLinesSwapped
+        )
+    }
 
     val inner: @Composable (Modifier) -> Unit = { fillMod ->
         Box(modifier = fillMod) {
@@ -109,6 +123,7 @@ fun NowVoicingPanel(
                     syllableShading = syllableShading,
                     largeFormat = largeFormat,
                     composing = wordDrill.composing,
+                    targetPresentation = targetPresentation,
                     modifier = Modifier
                         .weight(1f)
                         .padding(start = 8.dp, end = 16.dp, bottom = 24.dp)

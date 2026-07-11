@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sponic.langbang.data.model.JapaneseReading
 import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.data.model.TokenPair
 
@@ -46,6 +47,7 @@ import com.sponic.langbang.data.model.TokenPair
 @Composable
 fun WordAlignedPolish(
     sentence: SentenceExample,
+    reading: JapaneseReading? = null,
     modifier: Modifier = Modifier,
     plFontSize: TextUnit = 16.sp,
     glossFontSize: TextUnit = 10.sp,
@@ -56,6 +58,30 @@ fun WordAlignedPolish(
     glossDelayMillis: Long = EnglishTranslationDelayMillis,
     onPlWordClick: ((String) -> Unit)? = null
 ) {
+    val romanized = reading?.romaji?.takeIf { it.isNotBlank() }
+    if (romanized != null) {
+        val support = if (reading.kana == reading.japanese) reading.kana
+        else "${reading.kana} · ${reading.japanese}"
+        val clickable = if (onPlWordClick == null) Modifier else Modifier.clickable {
+            onPlWordClick(sentence.pl)
+        }
+        Column(modifier = modifier.then(clickable)) {
+            Text(
+                romanized,
+                fontSize = plFontSize,
+                fontWeight = plFontWeight,
+                color = plColor
+            )
+            Text(
+                support,
+                fontSize = glossFontSize,
+                color = glossColor,
+                fontWeight = FontWeight.Normal
+            )
+        }
+        return
+    }
+
     val plTokens: List<String>
     val glossTokens: List<String>
     val structuredTokens: List<TokenPair?>

@@ -10,6 +10,7 @@ import com.sponic.langbang.data.model.AdjectiveLesson
 import com.sponic.langbang.data.model.AdverbEntry
 import com.sponic.langbang.data.model.AdverbLesson
 import com.sponic.langbang.data.model.Lesson
+import com.sponic.langbang.data.model.JapaneseReading
 import com.sponic.langbang.data.model.NounEntry
 import com.sponic.langbang.data.model.NounLesson
 import com.sponic.langbang.data.model.PhraseGroup
@@ -329,6 +330,25 @@ class LessonRepository(
             .map { it.value }
         val merged = (sortedAdded + scrubbedBase.groups).distinctBy { it.id.lowercase() }
         return scrubbedBase.copy(groups = merged)
+    }
+
+    /**
+     * Finds the optional learner-facing reading for a target string in the active
+     * content pack. Japanese keeps its canonical script in the normal target fields
+     * for audio, while this catalog lets the shared Now Voicing renderer show native
+     * writing and romaji independently.
+     */
+    fun targetReadingFor(targetText: String): JapaneseReading? {
+        if (cloudLanguagePair()?.targetLocale != "ja-JP") return null
+        val catalogs = listOf(
+            pronunciation().readings,
+            lesson2().readings,
+            lesson3().readings,
+            lesson4().readings,
+            lesson5().readings,
+            lesson6().readings
+        )
+        return catalogs.firstNotNullOfOrNull { it[targetText] }
     }
 
     /**

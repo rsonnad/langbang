@@ -58,6 +58,7 @@ fun NowVoicingBody(
     syllableShading: Boolean = true,
     largeFormat: Boolean = false,
     composing: Boolean = false,
+    targetPresentation: NowVoicingTargetPresentation? = null,
     modifier: Modifier = Modifier
 ) {
     if (pinned == null) {
@@ -82,7 +83,7 @@ fun NowVoicingBody(
     // pad with empty strings so every Polish token still gets a (blank) gloss
     // slot — keeps the row height stable.
     val structuredWords = pinned.words
-    // Token + gloss splitting (and the Regex) depend only on the sentence content, which
+    // Token + gloss splitting (and the Regex) depend only on the canonical sentence content, which
     // changes once per item — not per en/pl/pause segment that re-runs this composable.
     // Memoise on the content so each playback tick doesn't re-split + re-allocate.
     val tokenPair = remember(pinned.pl, pinned.words, pinned.literal) {
@@ -202,6 +203,58 @@ fun NowVoicingBody(
                 }
             }
         }
+        targetPresentation?.let { presentation ->
+            val compact = if (plHidden) "•".repeat(presentation.compactText.length.coerceAtLeast(3))
+            else presentation.compactText
+            Text(
+                text = compact,
+                fontSize = if (largeFormat) 18.sp else 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (plHidden) mutedText.copy(alpha = 0.5f) else secondaryText,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = if (largeFormat) 2 else 1
+            )
+        }
+        if (targetPresentation != null) {
+            // A language that supplies independent writing and pronunciation needs a
+            // deliberately line-based layout. Romaji and Japanese script do not share
+            // whitespace/token boundaries, so forcing the legacy word columns here
+            // would misalign the literal gloss when the learner swaps the two lines.
+            val emphasized = if (plHidden) {
+                "•".repeat(targetPresentation.emphasizedText.length.coerceIn(3, 24))
+            } else {
+                targetPresentation.emphasizedText
+            }
+            val emphasizedFontSize = when {
+                largeFormat && emphasized.length > 80 -> 28.sp
+                largeFormat -> 44.sp
+                emphasized.length > 52 -> 28.sp
+                emphasized.length > 36 -> 36.sp
+                else -> 52.sp
+            }
+            Text(
+                text = emphasized,
+                fontSize = emphasizedFontSize,
+                fontWeight = FontWeight.Bold,
+                color = if (plHidden) mutedText.copy(alpha = 0.5f) else primaryText,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = if (largeFormat) 4 else 2,
+                softWrap = true
+            )
+            pinned.literal?.takeIf { it.isNotBlank() }?.let { literal ->
+                Text(
+                    text = literal,
+                    fontSize = if (largeFormat) 13.sp else 14.sp,
+                    color = accentText,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = if (largeFormat) 3 else 2,
+                    softWrap = true
+                )
+            }
+        } else {
         // Big centered Polish row with per-token gloss columns. Row centers itself
         // in the available width (Arrangement.Center) and each token's column
         // centers its own contents. Gloss row reserved even when missing so columns
@@ -332,6 +385,7 @@ fun NowVoicingBody(
                     }
                 }
             }
+        }
         }
     }
         if (composing) {

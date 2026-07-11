@@ -11,6 +11,7 @@ build/
 
 # Local config (contains Azure key)
 local.properties
+cloudflare/langbangml/.wrangler/
 
 # Memory (per-project gstack)
 memory/sessions.md

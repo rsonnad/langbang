@@ -105,11 +105,20 @@ struct AudioManifestSummary: Codable, Equatable {
 
 // MARK: - Lesson payloads (decoded on demand)
 
+/// A learner-facing Japanese reading. `japanese` is the canonical mixed script,
+/// `kana` is its reading, and `romaji` is the beginner-default presentation.
+struct JapaneseReading: Decodable, Equatable {
+    let japanese: String
+    let kana: String
+    let romaji: String
+}
+
 struct PronunciationPayload: Decodable, Equatable {
     let id: String
     let title: String
     let summary: String?
     let phonemes: [PhonemeEntry]
+    let readings: [String: JapaneseReading]?
 }
 
 struct PhonemeEntry: Decodable, Equatable {
@@ -138,6 +147,7 @@ struct VerbsPayload: Decodable, Equatable {
     let title: String
     let summary: String?
     let verbs: [VerbEntry]
+    let readings: [String: JapaneseReading]?
 }
 
 struct VerbEntry: Decodable, Equatable {
@@ -152,6 +162,7 @@ struct AdjectivesPayload: Decodable, Equatable {
     let title: String
     let summary: String?
     let adjectives: [AdjectiveEntry]
+    let readings: [String: JapaneseReading]?
 }
 
 struct AdjectiveEntry: Decodable, Equatable {
@@ -166,6 +177,7 @@ struct AdverbsPayload: Decodable, Equatable {
     let title: String
     let summary: String?
     let adverbs: [AdverbEntry]
+    let readings: [String: JapaneseReading]?
 }
 
 struct AdverbEntry: Decodable, Equatable {
@@ -178,6 +190,7 @@ struct NounsPayload: Decodable, Equatable {
     let title: String
     let summary: String?
     let nouns: [NounEntry]
+    let readings: [String: JapaneseReading]?
 }
 
 struct NounEntry: Decodable, Equatable {
@@ -194,6 +207,7 @@ struct PhrasesPayload: Decodable, Equatable {
     let title: String
     let summary: String?
     let groups: [PhraseGroup]
+    let readings: [String: JapaneseReading]?
 }
 
 struct PhraseGroup: Decodable, Equatable, Identifiable {

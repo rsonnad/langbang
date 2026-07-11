@@ -297,12 +297,23 @@ struct StudyRootView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text("\(lp.sourceLanguage) → \(lp.targetLanguage)")
                 .font(.headline)
+            Text("LangBang v\(appVersion) (\(appBuild))")
+                .font(.caption2.monospaced())
+                .foregroundStyle(.tertiary)
             if let ver = b.content.versionId {
                 Text(ver).font(.caption2).foregroundStyle(.tertiary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.bottom, 4)
+    }
+
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+    }
+
+    private var appBuild: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
     }
 
     private var preloadBanner: some View {
@@ -368,7 +379,7 @@ private enum StudyTab: Hashable {
     case pronunciation, verbs, adjectives, nouns, phrases, adverbs
 }
 
-// MARK: - Sections (real EN -> JA content, Japanese prominent)
+// MARK: - Sections (real EN -> JA content, romaji first for beginners)
 
 struct PronunciationSection: View {
     let bootstrap: CloudBootstrap
@@ -404,10 +415,16 @@ struct PronunciationSection: View {
                                     Text("Examples").font(.caption.bold()).padding(.top, 4)
                                     FlowLayout {
                                     ForEach(ph.examples, id: \.target) { ex in
+                                        let reading = p.readings?[ex.target]
                                         Button {
                                                 audio.playTarget(bootstrap: bootstrap, text: ex.target, slowFirst: true)
                                         } label: {
-                                                Text(ex.target).font(.body)
+                                                VStack(spacing: 2) {
+                                                    Text(reading?.romaji ?? ex.target).font(.body)
+                                                    if let support = readingSupport(reading) {
+                                                        Text(support).font(.caption2).foregroundStyle(.secondary)
+                                                    }
+                                                }
                                             }
                                             .buttonStyle(.bordered)
                                         }
@@ -436,13 +453,20 @@ struct VerbsSection: View {
                 sectionHeader(title: "Verbs", summary: payload?.summary)
                 if let p = payload, !p.verbs.isEmpty {
                     ForEach(p.verbs, id: \.lemma) { v in
+                        let reading = p.readings?[v.lemma]
                         Card {
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(v.lemma)
+                                        Text(reading?.romaji ?? v.lemma)
                                             .font(.title3.bold())
                                             .lineLimit(1)
+                                        if let support = readingSupport(reading) {
+                                            Text(support)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
                                         Text(v.en)
                                             .foregroundStyle(.secondary)
                                             .lineLimit(1)
@@ -455,12 +479,12 @@ struct VerbsSection: View {
                                     }
                                 }
                                 if !v.forms.isEmpty {
-                                    FormGrid(title: "Present", forms: v.forms) { form in
+                                    FormGrid(title: "Present", forms: v.forms, readings: p.readings ?? [:]) { form in
                                         audio.playTarget(bootstrap: bootstrap, text: form, slowFirst: false)
                                     }
                                 }
                                 if let past = v.past_forms, !past.isEmpty {
-                                    FormGrid(title: "Past", forms: past) { form in
+                                    FormGrid(title: "Past", forms: past, readings: p.readings ?? [:]) { form in
                                         audio.playTarget(bootstrap: bootstrap, text: form, slowFirst: false)
                                     }
                                 }
@@ -485,16 +509,20 @@ struct AdjectivesSection: View {
                 sectionHeader(title: "Adjectives", summary: payload?.summary)
                 if let p = payload {
                     ForEach(p.adjectives, id: \.lemma) { a in
+                        let reading = p.readings?[a.lemma]
                         Card {
                             HStack {
                                 VStack(alignment: .leading) {
-                                    Text(a.lemma).font(.title3.bold())
+                                    Text(reading?.romaji ?? a.lemma).font(.title3.bold())
+                                    if let support = readingSupport(reading) {
+                                        Text(support).font(.caption).foregroundStyle(.secondary)
+                                    }
                                     Text(a.en).foregroundStyle(.secondary)
                                 }
                                 Spacer()
                                 playButton { audio.playTarget(bootstrap: bootstrap, text: a.nom.values.first ?? a.lemma, slowFirst: true) }
                             }
-                            FormGrid(title: "Forms", forms: a.nom.merging(a.acc, uniquingKeysWith: { $1 })) { form in
+                            FormGrid(title: "Forms", forms: a.nom.merging(a.acc, uniquingKeysWith: { $1 }), readings: p.readings ?? [:]) { form in
                                 audio.playTarget(bootstrap: bootstrap, text: form)
                             }
                         }
@@ -517,10 +545,14 @@ struct NounsSection: View {
                 sectionHeader(title: "Nouns", summary: payload?.summary)
                 if let p = payload {
                     ForEach(p.nouns, id: \.lemma) { n in
+                        let reading = p.readings?[n.lemma]
                         Card {
                             HStack {
                                 VStack(alignment: .leading) {
-                                    Text(n.lemma).font(.title3.bold())
+                                    Text(reading?.romaji ?? n.lemma).font(.title3.bold())
+                                    if let support = readingSupport(reading) {
+                                        Text(support).font(.caption).foregroundStyle(.secondary)
+                                    }
                                     Text(n.en).foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -546,10 +578,14 @@ struct AdverbsSection: View {
                 sectionHeader(title: "Adverbs", summary: payload?.summary)
                 if let p = payload {
                     ForEach(p.adverbs, id: \.lemma) { a in
+                        let reading = p.readings?[a.lemma]
                         Card {
                             HStack {
                                 VStack(alignment: .leading) {
-                                    Text(a.lemma).font(.title3.bold())
+                                    Text(reading?.romaji ?? a.lemma).font(.title3.bold())
+                                    if let support = readingSupport(reading) {
+                                        Text(support).font(.caption).foregroundStyle(.secondary)
+                                    }
                                     Text(a.en).foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -580,9 +616,13 @@ struct PhrasesSection: View {
                                 Text(g.title).font(.headline)
                                 if let sub = g.subtitle { Text(sub).font(.subheadline).foregroundStyle(.secondary) }
                                 ForEach(Array(g.sentences.enumerated()), id: \.offset) { _, s in
+                                    let reading = p.readings?[s.target]
                                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                                         VStack(alignment: .leading, spacing: 2) {
-                                            Text(s.target).font(.body.weight(.semibold)) // Japanese prominent
+                                            Text(reading?.romaji ?? s.target).font(.body.weight(.semibold))
+                                            if let support = readingSupport(reading) {
+                                                Text(support).font(.caption).foregroundStyle(.secondary)
+                                            }
                                             Text(s.en).font(.subheadline).foregroundStyle(.secondary)
                                             if let lit = s.literal, !lit.isEmpty {
                                                 Text(lit).font(.caption.italic()).foregroundStyle(.tertiary)
@@ -620,6 +660,13 @@ private func sectionHeader(title: String, summary: String?) -> some View {
     }
 }
 
+private func readingSupport(_ reading: JapaneseReading?) -> String? {
+    guard let reading else { return nil }
+    return reading.kana == reading.japanese
+        ? reading.kana
+        : "\(reading.kana) · \(reading.japanese)"
+}
+
 private func playButton(action: @escaping () -> Void) -> some View {
     Button(action: action) {
         Image(systemName: "speaker.wave.2.fill")
@@ -648,6 +695,7 @@ struct Card<Content: View>: View {
 struct FormGrid: View {
     let title: String
     let forms: [String: String]
+    let readings: [String: JapaneseReading]
     let onPlay: (String) -> Void
 
     var body: some View {
@@ -656,11 +704,15 @@ struct FormGrid: View {
             let items = forms.sorted { $0.key < $1.key }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
                 ForEach(items, id: \.key) { key, value in
+                    let reading = readings[value]
                     Button {
                         onPlay(value)
                     } label: {
                         VStack(spacing: 2) {
-                            Text(value).font(.callout.weight(.semibold))
+                            Text(reading?.romaji ?? value).font(.callout.weight(.semibold))
+                            if let support = readingSupport(reading) {
+                                Text(support).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                            }
                             Text(key).font(.caption2).foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity)

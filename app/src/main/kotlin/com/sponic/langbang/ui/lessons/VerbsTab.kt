@@ -59,6 +59,7 @@ import com.sponic.langbang.data.PracticePrefsStore
 import com.sponic.langbang.data.PronounFilterStore
 import com.sponic.langbang.data.VerbSentenceStore
 import com.sponic.langbang.data.model.ConjugationClass
+import com.sponic.langbang.data.model.JapaneseReading
 import com.sponic.langbang.data.model.AdjectiveEntry
 import com.sponic.langbang.data.model.AdverbEntry
 import com.sponic.langbang.data.model.NounEntry
@@ -68,6 +69,8 @@ import com.sponic.langbang.data.model.TokenPair
 import com.sponic.langbang.data.model.VerbEntry
 import com.sponic.langbang.data.model.audioPronoun
 import com.sponic.langbang.data.model.conjugationClass
+import com.sponic.langbang.data.model.readingSupport
+import com.sponic.langbang.data.model.romanizedText
 import com.sponic.langbang.integrations.GeminiClient
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
@@ -1993,6 +1996,7 @@ internal fun VerbsTab(
         // Now Voicing band, then the word-type play controls, then the verb paradigm.
         VerbList(
             grouped = grouped,
+            readings = lesson.readings,
             selected = state.selected,
             onSelect = { state.selectVerb(it) },
             checkedLemmas = state.checkedLemmas,
@@ -2019,7 +2023,8 @@ internal fun VerbsTab(
                     VerbParadigm(
                         verb = it,
                         state = state,
-                        navVerbs = navVerbs
+                        navVerbs = navVerbs,
+                        readings = lesson.readings
                     )
                 }
             }
@@ -2234,6 +2239,7 @@ private fun VerbPlayButton(
 @Composable
 private fun VerbList(
     grouped: Map<ConjugationClass, List<VerbEntry>>,
+    readings: Map<String, JapaneseReading>,
     selected: VerbEntry?,
     onSelect: (VerbEntry) -> Unit,
     checkedLemmas: Set<String>,
@@ -2314,7 +2320,7 @@ private fun VerbList(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                v.lemma,
+                                readings.romanizedText(v.lemma),
                                 color = if (isSel) Color.White else LbColors.Primary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp
@@ -2339,7 +2345,8 @@ private fun VerbList(
 private fun VerbParadigm(
     verb: VerbEntry,
     state: VerbsTabState,
-    navVerbs: List<VerbEntry>
+    navVerbs: List<VerbEntry>,
+    readings: Map<String, JapaneseReading>
 ) {
     Column(
         modifier = Modifier
@@ -2352,8 +2359,13 @@ private fun VerbParadigm(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(verb.lemma, fontSize = 26.sp, fontWeight = FontWeight.Bold,
-                color = LbColors.Primary)
+            Column {
+                Text(readings.romanizedText(verb.lemma), fontSize = 26.sp, fontWeight = FontWeight.Bold,
+                    color = LbColors.Primary)
+                readings.readingSupport(verb.lemma)?.let { support ->
+                    Text(support, fontSize = 11.sp, color = LbColors.TextSecondary)
+                }
+            }
             Spacer(Modifier.width(8.dp))
             // Play the infinitive aloud — same affordance as the conjugation rows below.
             Icon(

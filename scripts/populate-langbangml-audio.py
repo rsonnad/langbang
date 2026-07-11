@@ -27,6 +27,9 @@ SKIP_DESCENT = {
     "case_forms", "literal", "words", "schema", "sourceLocale", "targetLocale", "sourceField",
     "targetField", "fieldLocales", "id", "title", "summary", "subtitle", "description", "name",
     "ipa", "englishApproximation", "letter", "gender", "focus", "index", "person",
+    # Reading metadata is display-only. Canonical Japanese already arrives through
+    # `pl`, `lemma`, and form maps above; never synthesize kana or romaji strings.
+    "readings", "japanese", "kana", "romaji",
 }
 
 

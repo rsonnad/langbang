@@ -52,7 +52,10 @@ import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.data.PracticePrefsStore
 import com.sponic.langbang.domain.PrefetchProgress
 import com.sponic.langbang.data.model.NounEntry
+import com.sponic.langbang.data.model.JapaneseReading
 import com.sponic.langbang.data.model.SentenceExample
+import com.sponic.langbang.data.model.readingSupport
+import com.sponic.langbang.data.model.romanizedText
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
@@ -447,6 +450,7 @@ fun NounsScreen(
     Row(modifier = Modifier.fillMaxSize()) {
         NounList(
             nouns = lesson.nouns,
+            readings = lesson.readings,
             selected = state.selected,
             onSelect = { state.select(it) },
             checkedLemmas = state.checkedLemmas,
@@ -473,7 +477,8 @@ fun NounsScreen(
                     NounParadigm(
                         noun = it,
                         state = state,
-                        nouns = lesson.nouns
+                        nouns = lesson.nouns,
+                        readings = lesson.readings
                     )
                 }
             }
@@ -611,6 +616,7 @@ private fun ExamplesControls(state: NounsScreenState, nouns: List<NounEntry>) {
 @Composable
 private fun NounList(
     nouns: List<NounEntry>,
+    readings: Map<String, JapaneseReading>,
     selected: NounEntry?,
     onSelect: (NounEntry) -> Unit,
     checkedLemmas: Set<String>,
@@ -660,7 +666,7 @@ private fun NounList(
                         verticalAlignment = Alignment.Top
                     ) {
                         Text(
-                            n.lemma,
+                            readings.romanizedText(n.lemma),
                             color = if (isSel) Color.White else LbColors.Primary,
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp
@@ -694,7 +700,8 @@ private fun NounList(
 private fun NounParadigm(
     noun: NounEntry,
     state: NounsScreenState,
-    nouns: List<NounEntry>
+    nouns: List<NounEntry>,
+    readings: Map<String, JapaneseReading>
 ) {
     Column(
         modifier = Modifier
@@ -707,8 +714,13 @@ private fun NounParadigm(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(noun.lemma, fontSize = 22.sp, fontWeight = FontWeight.Bold,
-                color = LbColors.Primary)
+            Column {
+                Text(readings.romanizedText(noun.lemma), fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                    color = LbColors.Primary)
+                readings.readingSupport(noun.lemma)?.let { support ->
+                    Text(support, fontSize = 11.sp, color = LbColors.TextSecondary)
+                }
+            }
             Spacer(Modifier.width(10.dp))
             DelayedEnglishTranslation(
                 text = "${noun.en}  ·  ${genderName(noun.gender)}",

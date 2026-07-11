@@ -78,6 +78,7 @@ import com.sponic.langbang.cloud.CloudAiPhraseQuota
 import com.sponic.langbang.cloud.CloudAuthResponse
 import com.sponic.langbang.cloud.GoogleSignInHelper
 import com.sponic.langbang.data.model.PhraseGroup
+import com.sponic.langbang.data.model.JapaneseReading
 import com.sponic.langbang.data.model.SentenceExample
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
@@ -271,6 +272,7 @@ fun PhrasesScreen(
                         app = app,
                         group = group,
                         groups = data.groups,
+                        readings = data.readings,
                         onSelectGroup = { selectedId = it.id },
                         onPhraseAdded = { sentence ->
                             pendingAudio.add(sentence)
@@ -572,6 +574,7 @@ private fun PhraseDetail(
     app: LangbangApplication,
     group: PhraseGroup,
     groups: List<PhraseGroup>,
+    readings: Map<String, JapaneseReading>,
     onSelectGroup: (PhraseGroup) -> Unit,
     onPhraseAdded: (SentenceExample) -> Unit,
     onGroupEdited: () -> Unit = {}
@@ -999,6 +1002,7 @@ private fun PhraseDetail(
             displaySentences.forEachIndexed { i, s ->
                 SentenceRow(
                     sentence = s,
+                    reading = readings[s.pl],
                     isCurrent = i == playingIndex,
                     isStarred = s.pl in starred,
                     onToggleStar = {
@@ -1679,6 +1683,7 @@ private fun PhraseToggle(
 @Composable
 private fun SentenceRow(
     sentence: SentenceExample,
+    reading: JapaneseReading?,
     isCurrent: Boolean,
     isStarred: Boolean,
     onToggleStar: () -> Unit,
@@ -1725,6 +1730,7 @@ private fun SentenceRow(
                 }
                 WordAlignedPolish(
                     sentence = sentence,
+                    reading = reading,
                     plFontSize = 19.sp,
                     plFontWeight = FontWeight.Bold,
                     glossFontSize = 10.sp,

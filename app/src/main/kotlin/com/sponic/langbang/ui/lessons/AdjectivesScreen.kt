@@ -59,7 +59,10 @@ import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.domain.PrefetchProgress
 import com.sponic.langbang.data.PracticePrefsStore
 import com.sponic.langbang.data.model.AdjectiveEntry
+import com.sponic.langbang.data.model.JapaneseReading
 import com.sponic.langbang.data.model.SentenceExample
+import com.sponic.langbang.data.model.readingSupport
+import com.sponic.langbang.data.model.romanizedText
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.PlaybackController
@@ -422,6 +425,7 @@ fun AdjectivesScreen(
     Row(modifier = Modifier.fillMaxSize()) {
         AdjectiveList(
             adjectives = lesson.adjectives,
+            readings = lesson.readings,
             selected = state.selected,
             onSelect = { state.select(it) },
             checkedLemmas = state.checkedLemmas,
@@ -459,7 +463,8 @@ fun AdjectivesScreen(
                         app = app,
                         adj = it,
                         state = state,
-                        adjectives = lesson.adjectives
+                        adjectives = lesson.adjectives,
+                        readings = lesson.readings
                     )
                 }
             }
@@ -550,6 +555,7 @@ private fun ExamplesControls(
 @Composable
 private fun AdjectiveList(
     adjectives: List<AdjectiveEntry>,
+    readings: Map<String, JapaneseReading>,
     selected: AdjectiveEntry?,
     onSelect: (AdjectiveEntry) -> Unit,
     checkedLemmas: Set<String>,
@@ -599,7 +605,7 @@ private fun AdjectiveList(
                         verticalAlignment = Alignment.Top
                     ) {
                         Text(
-                            a.lemma,
+                            readings.romanizedText(a.lemma),
                             color = if (isSel) Color.White else LbColors.Primary,
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp
@@ -625,7 +631,8 @@ private fun AdjectiveParadigm(
     app: LangbangApplication,
     adj: AdjectiveEntry,
     state: AdjectivesScreenState,
-    adjectives: List<AdjectiveEntry>
+    adjectives: List<AdjectiveEntry>,
+    readings: Map<String, JapaneseReading>
 ) {
     Column(
         modifier = Modifier
@@ -638,8 +645,13 @@ private fun AdjectiveParadigm(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(adj.lemma, fontSize = 22.sp, fontWeight = FontWeight.Bold,
-                color = LbColors.Primary)
+            Column {
+                Text(readings.romanizedText(adj.lemma), fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                    color = LbColors.Primary)
+                readings.readingSupport(adj.lemma)?.let { support ->
+                    Text(support, fontSize = 11.sp, color = LbColors.TextSecondary)
+                }
+            }
             Spacer(Modifier.width(10.dp))
             DelayedEnglishTranslation(text = adj.en, fontSize = 14.sp, color = LbColors.TextSecondary,
                 modifier = Modifier.padding(top = 1.dp))

@@ -107,6 +107,7 @@ fun SettingsScreen(app: LangbangApplication) {
         )
         PracticePronounsCard(app = app)
         PracticePlaybackCard(app = app)
+        NowVoicingPresentationCard(app = app)
         NounColorLegendCard()
         SettingsGroupHeader(
             title = "Content & Audio",
@@ -860,6 +861,40 @@ private fun PracticePlaybackCard(app: LangbangApplication) {
                     }
                 )
                 Text("Slow ${app.targetLanguageLabel()} first", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun NowVoicingPresentationCard(app: LangbangApplication) {
+    val swapped by app.practicePrefs.nowVoicingTargetLinesSwappedState.collectAsState()
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionHeader("Now Voicing text order")
+            Text(
+                "The shared four-line layout shows English, a compact target line, a large target line, and word-for-word English.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = swapped,
+                    onCheckedChange = { checked ->
+                        app.practicePrefs.setNowVoicingTargetLinesSwapped(checked)
+                    }
+                )
+                Column {
+                    Text("Swap pronunciation and writing", fontSize = 12.sp)
+                    Text(
+                        "Applies to every language pack — Polish and Japanese included.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                    )
+                }
             }
         }
     }

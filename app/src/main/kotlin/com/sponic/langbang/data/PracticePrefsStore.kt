@@ -1,10 +1,18 @@
 package com.sponic.langbang.data
 
 import android.content.Context
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 class PracticePrefsStore(context: Context) {
     private val prefs = context.applicationContext
         .getSharedPreferences("practice-prefs", Context.MODE_PRIVATE)
+    private val _nowVoicingTargetLinesSwapped = MutableStateFlow(
+        prefs.getBoolean(KEY_NOW_VOICING_TARGET_LINES_SWAPPED, false)
+    )
+    val nowVoicingTargetLinesSwappedState: StateFlow<Boolean> =
+        _nowVoicingTargetLinesSwapped.asStateFlow()
 
     fun slowFirst(): Boolean = prefs.getBoolean(KEY_SLOW_FIRST, true)
 
@@ -22,6 +30,19 @@ class PracticePrefsStore(context: Context) {
 
     fun setLoopPractice(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_LOOP_PRACTICE, enabled).apply()
+    }
+
+    /**
+     * The common Now Voicing renderer has two learner-facing target lines: a compact
+     * pronunciation/writing aid and an emphasized target line. Keep the default
+     * beginner-friendly order, but let a learner invert them for every language.
+     */
+    fun nowVoicingTargetLinesSwapped(): Boolean =
+        _nowVoicingTargetLinesSwapped.value
+
+    fun setNowVoicingTargetLinesSwapped(swapped: Boolean) {
+        prefs.edit().putBoolean(KEY_NOW_VOICING_TARGET_LINES_SWAPPED, swapped).apply()
+        _nowVoicingTargetLinesSwapped.value = swapped
     }
 
     /**
@@ -112,6 +133,7 @@ class PracticePrefsStore(context: Context) {
         private const val KEY_SLOW_FIRST = "slow-first"
         private const val KEY_SPEAK_ENGLISH_FIRST = "speak-english-first"
         private const val KEY_LOOP_PRACTICE = "loop-practice"
+        private const val KEY_NOW_VOICING_TARGET_LINES_SWAPPED = "now-voicing-target-lines-swapped"
         private const val KEY_CHECKED_VERBS = "checked-verbs"
         private const val KEY_VERB_PHRASE_INCLUDE_PRONOUNS = "verb-phrase-include-pronouns"
         private const val KEY_VERB_PHRASE_INCLUDE_HELPER_VERB = "verb-phrase-include-helper-verb"
