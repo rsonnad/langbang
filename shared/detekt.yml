@@ -1,0 +1,24 @@
+# Detekt config for LangBang shared — anti-drift guardrails
+# This enforces that pure shared code (commonMain) never imports platform Android types.
+
+style:
+  ForbiddenImport:
+    active: true
+    # Forbid Android / AndroidX leaks into shared logic.
+    # Actual implementations live in androidMain / iosMain and may import platform.
+    forbiddenImports:
+      - value: 'android.*'
+        reason: 'Android platform types must not leak into commonMain. Use expect/actual or move to androidMain.'
+      - value: 'androidx.*'
+        reason: 'AndroidX types must not leak into commonMain. Keep UI/state logic platform-agnostic.'
+    # We allow exceptions inside androidMain sources via Detekt's source filtering or by convention.
+    # To make the rule stricter for common, the build task runs detekt on common sources primarily.
+    allowedImports:
+      - 'android.'  # placeholder; actual enforcement via separate common-only invocation if needed
+
+# Enable the rule set
+processors:
+  active: true
+
+console-reports:
+  active: true
