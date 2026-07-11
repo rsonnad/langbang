@@ -223,6 +223,9 @@ struct StudyRootView: View {
                             .padding(.horizontal)
                             .padding(.top, 8)
 
+                        if let nowVoicing = audio.nowVoicing {
+                            nowVoicingBanner(nowVoicing)
+                        }
                         if audio.isPreloading {
                             preloadBanner
                         } else if let err = audio.preloadError {
@@ -327,6 +330,21 @@ struct StudyRootView: View {
         .padding(.horizontal)
     }
 
+    private func nowVoicingBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "speaker.wave.2.circle.fill")
+                .foregroundStyle(.tint)
+            Text(message)
+                .font(.footnote.weight(.medium))
+                .lineLimit(1)
+            Spacer()
+        }
+        .padding(8)
+        .background(Color(.secondarySystemBackground))
+        .padding(.horizontal)
+        .accessibilityLabel(message)
+    }
+
     private func playbackBanner(_ message: String) -> some View {
         HStack {
             if message == "Loading audio…" {
@@ -421,9 +439,20 @@ struct VerbsSection: View {
                         Card {
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
-                                    Text(v.lemma).font(.title3.bold())
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(v.lemma)
+                                            .font(.title3.bold())
+                                            .lineLimit(1)
+                                        Text(v.en)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.tail)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                     Spacer()
-                                    Text(v.en).foregroundStyle(.secondary)
+                                    playButton {
+                                        audio.playTarget(bootstrap: bootstrap, text: v.lemma, slowFirst: true)
+                                    }
                                 }
                                 if !v.forms.isEmpty {
                                     FormGrid(title: "Present", forms: v.forms) { form in

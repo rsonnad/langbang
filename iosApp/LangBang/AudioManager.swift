@@ -18,6 +18,11 @@ final class AudioManager: ObservableObject {
     @Published private(set) var preloadMessage: String = ""
     @Published private(set) var preloadError: String?
     @Published private(set) var playbackStatus: String?
+    @Published private(set) var nowVoicing: String?
+
+    // The public worker protects itself with a 100-item manifest ceiling.
+    // Leave room for future request metadata instead of sending right at it.
+    private let manifestBatchSize = 50
 
     private let fileManager = FileManager.default
     private var cacheDir: URL {
@@ -144,6 +149,7 @@ final class AudioManager: ObservableObject {
         // Verbs: target forms only (with subject when Polish-like, but for JA we just use the form)
         if let verbs: VerbsPayload = findLessonPayload(in: bootstrap, type: "verbs") {
             for v in verbs.verbs {
+                addTarget(v.lemma)
                 for (_, form) in v.forms { addTarget(form) }
                 if let pf = v.past_forms { for (_, form) in pf { addTarget(form) } }
             }
@@ -211,49 +217,56 @@ final class AudioManager: ObservableObject {
             return
         }
 
-        do {
-            preloadMessage = "Resolving audio…"
-            let manifest = try await CloudClient.shared.fetchAudioManifest(phrases: missing)
+        var entries: [AudioManifestEntry] = []
+        var failed = 0
+        let batches = missing.chunked(into: manifestBatchSize)
+        for (index, batch) in batches.enumerated() {
+            preloadMessage = "Resolving audio batch \(index + 1)/\(batches.count)…"
+            do {
+                let response = try await CloudClient.shared.fetchAudioManifest(phrases: batch)
+                let validEntries = response.manifest.filter { $0.error == nil && !$0.url.isEmpty }
+                entries += validEntries
+                failed += max(batch.count - validEntries.count, 0)
+            } catch {
+                // Continue with the remaining batches; a temporary 413/network
+                // failure must not suppress every other available clip.
+                failed += batch.count
+            }
+        }
 
-            let entries = manifest.manifest.filter { $0.error == nil && !$0.url.isEmpty }
-            let total = max(entries.count, 1)
-            var done = 0
-            var failed = max(missing.count - entries.count, 0)
-
-            for entry in entries {
-                preloadMessage = "Downloading audio \(done + 1)/\(total)"
-                let localURL = localFileURL(for: entry)
-                if !isUsableAudioFile(at: localURL) {
-                    if let remote = URL(string: entry.url) {
-                        do {
-                            let (data, resp) = try await URLSession.shared.data(from: remote)
-                            if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
-                                try data.write(to: localURL, options: .atomic)
-                                if !isUsableAudioFile(at: localURL) {
-                                    try? fileManager.removeItem(at: localURL)
-                                    failed += 1
-                                }
-                            } else {
+        let total = max(entries.count, 1)
+        var done = 0
+        for entry in entries {
+            preloadMessage = "Downloading audio \(done + 1)/\(total)"
+            let localURL = localFileURL(for: entry)
+            if !isUsableAudioFile(at: localURL) {
+                if let remote = URL(string: entry.url) {
+                    do {
+                        let (data, resp) = try await URLSession.shared.data(from: remote)
+                        if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
+                            try data.write(to: localURL, options: .atomic)
+                            if !isUsableAudioFile(at: localURL) {
+                                try? fileManager.removeItem(at: localURL)
                                 failed += 1
                             }
-                        } catch {
+                        } else {
                             failed += 1
                         }
-                    } else {
+                    } catch {
                         failed += 1
                     }
+                } else {
+                    failed += 1
                 }
-                done += 1
-                preloadProgress = Double(done) / Double(total)
             }
+            done += 1
+            preloadProgress = Double(done) / Double(total)
+        }
 
-            if failed > 0 {
-                preloadError = "Some audio failed to download (\(failed)). You can retry."
-            } else {
-                preloadMessage = "Audio ready"
-            }
-        } catch {
-            preloadError = error.localizedDescription
+        if failed > 0 {
+            preloadError = "Some audio failed to download (\(failed)). You can retry."
+        } else {
+            preloadMessage = "Audio ready"
         }
 
         isPreloading = false
@@ -297,6 +310,7 @@ final class AudioManager: ObservableObject {
             return false
         }
         let didPlay = playFile(url: url)
+        if didPlay { announceNowVoicing(text) }
         setPlaybackStatus(didPlay ? nil : "Couldn’t play this audio. Tap again to retry.")
         return didPlay
     }
@@ -327,6 +341,7 @@ final class AudioManager: ObservableObject {
                 }
             }
             let didPlay = playFile(url: local)
+            if didPlay { announceNowVoicing(text) }
             setPlaybackStatus(didPlay ? nil : "Couldn’t play this audio. Tap again to retry.")
             return didPlay
         } catch {
@@ -367,6 +382,22 @@ final class AudioManager: ObservableObject {
         }
     }
 
+    private func announceNowVoicing(_ text: String) {
+        let message = "Now voicing: \(text)"
+        let update = { [weak self] in
+            self?.nowVoicing = message
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak self] in
+                guard self?.nowVoicing == message else { return }
+                self?.nowVoicing = nil
+            }
+        }
+        if Thread.isMainThread {
+            update()
+        } else {
+            DispatchQueue.main.async(execute: update)
+        }
+    }
+
     func stop() {
         currentPlayer?.stop()
         currentPlayer = nil
@@ -383,6 +414,7 @@ final class AudioManager: ObservableObject {
             // Preload provides slow-first; a partial/offline cache falls back
             // immediately to normal speed.
             if let slowURL = localURL(locale: locale, voice: slow, text: text), playFile(url: slowURL) {
+                announceNowVoicing(text)
                 setPlaybackStatus(nil)
                 return
             }
@@ -401,4 +433,13 @@ final class AudioManager: ObservableObject {
         _ = play(locale: lp.sourceLocale, voice: lp.sourceVoice, text: text)
     }
 
+}
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else { return [self] }
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0 ..< Swift.min($0 + size, count)])
+        }
+    }
 }
