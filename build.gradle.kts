@@ -8,3 +8,9 @@ plugins {
     id("co.touchlab.skie") version "0.9.2" apply false
     id("io.gitlab.arturbosch.detekt") version "1.23.7" apply false
 }
+
+tasks.register<Exec>("checkMobileParity") {
+    group = "verification"
+    description = "Checks the Android/shared/iOS mobile parity contract without using the web app."
+    commandLine("bash", "scripts/check-mobile-parity.sh", "--static")
+}

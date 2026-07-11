@@ -1,0 +1,13 @@
+feature_id	android_surface	shared_contract	ios_surface	status	evidence
+shell-navigation	app/src/main/kotlin/com/sponic/langbang/ui/LangbangApp.kt	shared/src/commonMain/kotlin/com/sponic/langbang/shared/LangBangShared.kt	iosApp/LangBang/ContentView.swift	ios-visual	pixel10+a9+iphone17-20260711
+pronunciation	app/src/main/kotlin/com/sponic/langbang/ui/pronunciation/PronunciationScreen.kt	-	iosApp/LangBang/ContentView.swift	ios-visual	pixel10+a9+iphone17-20260711
+numbers	app/src/main/kotlin/com/sponic/langbang/ui/numbers/NumbersScreen.kt	-	iosApp/LangBang/ContentView.swift	ios-visual	pixel10+iphone17-20260711
+verbs	app/src/main/kotlin/com/sponic/langbang/ui/lessons/VerbsTab.kt	-	iosApp/LangBang/ContentView.swift	ios-visual	pixel10+iphone17-20260711
+adjectives	app/src/main/kotlin/com/sponic/langbang/ui/lessons/AdjectivesScreen.kt	-	iosApp/LangBang/ContentView.swift	ios-visual	pixel10+iphone17-20260711
+adverbs	app/src/main/kotlin/com/sponic/langbang/ui/lessons/AdverbsScreen.kt	-	iosApp/LangBang/ContentView.swift	ios-visual	pixel10+iphone17-20260711
+nouns	app/src/main/kotlin/com/sponic/langbang/ui/lessons/NounsScreen.kt	-	iosApp/LangBang/ContentView.swift	ios-visual	pixel10+iphone17-20260711
+phrases	app/src/main/kotlin/com/sponic/langbang/ui/phrases/PhrasesScreen.kt	-	iosApp/LangBang/ContentView.swift	ios-visual	pixel10+iphone17-20260711
+quizzes	app/src/main/kotlin/com/sponic/langbang/ui/quizzes/PracticeQuiz.kt	shared/src/commonMain/kotlin/com/sponic/langbang/shared/practice/PracticeModel.kt	iosApp/LangBang/ContentView.swift	shared-ready	shared-tests+iphone17-20260711
+external-llm	app/src/main/kotlin/com/sponic/langbang/ui/external/ExternalNowVoicingScreen.kt	shared/src/commonMain/kotlin/com/sponic/langbang/shared/cloud/LangBangApi.kt	iosApp/LangBang/ContentView.swift	ios-visual	pixel10+iphone17-20260711
+settings	app/src/main/kotlin/com/sponic/langbang/ui/settings/SettingsScreen.kt	-	iosApp/LangBang/ContentView.swift	ios-visual	pixel10+iphone17-20260711
+now-voicing	app/src/main/kotlin/com/sponic/langbang/ui/common/NowVoicingPanel.kt	shared/src/commonMain/kotlin/com/sponic/langbang/shared/voicing/NowVoicingModel.kt	iosApp/LangBang/ContentView.swift	shared-ready	shared-tests+iphone17-now-voicing-20260711
