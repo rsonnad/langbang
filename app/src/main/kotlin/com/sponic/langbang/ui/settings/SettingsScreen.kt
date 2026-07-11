@@ -69,6 +69,9 @@ import com.sponic.langbang.cloud.GoogleSignInHelper
 import com.sponic.langbang.data.PronounFilterStore
 import com.sponic.langbang.data.SlowStyle
 import com.sponic.langbang.domain.UsageSnapshot
+import com.sponic.langbang.domain.targetLanguageLabel
+import com.sponic.langbang.domain.targetSlowVoices
+import com.sponic.langbang.integrations.AzureTtsClient
 import com.sponic.langbang.ui.common.GrammarVisuals
 import com.sponic.langbang.ui.common.VariablePolishText
 import kotlinx.coroutines.launch
@@ -739,19 +742,19 @@ private fun CloudConfigCard(app: LangbangApplication) {
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SectionHeader(label(labels, "settings.cloud.title", "Cloud configuration"))
+            SectionHeader(label(labels, "settings.cloud.title", "Learning language"))
             Text(
                 label(
                     labels,
                     "settings.cloud.description",
-                    "Instance, language pair, content version, and UX labels are downloaded from Cloudflare. Bundled lessons stay as fallback content."
+                    "Language packs, content, and required audio are downloaded from Cloudflare. A switched pack remains hidden until its download is ready."
                 ),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
             )
             if (cloud.instances.isNotEmpty()) {
                 Text(
-                    label(labels, "settings.cloud.available_instances", "Available instances"),
+                    label(labels, "settings.cloud.available_instances", "Available language packs"),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
                 )
@@ -791,7 +794,7 @@ private fun CloudConfigCard(app: LangbangApplication) {
             )
             CloudRow(
                 label(labels, "settings.cloud.content_version", "Content version"),
-                bootstrap?.content?.versionId ?: "(bundled fallback)"
+                bootstrap?.content?.versionId ?: "Not downloaded yet"
             )
             CloudRow(
                 label(labels, "settings.cloud.labels", "UX labels"),
@@ -856,7 +859,7 @@ private fun PracticePlaybackCard(app: LangbangApplication) {
                         app.practicePrefs.setSlowFirst(checked)
                     }
                 )
-                Text("Slow Polish first", fontSize = 12.sp)
+                Text("Slow ${app.targetLanguageLabel()} first", fontSize = 12.sp)
             }
         }
     }
@@ -1091,7 +1094,7 @@ private fun VersionHeader() {
 }
 
 /**
- * Picks which Azure SSML strategy produces the slow Polish audio in every playback
+ * Picks which Azure SSML strategy produces slow target-language audio in every playback
  * loop. Stretch = `<prosody rate="-60%">` (default, what we shipped first). Articulate
  * = `<prosody rate="-10%"><break time="250ms"/>` between words — Azure re-articulates
  * each word in isolation. Cache keys differ, so flipping pulls a different mp3 from R2
@@ -1100,34 +1103,44 @@ private fun VersionHeader() {
 @Composable
 private fun SlowAudioStyleCard(app: LangbangApplication) {
     val current by app.audioPrefs.slowStyle.collectAsState()
+    val targetLanguage = app.targetLanguageLabel()
+    val supportsArticulate = app.lessonRepo.targetSlowVoices()
+        .any { it.endsWith(AzureTtsClient.SLOW_SUFFIX_V3) }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SectionHeader("Slow audio style")
+            SectionHeader("Slow $targetLanguage audio")
             Text(
-                when (current) {
-                    SlowStyle.STRETCH -> "Stretch — slowed normal speech (-60% rate). Faster to follow when you already know the words."
-                    SlowStyle.ARTICULATE -> "Articulate — each word re-pronounced with a 250 ms pause between. Clearer for new vocabulary."
+                if (!supportsArticulate) {
+                    "$targetLanguage uses one natural slow neural voice. Word-by-word Polish articulation is not used for its unspaced script."
+                } else {
+                    when (current) {
+                        SlowStyle.STRETCH -> "Stretch — slowed normal speech (-60% rate). Faster to follow when you already know the words."
+                        SlowStyle.ARTICULATE -> "Articulate — each word re-pronounced with a 250 ms pause between. Clearer for new vocabulary."
+                    }
                 },
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = current == SlowStyle.STRETCH,
-                    onClick = { app.audioPrefs.setSlowStyle(SlowStyle.STRETCH) },
-                    label = { Text("Stretch") }
-                )
-                FilterChip(
-                    selected = current == SlowStyle.ARTICULATE,
-                    onClick = { app.audioPrefs.setSlowStyle(SlowStyle.ARTICULATE) },
-                    label = { Text("Articulate") }
-                )
+            if (supportsArticulate) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = current == SlowStyle.STRETCH,
+                        onClick = { app.audioPrefs.setSlowStyle(SlowStyle.STRETCH) },
+                        label = { Text("Stretch") }
+                    )
+                    FilterChip(
+                        selected = current == SlowStyle.ARTICULATE,
+                        onClick = { app.audioPrefs.setSlowStyle(SlowStyle.ARTICULATE) },
+                        label = { Text("Articulate") }
+                    )
+                }
             }
             Text(
-                "Tap “Download all audio” above after switching to pre-cache mp3s in the new style.",
+                if (supportsArticulate) "Tap “Download all audio” above after switching to pre-cache mp3s in the new style."
+                else "The language-pack download already includes this slow voice.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
             )

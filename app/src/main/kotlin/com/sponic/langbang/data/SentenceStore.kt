@@ -17,25 +17,33 @@ import java.io.File
  * file, and the prefetch / regen paths hammered it hundreds of times at app start — the
  * 2026-05-28 ANR. Parse is idempotent so the double-checked lock is safe.
  */
-class SentenceStore(context: Context, fileName: String) {
+class SentenceStore(
+    context: Context,
+    private val fileName: () -> String
+) {
 
-    private val file = File(context.filesDir, fileName)
+    private val directory = context.filesDir
     private val serializer = MapSerializer(
         String.serializer(),
         ListSerializer(SentenceExample.serializer())
     )
 
     @Volatile private var memo: MutableMap<String, List<SentenceExample>>? = null
+    @Volatile private var memoFileName: String? = null
+
+    private fun file(): File = File(directory, fileName())
 
     private fun loadAll(): MutableMap<String, List<SentenceExample>> {
-        memo?.let { return it }
+        val file = file()
+        memo?.takeIf { memoFileName == file.name }?.let { return it }
         return synchronized(this) {
-            memo ?: run {
+            memo?.takeIf { memoFileName == file.name } ?: run {
                 val loaded = if (!file.exists()) mutableMapOf()
                 else runCatching {
                     LbJson.pretty.decodeFromString(serializer, file.readText()).toMutableMap()
                 }.getOrDefault(mutableMapOf())
                 memo = loaded
+                memoFileName = file.name
                 loaded
             }
         }
@@ -48,13 +56,15 @@ class SentenceStore(context: Context, fileName: String) {
         synchronized(this) {
             val all = loadAll()
             all[lemma.lowercase()] = sentences
-            file.writeText(LbJson.pretty.encodeToString(serializer, all))
+            file().writeText(LbJson.pretty.encodeToString(serializer, all))
         }
     }
 
     fun clearAll() {
         synchronized(this) {
             memo = null
+            memoFileName = null
+            val file = file()
             if (file.exists()) file.delete()
         }
     }

@@ -122,8 +122,11 @@ class AzureTtsClient(
         const val EN_US_M = "en-US-GuyNeural"
         const val PL_PL_F = "pl-PL-ZofiaNeural"
         const val PL_PL_M = "pl-PL-MarekNeural"
+        const val JA_JP_F = "ja-JP-NanamiNeural"
+        const val JA_JP_M = "ja-JP-KeitaNeural"
         const val LOCALE_EN = "en-US"
         const val LOCALE_PL = "pl-PL"
+        const val LOCALE_JA = "ja-JP"
         // Rate suffix is baked into the cache key — bumping the version forces fresh
         // synthesis so a rate change isn't masked by stale mp3s in the AudioCache.
         //   - slow50v3 (-50% stretch)  kept for backward compat: existing cached mp3s replay.

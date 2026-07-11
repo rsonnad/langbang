@@ -17,6 +17,7 @@ import com.sponic.langbang.cloud.CloudConfigStore
 import com.sponic.langbang.cloud.PhraseSyncService
 import com.sponic.langbang.data.AudioPrefsStore
 import com.sponic.langbang.data.LessonRepository
+import com.sponic.langbang.data.LanguagePackStore
 import com.sponic.langbang.data.PracticePrefsStore
 import com.sponic.langbang.data.PronounFilterStore
 import com.sponic.langbang.data.RandomConfigStore
@@ -36,14 +37,18 @@ import com.sponic.langbang.integrations.AzureTtsClient
 import com.sponic.langbang.integrations.GeminiClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 
 class LangbangApplication : Application() {
 
     lateinit var cloudConfig: CloudConfigStore
+        private set
+    lateinit var languagePacks: LanguagePackStore
         private set
     lateinit var cloudBackend: CloudBackendClient
         private set
@@ -91,11 +96,29 @@ class LangbangApplication : Application() {
         private set
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var languagePackDownload: Job? = null
+    private var languagePackDownloadInstanceId: String? = null
+    private val languagePackDownloadGeneration = AtomicLong(0)
+    private val cloudSyncGeneration = AtomicLong(0)
 
     override fun onCreate() {
         super.onCreate()
         if (BuildConfig.DEBUG) AdbWifiKeeper.enableIfGranted(this, "app start")
         cloudConfig = CloudConfigStore(this, BuildConfig.LANGBANGML_INSTANCE_ID)
+        languagePacks = LanguagePackStore(this)
+        if (languagePacks.needsLegacyMigration()) {
+            cloudConfig.state.value.bootstrap
+                ?.takeIf { cloudConfig.hasLegacyBootstrapForLanguagePackMigration() }
+                ?.let { bootstrap ->
+                languagePacks.adoptLegacySelection(bootstrap.instance.id, bootstrap.content.versionId)
+            }
+            languagePacks.completeLegacyMigration()
+        }
+        languagePacks.state.value.selectedInstanceId?.let { selectedInstanceId ->
+            if (cloudConfig.state.value.selectedInstanceId != selectedInstanceId) {
+                cloudConfig.setSelectedInstance(selectedInstanceId)
+            }
+        }
         cloudBackend = CloudBackendClient(apiBase = BuildConfig.LANGBANGML_API_BASE)
         authStore = AuthStore(this)
         analytics = ProductAnalytics(
@@ -104,7 +127,7 @@ class LangbangApplication : Application() {
             client = ProductAnalyticsClient(apiBase = BuildConfig.LANGBANGML_API_BASE),
             scope = appScope
         )
-        lessonRepo = LessonRepository(this, cloudConfig)
+        lessonRepo = LessonRepository(this, cloudConfig, languagePacks)
         migrateSentenceCachesIfNeeded()
         network = NetworkMonitor(this)
         sentenceRegen = SentenceRegenService(lessonRepo, network)
@@ -144,7 +167,8 @@ class LangbangApplication : Application() {
         sentenceRegen.startIfNeeded()
         bindAuthProfileToAnalytics()
         analytics.trackSessionStart()
-        syncCloudConfig()
+        syncCloudConfig(installSelectedPack = languagePacks.state.value.selectionMade &&
+            languagePacks.state.value.status != com.sponic.langbang.data.LanguagePackStatus.READY)
         if (authStore.state.value.signedIn) {
             syncUserPhrases()
         }
@@ -177,28 +201,56 @@ class LangbangApplication : Application() {
         }
     }
 
-    fun syncCloudConfig() {
+    fun syncCloudConfig(installSelectedPack: Boolean = false) {
         analytics.track(name = "cloud_sync_requested", feature = "cloud", action = "sync")
+        val requestedInstanceId = cloudConfig.state.value.selectedInstanceId
+        val syncGeneration = cloudSyncGeneration.incrementAndGet()
         cloudConfig.markSyncing()
         appScope.launch {
             cloudBackend.fetchInstances()
-                .onSuccess { cloudConfig.saveInstances(it) }
-            cloudBackend.fetchBootstrap(cloudConfig.state.value.selectedInstanceId).fold(
+                .onSuccess { instances ->
+                    if (syncGeneration == cloudSyncGeneration.get()) cloudConfig.saveInstances(instances)
+                }
+            cloudBackend.fetchBootstrap(requestedInstanceId).fold(
                 onSuccess = { bootstrap ->
-                    cloudConfig.saveBootstrap(bootstrap)
-                    lessonRepo.clearCloudBackedBaseCache()
-                    analytics.track(
-                        name = "cloud_sync_succeeded",
-                        feature = "cloud",
-                        action = "sync",
-                        properties = mapOf(
-                            "contentVersionId" to (bootstrap.content.versionId ?: ""),
-                            "instanceId" to bootstrap.instance.id
+                    val selectedPack = languagePacks.state.value
+                    val isCurrentSelection = !selectedPack.selectionMade ||
+                        selectedPack.selectedInstanceId == bootstrap.instance.id
+                    if (syncGeneration == cloudSyncGeneration.get() && isCurrentSelection) {
+                        if (selectedPack.selectionMade) cloudConfig.saveBootstrap(bootstrap)
+                        else cloudConfig.previewBootstrap(bootstrap)
+                        lessonRepo.clearCloudBackedBaseCache()
+                        val selectedPackNeedsInstall = selectedPack.selectionMade &&
+                            selectedPack.selectedInstanceId == bootstrap.instance.id &&
+                            !languagePacks.isReady(bootstrap.instance.id, bootstrap.content.versionId)
+                        if (installSelectedPack || selectedPackNeedsInstall) installLanguagePack(bootstrap)
+                        analytics.track(
+                            name = "cloud_sync_succeeded",
+                            feature = "cloud",
+                            action = "sync",
+                            properties = mapOf(
+                                "contentVersionId" to (bootstrap.content.versionId ?: ""),
+                                "instanceId" to bootstrap.instance.id
+                            )
                         )
-                    )
+                    }
                 },
                 onFailure = { t ->
+                    if (syncGeneration != cloudSyncGeneration.get()) return@fold
                     cloudConfig.saveError(t.message ?: t.javaClass.simpleName)
+                    val selectedPack = languagePacks.state.value
+                    if (selectedPack.selectionMade &&
+                        selectedPack.status != com.sponic.langbang.data.LanguagePackStatus.READY &&
+                        !(languagePackDownload?.isActive == true &&
+                            languagePackDownloadInstanceId == selectedPack.selectedInstanceId)
+                    ) {
+                        selectedPack.selectedInstanceId?.let { instanceId ->
+                            languagePacks.markFailed(
+                                instanceId,
+                                t.message ?: "Language pack could not be loaded."
+                            )
+                        }
+                    }
                     analytics.track(
                         name = "cloud_sync_failed",
                         feature = "cloud",
@@ -217,11 +269,74 @@ class LangbangApplication : Application() {
             action = "select",
             properties = mapOf("instanceId" to instanceId)
         )
+        languagePackDownloadGeneration.incrementAndGet()
+        languagePackDownload?.cancel()
+        languagePackDownloadInstanceId = null
+        languagePacks.select(instanceId)
         cloudConfig.setSelectedInstance(instanceId)
         lessonRepo.clearCloudBackedBaseCache()
-        syncCloudConfig()
+        syncCloudConfig(installSelectedPack = true)
         if (authStore.state.value.signedIn) {
             syncUserPhrases()
+        }
+    }
+
+    /** Retry a selected pack after a network or audio-manifest failure. */
+    fun retrySelectedLanguagePack() {
+        val selected = languagePacks.state.value.selectedInstanceId ?: return
+        val bootstrap = cloudConfig.state.value.bootstrap
+        if (bootstrap?.instance?.id == selected) {
+            installLanguagePack(bootstrap)
+        } else {
+            cloudConfig.setSelectedInstance(selected)
+            lessonRepo.clearCloudBackedBaseCache()
+            syncCloudConfig(installSelectedPack = true)
+        }
+    }
+
+    private fun installLanguagePack(bootstrap: com.sponic.langbang.cloud.CloudBootstrap) {
+        val instanceId = bootstrap.instance.id
+        if (languagePacks.state.value.selectedInstanceId != instanceId) return
+        val generation = languagePackDownloadGeneration.incrementAndGet()
+        val contentVersionId = bootstrap.content.versionId
+        languagePackDownload?.cancel()
+        if (languagePacks.isReady(instanceId, contentVersionId)) {
+            languagePackDownloadInstanceId = null
+            languagePacks.markReady(instanceId, contentVersionId)
+            return
+        }
+        languagePacks.beginDownload(instanceId, contentVersionId)
+        languagePackDownloadInstanceId = instanceId
+        languagePackDownload = appScope.launch {
+            r2Audio.downloadAll(
+                onProgress = { done, total, current ->
+                    if (languagePackDownloadGeneration.get() == generation) {
+                        languagePacks.updateProgress(instanceId, done, total, current)
+                    }
+                },
+                shouldContinue = { languagePackDownloadGeneration.get() == generation }
+            ).fold(
+                onSuccess = { summary ->
+                    if (languagePackDownloadGeneration.get() != generation) return@fold
+                    languagePackDownloadInstanceId = null
+                    if (summary.failed == 0) {
+                        languagePacks.markReady(instanceId, contentVersionId)
+                    } else {
+                        languagePacks.markFailed(
+                            instanceId,
+                            "${summary.failed} audio files could not be downloaded."
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    if (languagePackDownloadGeneration.get() != generation) return@fold
+                    languagePackDownloadInstanceId = null
+                    languagePacks.markFailed(
+                        instanceId,
+                        error.message ?: "Language pack download failed."
+                    )
+                }
+            )
         }
     }
 

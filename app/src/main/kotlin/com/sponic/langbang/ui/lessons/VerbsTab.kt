@@ -615,7 +615,7 @@ internal class VerbsTabState(
 
     fun playConjugationOnce(personKey: String, form: String) {
         if (form.isEmpty()) return
-        playPolishOnce("${audioPronoun(personKey)} $form".trim())
+        playPolishOnce("${app.targetSubjectFor(personKey)} $form".trim())
     }
 
     private fun setLang(l: String, s: SentenceExample, position: String) {

@@ -1,6 +1,7 @@
 package com.sponic.langbang.data
 
 import android.content.Context
+import com.sponic.langbang.BuildConfig
 import com.sponic.langbang.cloud.CloudConfigStore
 import com.sponic.langbang.cloud.CloudLanguagePair
 import com.sponic.langbang.cloud.CloudUserWords
@@ -20,31 +21,46 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonPrimitive
 
 class LessonRepository(
     context: Context,
-    private val cloudConfig: CloudConfigStore? = null
+    private val cloudConfig: CloudConfigStore? = null,
+    private val languagePacks: LanguagePackStore? = null
 ) {
 
     private val context = context.applicationContext
     private val json = LbJson.lenient
-    private val userVerbs = JsonListStore(this.context, "user-verbs.json", VerbEntry.serializer()) { it.lemma }
-    private val verbSentences = VerbSentenceStore(this.context)
+    // The default flavour retains its legacy files for existing learners. Every pack they
+    // select from that build gets an isolated set of additions and generated sentences,
+    // so a Polish phrase or cache cannot surface in a Japanese lesson after a switch.
+    private fun packFile(baseName: String): String {
+        val selected = languagePacks?.state?.value?.selectedInstanceId
+            ?: cloudConfig?.state?.value?.selectedInstanceId
+        if (selected.isNullOrBlank() || selected == BuildConfig.LANGBANGML_INSTANCE_ID) return baseName
+        val safeInstance = selected.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        return "$safeInstance-$baseName"
+    }
+
+    private val userVerbs = JsonListStore(this.context, { packFile("user-verbs.json") }, VerbEntry.serializer()) { it.lemma }
+    private val verbSentences = VerbSentenceStore(this.context) { packFile("verb-sentences.json") }
     private val userAdjectives =
-        JsonListStore(this.context, "user-adjectives.json", AdjectiveEntry.serializer()) { it.lemma }
-    private val adjectiveSentences = SentenceStore(this.context, "adjective-sentences.json")
-    private val userAdverbs = JsonListStore(this.context, "user-adverbs.json", AdverbEntry.serializer()) { it.lemma }
-    private val adverbSentences = SentenceStore(this.context, "adverb-sentences.json")
-    private val userNouns = JsonListStore(this.context, "user-nouns.json", NounEntry.serializer()) { it.lemma }
-    private val nounSentences = SentenceStore(this.context, "noun-sentences.json")
+        JsonListStore(this.context, { packFile("user-adjectives.json") }, AdjectiveEntry.serializer()) { it.lemma }
+    private val adjectiveSentences = SentenceStore(this.context) { packFile("adjective-sentences.json") }
+    private val userAdverbs = JsonListStore(this.context, { packFile("user-adverbs.json") }, AdverbEntry.serializer()) { it.lemma }
+    private val adverbSentences = SentenceStore(this.context) { packFile("adverb-sentences.json") }
+    private val userNouns = JsonListStore(this.context, { packFile("user-nouns.json") }, NounEntry.serializer()) { it.lemma }
+    private val nounSentences = SentenceStore(this.context) { packFile("noun-sentences.json") }
 
     private val pastSentenceSerializer = MapSerializer(
         String.serializer(),
         ListSerializer(SentenceExample.serializer())
     )
 
-    private val userPhrases = JsonListStore(this.context, "user-phrases.json", PhraseGroup.serializer()) { it.id }
+    private val userPhrases = JsonListStore(this.context, { packFile("user-phrases.json") }, PhraseGroup.serializer()) { it.id }
 
     private var cachedLesson2Base: Lesson? = null
     private var cachedLesson3Base: AdjectiveLesson? = null
@@ -58,8 +74,11 @@ class LessonRepository(
     /** Lesson 2 — core verbs in present tense, with user-added verbs merged in. */
     fun lesson2(): Lesson {
         val base = cachedLesson2Base ?: run {
-            (cloudLesson<Lesson>("lesson-02") ?: assetLesson<Lesson>("lesson-02.json"))
-                .also { cachedLesson2Base = it }
+            val c = cloudLesson<Lesson>("lesson-02")
+            if (c != null) c.also { cachedLesson2Base = it } else if (allowBundledAssetFallback())
+                assetLesson<Lesson>("lesson-02.json").also { cachedLesson2Base = it }
+            else
+                Lesson(id = "lesson-02", title = "Loading…", summary = "", verbs = emptyList(), pronouns = emptyList(), phrases = emptyList())
         }
         val added = userVerbs.load()
         if (added.isEmpty()) return base
@@ -70,8 +89,11 @@ class LessonRepository(
     /** Lesson 3 — core adjectives in nom + acc, with user-added adjectives merged in. */
     fun lesson3(): AdjectiveLesson {
         val base = cachedLesson3Base ?: run {
-            (cloudLesson<AdjectiveLesson>("lesson-03") ?: assetLesson<AdjectiveLesson>("lesson-03.json"))
-                .also { cachedLesson3Base = it }
+            val c = cloudLesson<AdjectiveLesson>("lesson-03")
+            if (c != null) c.also { cachedLesson3Base = it } else if (allowBundledAssetFallback())
+                assetLesson<AdjectiveLesson>("lesson-03.json").also { cachedLesson3Base = it }
+            else
+                AdjectiveLesson(id = "lesson-03", title = "Loading…", summary = "", adjectives = emptyList())
         }
         val added = userAdjectives.load()
         if (added.isEmpty()) return base
@@ -79,12 +101,15 @@ class LessonRepository(
         return base.copy(adjectives = merged)
     }
 
-    /** Lesson 1 — Polish pronunciation. */
+    /** Lesson 1 — pronunciation (cloud content per selected pack). */
     fun pronunciation(): PronunciationData {
         cachedPron?.let { return it }
-        val parsed = cloudLesson<PronunciationData>("lesson-01") ?: assetLesson("lesson-01.json")
-        cachedPron = parsed
-        return parsed
+        val c = cloudLesson<PronunciationData>("lesson-01")
+        if (c != null) return c.also { cachedPron = it }
+        if (allowBundledAssetFallback()) {
+            return assetLesson<PronunciationData>("lesson-01.json").also { cachedPron = it }
+        }
+        return PronunciationData(id = "lesson-01", title = "Loading…", summary = "", phonemes = emptyList())
     }
 
     fun addUserVerb(verb: VerbEntry) {
@@ -192,8 +217,11 @@ class LessonRepository(
     /** Lesson 4 — common adverbs, with user-added adverbs merged in. */
     fun lesson4(): AdverbLesson {
         val base = cachedLesson4Base ?: run {
-            (cloudLesson<AdverbLesson>("lesson-04") ?: assetLesson<AdverbLesson>("lesson-04.json"))
-                .also { cachedLesson4Base = it }
+            val c = cloudLesson<AdverbLesson>("lesson-04")
+            if (c != null) c.also { cachedLesson4Base = it } else if (allowBundledAssetFallback())
+                assetLesson<AdverbLesson>("lesson-04.json").also { cachedLesson4Base = it }
+            else
+                AdverbLesson(id = "lesson-04", title = "Loading…", summary = "", adverbs = emptyList())
         }
         val added = userAdverbs.load()
         if (added.isEmpty()) return base
@@ -222,8 +250,11 @@ class LessonRepository(
     /** Lesson 6 — core nouns in nom + acc + gen (sg/pl), with user-added nouns merged in. */
     fun lesson6(): NounLesson {
         val base = cachedLesson6Base ?: run {
-            (cloudLesson<NounLesson>("lesson-06") ?: assetLesson<NounLesson>("lesson-06.json"))
-                .also { cachedLesson6Base = it }
+            val c = cloudLesson<NounLesson>("lesson-06")
+            if (c != null) c.also { cachedLesson6Base = it } else if (allowBundledAssetFallback())
+                assetLesson<NounLesson>("lesson-06.json").also { cachedLesson6Base = it }
+            else
+                NounLesson(id = "lesson-06", title = "Loading…", summary = "", nouns = emptyList())
         }
         val added = userNouns.load()
         if (added.isEmpty()) return base
@@ -274,8 +305,11 @@ class LessonRepository(
      */
     fun lesson5(): PhrasesLesson {
         val base = cachedLesson5Base ?: run {
-            (cloudLesson<PhrasesLesson>("lesson-05") ?: assetLesson<PhrasesLesson>("lesson-05.json"))
-                .also { cachedLesson5Base = it }
+            val c = cloudLesson<PhrasesLesson>("lesson-05")
+            if (c != null) c.also { cachedLesson5Base = it } else if (allowBundledAssetFallback())
+                assetLesson<PhrasesLesson>("lesson-05.json").also { cachedLesson5Base = it }
+            else
+                PhrasesLesson(id = "lesson-05", title = "Loading…", summary = "", groups = emptyList())
         }
         val added = userPhrases.load()
         val scrubbedBase = base.copy(
@@ -396,6 +430,30 @@ class LessonRepository(
 
     fun cloudLanguagePair(): CloudLanguagePair? =
         cloudConfig?.state?.value?.bootstrap?.languagePair
+
+    private fun allowBundledAssetFallback(): Boolean {
+        val state = cloudConfig?.state?.value ?: return true
+        val pack = languagePacks?.state?.value
+        val bs = state.bootstrap
+        if (pack?.selectionMade == true &&
+            (pack.selectedInstanceId == null || bs?.instance?.id != pack.selectedInstanceId)
+        ) {
+            // Do not let background work read the previous bundle while a different pack
+            // is selected but its bootstrap has not arrived yet.
+            return false
+        }
+        bs ?: return pack?.selectionMade != true
+        // Respect explicit per-instance setting when present.
+        val settings = bs.instance.settings
+        val content = (settings["content"] as? kotlinx.serialization.json.JsonObject)
+        val fb = content?.get("fallbackBundledAssets")
+        if (fb is JsonPrimitive) {
+            return fb.jsonPrimitive.booleanOrNull ?: true
+        }
+        // Existing EN-PL/PL-EN records predate the flag; their historical behavior was
+        // bundled fallback. New packs opt out explicitly in their instance settings.
+        return true
+    }
 
     private inline fun <reified T> cloudLesson(id: String): T? {
         val payload = cloudConfig?.state?.value?.bootstrap?.content?.lessons
