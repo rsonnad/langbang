@@ -27,9 +27,20 @@ struct ContentView: View {
                 StudyRootView(
                     bootstrap: $bootstrap,
                     isLoading: isLoadingBootstrap,
+                    instances: instances,
+                    isLoadingInstances: isLoadingInstances,
+                    instancesError: instancesError,
                     onSwitchPack: {
                         audio.clearSelection()
                         bootstrap = nil
+                    },
+                    onRefreshInstances: loadInstances,
+                    onSelectPack: { instance in
+                        // Hide the old pack immediately, but retain its isolated content
+                        // and audio cache so returning to it never needs a redownload.
+                        audio.clearSelection()
+                        bootstrap = nil
+                        Task { await selectPack(instance) }
                     },
                     onRetryAudio: {
                         if let b = bootstrap { Task { await preloadAndShow(b) } }
@@ -205,11 +216,17 @@ struct PackPickerView: View {
 struct StudyRootView: View {
     @Binding var bootstrap: CloudBootstrap?
     let isLoading: Bool
+    let instances: [CloudInstanceSummary]
+    let isLoadingInstances: Bool
+    let instancesError: String?
     let onSwitchPack: () -> Void
+    let onRefreshInstances: () async -> Void
+    let onSelectPack: (CloudInstanceSummary) -> Void
     let onRetryAudio: () -> Void
 
     @StateObject private var audio = AudioManager.shared
     @State private var selectedTab: StudyTab = .phrases
+    @State private var showSettings = false
 
     var body: some View {
         NavigationStack {
@@ -269,6 +286,8 @@ struct StudyRootView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        Button("Settings") { showSettings = true }
+                        Divider()
                         Button("Switch Language Pack", action: onSwitchPack)
                         if audio.isPreloading {
                             Text("Downloading audio…")
@@ -279,6 +298,16 @@ struct StudyRootView: View {
                         Image(systemName: "ellipsis.circle")
                     }
                 }
+            }
+            .sheet(isPresented: $showSettings) {
+                StudySettingsView(
+                    selectedInstanceId: audio.selectedInstanceId,
+                    instances: instances,
+                    isLoadingInstances: isLoadingInstances,
+                    instancesError: instancesError,
+                    onRefreshInstances: onRefreshInstances,
+                    onSelectPack: onSelectPack
+                )
             }
         }
     }
@@ -372,6 +401,93 @@ struct StudyRootView: View {
         .padding(8)
         .background(Color(.tertiarySystemFill))
         .padding(.horizontal)
+    }
+}
+
+// MARK: - Settings
+
+private struct StudySettingsView: View {
+    let selectedInstanceId: String?
+    let instances: [CloudInstanceSummary]
+    let isLoadingInstances: Bool
+    let instancesError: String?
+    let onRefreshInstances: () async -> Void
+    let onSelectPack: (CloudInstanceSummary) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Learning language") {
+                    Text("Choose a language pack. Its lessons and audio download when selected; previously downloaded packs stay on this device for fast switching back.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    if isLoadingInstances && instances.isEmpty {
+                        ProgressView("Loading language packs…")
+                    }
+
+                    if let instancesError {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Could not refresh language packs")
+                                .font(.subheadline.weight(.semibold))
+                            Text(instancesError)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Button("Retry") { Task { await onRefreshInstances() } }
+                        }
+                    }
+
+                    ForEach(instances) { instance in
+                        Button {
+                            onSelectPack(instance)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(instance.languagePair.sourceLanguage + " → " + instance.languagePair.targetLanguage)
+                                        .font(.body.weight(.semibold))
+                                    Text(instance.displayName)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if instance.id == selectedInstanceId {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.tint)
+                                        .accessibilityLabel("Selected")
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Switches to this language pack")
+                    }
+                }
+
+                Section("About") {
+                    LabeledContent("Version", value: "\(appVersion) (\(appBuild))")
+                }
+            }
+            .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .task {
+                if instances.isEmpty { await onRefreshInstances() }
+            }
+        }
+    }
+
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+    }
+
+    private var appBuild: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
     }
 }
 
