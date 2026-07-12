@@ -173,6 +173,28 @@ data class CloudAgentTokenResponse(
 )
 
 @Serializable
+data class CloudNowVoicingControlRequest(
+    val instanceId: String
+)
+
+@Serializable
+data class CloudNowVoicingControlResponse(
+    val ok: Boolean = false,
+    val sessionId: String = "",
+    val code: String = "",
+    val pairingUrl: String = "",
+    val expiresAt: String = "",
+    val deviceToken: String = ""
+)
+
+@Serializable
+data class CloudNowVoicingControlRevokeResponse(
+    val ok: Boolean = false,
+    val sessionId: String = "",
+    val revoked: Boolean = false
+)
+
+@Serializable
 data class CloudUserPhrasesRequest(
     val instanceId: String,
     val groups: List<PhraseGroup>,

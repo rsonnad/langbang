@@ -627,8 +627,11 @@ async function handleRequest(request) {
   if (path === "/bridge/approve" || path === "/bridge/approve.html") {
     return html(bridgeApprovalPage());
   }
-  if (path === "/api" || path === "/api.html") {
-    return await apiPage(request);
+  if (path === "/api" || path === "/api.html" || path === "/api/control" || path.startsWith("/api/")) {
+    return await nowVoicingApiPage(request, url);
+  }
+  if (path === "/agent" || path === "/agent/instructions") {
+    return await agentApiPage(request);
   }
   if (path === "/admin" || path === "/admin/analytics") {
     return await adminPage();
@@ -720,6 +723,8 @@ async function proxyV1(request, url) {
   const headers = new Headers();
   const auth = request.headers.get("Authorization");
   if (auth) headers.set("Authorization", auth);
+  const cookie = request.headers.get("Cookie");
+  if (cookie) headers.set("Cookie", cookie);
   const contentType = request.headers.get("Content-Type");
   if (contentType) headers.set("Content-Type", contentType);
   headers.set("Accept", "application/json");
@@ -729,13 +734,16 @@ async function proxyV1(request, url) {
   }
   const upstream = await fetch(target, { method: request.method, headers, body });
   const outText = realToAlias(await upstream.text());
+  const responseHeaders = {
+    ...apiCorsHeaders(),
+    "Content-Type": upstream.headers.get("Content-Type") || "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  };
+  const setCookie = upstream.headers.get("Set-Cookie");
+  if (setCookie) responseHeaders["Set-Cookie"] = setCookie;
   return new Response(outText, {
     status: upstream.status,
-    headers: {
-      ...apiCorsHeaders(),
-      "Content-Type": upstream.headers.get("Content-Type") || "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-    },
+    headers: responseHeaders,
   });
 }
 
@@ -753,10 +761,32 @@ async function adminPage() {
   });
 }
 
-async function apiPage(request) {
+async function nowVoicingApiPage(request, url) {
+  const headers = forwardedSiteHeaders(request);
+  const contentType = request.headers.get("Content-Type");
+  if (contentType) headers.set("Content-Type", contentType);
+  const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.text();
+  const upstream = await fetch(`${API_BASE}${url.pathname}${url.search}`, {
+    method: request.method,
+    headers,
+    body,
+    // The claim form intentionally returns 303 + Set-Cookie. Following it here
+    // would turn that into a 200 and lose the browser's controller capability.
+    redirect: "manual",
+  });
+  const responseHeaders = new Headers({
+    "Content-Type": upstream.headers.get("Content-Type") || "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  const setCookie = upstream.headers.get("Set-Cookie");
+  if (setCookie) responseHeaders.append("Set-Cookie", setCookie);
+  return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
+}
+
+async function agentApiPage(request) {
   const origin = new URL(request.url).origin;
   const response = await fetch(`${API_BASE}/agent?site=${Date.now()}`, {
-    headers: { "Cache-Control": "no-cache" },
+    headers: forwardedSiteHeaders(request),
   });
   const body = (await response.text())
     .split(API_BASE).join(origin)
@@ -768,6 +798,15 @@ async function apiPage(request) {
       "Cache-Control": "no-store",
     },
   });
+}
+
+function forwardedSiteHeaders(request) {
+  const headers = new Headers({ "Cache-Control": "no-cache" });
+  const cookie = request.headers.get("Cookie");
+  if (cookie) headers.set("Cookie", cookie);
+  const auth = request.headers.get("Authorization");
+  if (auth) headers.set("Authorization", auth);
+  return headers;
 }
 
 function injectLimitedClientApiDocs(body) {

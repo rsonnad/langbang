@@ -14,6 +14,7 @@ import com.sponic.langbang.analytics.ProductAnalyticsProfile
 import com.sponic.langbang.cloud.AuthStore
 import com.sponic.langbang.cloud.CloudBackendClient
 import com.sponic.langbang.cloud.CloudConfigStore
+import com.sponic.langbang.cloud.NowVoicingControlClient
 import com.sponic.langbang.cloud.PhraseSyncService
 import com.sponic.langbang.data.AudioPrefsStore
 import com.sponic.langbang.data.LessonRepository
@@ -51,6 +52,8 @@ class LangbangApplication : Application() {
     lateinit var languagePacks: LanguagePackStore
         private set
     lateinit var cloudBackend: CloudBackendClient
+        private set
+    lateinit var nowVoicingControl: NowVoicingControlClient
         private set
     lateinit var authStore: AuthStore
         private set
@@ -120,6 +123,11 @@ class LangbangApplication : Application() {
             }
         }
         cloudBackend = CloudBackendClient(apiBase = BuildConfig.LANGBANGML_API_BASE)
+        nowVoicingControl = NowVoicingControlClient(
+            backend = cloudBackend,
+            apiBase = BuildConfig.LANGBANGML_API_BASE,
+            scope = appScope
+        )
         authStore = AuthStore(this)
         analytics = ProductAnalytics(
             context = this,

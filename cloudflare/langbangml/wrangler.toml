@@ -38,3 +38,11 @@ database_id = "d259445e-d263-4ae2-a391-f0d176492265"
 [[r2_buckets]]
 binding = "BUCKET"
 bucket_name = "langbangml"
+
+[[durable_objects.bindings]]
+name = "NOW_VOICING_CONTROL"
+class_name = "NowVoicingControlRoom"
+
+[[migrations]]
+tag = "v1-now-voicing-control"
+new_sqlite_classes = ["NowVoicingControlRoom"]

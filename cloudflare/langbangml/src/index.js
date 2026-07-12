@@ -24,6 +24,12 @@ const MAX_AGENT_PHRASE_INPUTS = 10;
 const MAX_AGENT_PHRASE_OUTPUTS = 25;
 const MAX_AGENT_PHRASE_TARGET_WORDS = 10;
 const MAX_AGENT_PHRASE_TARGET_CHARS = 90;
+const NOW_VOICING_CODE_TTL_MS = 10 * 60 * 1000;
+const NOW_VOICING_CONTROL_TTL_MS = 60 * 60 * 1000;
+const NOW_VOICING_COMMANDS_PER_MINUTE = 90;
+const NOW_VOICING_MAX_REPLAY = 40;
+const NOW_VOICING_MAX_FIELD_CHARS = 600;
+const NOW_VOICING_MAX_WORDS = 120;
 const DEFAULT_AI_PHRASE_QUOTA = 50;
 const MAX_AI_PHRASE_PROMPT_CHARS = 1200;
 const MAX_AI_PHRASES_PER_REQUEST = 10;
@@ -88,6 +94,16 @@ export default {
       if (request.method === "GET" && (path === "/agent" || path === "/agent/instructions")) {
         return agentInstructionsPage(env);
       }
+      if (request.method === "GET" && (path === "/api" || path === "/api.html" || path === "/api/control" || /^\/api\/[A-Za-z0-9-]+$/.test(path))) {
+        const code = /^\/api\/([A-Za-z0-9-]+)$/.exec(path)?.[1] || "";
+        return nowVoicingControlPage(env, code);
+      }
+      if (request.method === "POST" && path === "/api/claim") {
+        return await nowVoicingControlClaimForm(request, env);
+      }
+      if (request.method === "POST" && path === "/api/command") {
+        return await nowVoicingControlCommandForm(request, env);
+      }
       if (request.method === "GET" && path === "/admin/analytics") {
         return analyticsAdminPage(env);
       }
@@ -147,6 +163,24 @@ export default {
       if (request.method === "POST" && path === "/v1/me/agent-token") {
         const user = await requireUser(request, env);
         return await createAgentToken(request, env, user);
+      }
+      if (request.method === "POST" && path === "/v1/me/now-voicing-control") {
+        const user = await requireUser(request, env);
+        return await createNowVoicingControl(request, env, user);
+      }
+      const nowVoicingRevokeMatch = path.match(/^\/v1\/me\/now-voicing-control\/([A-Za-z0-9-]+)$/);
+      if (request.method === "DELETE" && nowVoicingRevokeMatch) {
+        const user = await requireUser(request, env);
+        return await revokeNowVoicingControl(env, user, nowVoicingRevokeMatch[1]);
+      }
+      if (request.method === "POST" && path === "/v1/now-voicing-control/claim") {
+        return await claimNowVoicingControl(request, env);
+      }
+      if (request.method === "POST" && path === "/v1/now-voicing-control/commands") {
+        return await sendNowVoicingCommand(request, env);
+      }
+      if (path === "/v1/now-voicing-control/ws" && (request.headers.get("Upgrade") || "").toLowerCase() === "websocket") {
+        return await connectNowVoicingDevice(request, env);
       }
       if (path === "/v1/me/content") {
         const user = await requireUser(request, env);
@@ -575,6 +609,304 @@ async function createAgentToken(request, env, user) {
     instructionsUrl: publicAgentDocsUrl(env),
     createdAt: new Date().toISOString(),
   });
+}
+
+// --- Ephemeral Now Voicing browser/LLM control -----------------------------
+// These credentials are deliberately separate from the durable Agent API. A
+// pairing code only creates a short-lived display/playback capability; it never
+// authorizes phrase, word, account, or admin mutations.
+
+async function createNowVoicingControl(request, env, user) {
+  const body = await readOptionalJson(request);
+  const instanceId = normalizeInstanceId(
+    languageVersionToInstanceId(body.instanceId || body.instance || body.version) || body.instanceId,
+  );
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const dbExpiresAt = sqliteDateTimeFromNow(NOW_VOICING_CODE_TTL_MS);
+  const roomExpiresAt = new Date(now + NOW_VOICING_CODE_TTL_MS).toISOString();
+  const deviceCapabilityExpiresAt = new Date(now + NOW_VOICING_CODE_TTL_MS + NOW_VOICING_CONTROL_TTL_MS).toISOString();
+  const code = randomNowVoicingPairingCode();
+  const deviceToken = await createNowVoicingCapability(env, "device", id, deviceCapabilityExpiresAt);
+  const codeDigest = await nowVoicingSecretDigest(env, `code:${normalizeNowVoicingCode(code)}`);
+  const deviceTokenHash = await sha256Hex(deviceToken);
+  await env.DB.prepare(`
+    INSERT INTO now_voicing_control_sessions
+      (id, user_id, instance_id, code_digest, device_token_hash, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).bind(id, user.user_id, instanceId, codeDigest, deviceTokenHash, dbExpiresAt).run();
+
+  try {
+    await nowVoicingRoomRequest(env, id, "/internal/init", {
+      sessionId: id,
+      expiresAt: roomExpiresAt,
+      instanceId,
+    });
+  } catch (error) {
+    await env.DB.prepare("DELETE FROM now_voicing_control_sessions WHERE id = ?").bind(id).run();
+    throw error;
+  }
+
+  return json({
+    ok: true,
+    sessionId: id,
+    code,
+    pairingUrl: nowVoicingPairingUrl(env, code),
+    expiresAt: roomExpiresAt,
+    deviceToken,
+  });
+}
+
+async function revokeNowVoicingControl(env, user, sessionId) {
+  if (!isUuid(sessionId)) throw new HttpError(404, "control session not found");
+  const result = await env.DB.prepare(`
+    UPDATE now_voicing_control_sessions
+    SET revoked_at = COALESCE(revoked_at, datetime('now'))
+    WHERE id = ? AND user_id = ?
+  `).bind(sessionId, user.user_id).run();
+  if (!Number(result?.meta?.changes || 0)) throw new HttpError(404, "control session not found");
+  await nowVoicingRoomRequest(env, sessionId, "/internal/revoke", { reason: "owner_revoked" });
+  return json({ ok: true, sessionId, revoked: true });
+}
+
+async function claimNowVoicingControl(request, env) {
+  const result = await claimNowVoicingControlData(await readNowVoicingControlBody(request), env);
+  return nowVoicingJsonWithCookie(result.data, result.cookie);
+}
+
+async function claimNowVoicingControlData(body, env) {
+  await enforceRateLimit(env, `now-voicing-claim:ip:${clientIpFromHeaders(body.__headers)}`, 8, 600, { scope: "ip" });
+  let normalized;
+  try {
+    normalized = normalizeNowVoicingCode(body.code);
+  } catch (_) {
+    throw nowVoicingPairingUnavailable();
+  }
+  const codeDigest = await nowVoicingSecretDigest(env, `code:${normalized}`);
+  const row = await env.DB.prepare(`
+    SELECT id, instance_id
+    FROM now_voicing_control_sessions
+    WHERE code_digest = ?
+      AND claimed_at IS NULL
+      AND revoked_at IS NULL
+      AND expires_at > datetime('now')
+  `).bind(codeDigest).first();
+  if (!row) throw nowVoicingPairingUnavailable();
+
+  const controllerExpiresAt = new Date(Date.now() + NOW_VOICING_CONTROL_TTL_MS).toISOString();
+  const dbExpiresAt = sqliteDateTimeFromNow(NOW_VOICING_CONTROL_TTL_MS);
+  const controllerToken = await createNowVoicingCapability(env, "controller", row.id, controllerExpiresAt);
+  const controllerTokenHash = await sha256Hex(controllerToken);
+  const claimed = await env.DB.prepare(`
+    UPDATE now_voicing_control_sessions
+    SET claimed_at = datetime('now'), controller_token_hash = ?, expires_at = ?
+    WHERE id = ?
+      AND code_digest = ?
+      AND claimed_at IS NULL
+      AND revoked_at IS NULL
+      AND expires_at > datetime('now')
+  `).bind(controllerTokenHash, dbExpiresAt, row.id, codeDigest).run();
+  if (!Number(claimed?.meta?.changes || 0)) throw nowVoicingPairingUnavailable();
+  await nowVoicingRoomRequest(env, row.id, "/internal/extend", { expiresAt: controllerExpiresAt });
+
+  return {
+    data: {
+      ok: true,
+      sessionId: row.id,
+      controllerToken,
+      expiresAt: controllerExpiresAt,
+      scope: ["now-voicing:display", "now-voicing:playback"],
+    },
+    cookie: nowVoicingControllerCookie(controllerToken, NOW_VOICING_CONTROL_TTL_MS),
+  };
+}
+
+async function sendNowVoicingCommand(request, env) {
+  const result = await sendNowVoicingCommandData(request, env, await readNowVoicingControlBody(request));
+  return json(result);
+}
+
+async function sendNowVoicingCommandData(request, env, body) {
+  const controller = await requireNowVoicingCapability(request, env, "controller");
+  await enforceRateLimit(env, `now-voicing-command:${controller.sessionId}`, NOW_VOICING_COMMANDS_PER_MINUTE, 60, { scope: "controller" });
+  const command = normalizeNowVoicingCommand(body);
+  const result = await nowVoicingRoomRequest(env, controller.sessionId, "/internal/command", command);
+  return { ok: true, sessionId: controller.sessionId, ...result };
+}
+
+async function connectNowVoicingDevice(request, env) {
+  const device = await requireNowVoicingCapability(request, env, "device");
+  const url = new URL(request.url);
+  const lastSeq = Math.max(0, Math.min(1_000_000_000, Number(url.searchParams.get("lastSeq") || 0) || 0));
+  const headers = new Headers(request.headers);
+  headers.set("X-LangBang-Control-Role", "device");
+  headers.set("X-LangBang-Control-Last-Seq", String(Math.trunc(lastSeq)));
+  return nowVoicingRoom(env, device.sessionId).fetch(new Request(request, { headers }));
+}
+
+function normalizeNowVoicingCommand(raw) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  const op = cleanString(value.op || "show").toLowerCase();
+  if (!new Set(["show", "clear", "play", "pause", "resume", "stop"]).has(op)) {
+    throw new HttpError(400, "unsupported now voicing operation");
+  }
+  const commandId = boundedString(value.commandId || value.id || crypto.randomUUID(), "commandId", 120);
+  const play = cleanString(value.play || "none").toLowerCase() || "none";
+  if (!new Set(["none", "source", "target", "sequence"]).has(play)) {
+    throw new HttpError(400, "unsupported playback mode");
+  }
+  if (op !== "show") return { commandId, op, play };
+  const source = boundedString(value.source || value.en || value.english || "", "source", NOW_VOICING_MAX_FIELD_CHARS, true);
+  const target = boundedString(value.target || value.pl || value.polish || "", "target", NOW_VOICING_MAX_FIELD_CHARS, true);
+  if (!source && !target) throw new HttpError(400, "source or target is required");
+  const literal = boundedString(value.literal || "", "literal", NOW_VOICING_MAX_FIELD_CHARS, true);
+  const words = Array.isArray(value.words)
+    ? value.words.map(normalizeTokenPair).filter(Boolean).slice(0, NOW_VOICING_MAX_WORDS)
+    : [];
+  const speaker = cleanString(value.speaker || "top").toLowerCase() === "bottom" ? "bottom" : "top";
+  const activeSpeaker = cleanString(value.activeSpeaker || value.active || speaker).toLowerCase() === "bottom" ? "bottom" : "top";
+  return {
+    commandId,
+    op,
+    play,
+    state: {
+      dialog: truthy(value.dialog) || cleanString(value.mode).toLowerCase() === "dialog",
+      activeSpeaker,
+      maroonSpeaker: cleanString(value.maroonSpeaker || value.maroon || "bottom").toLowerCase() === "top" ? "top" : "bottom",
+      speaker,
+      section: { source, target, literal: literal || undefined, words },
+    },
+  };
+}
+
+function normalizeNowVoicingCode(value) {
+  const code = cleanString(value).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!/^[23456789ABCDEFGHJKMNPQRSTVWXYZ]{8}$/.test(code)) throw new Error("invalid code");
+  return code;
+}
+
+function randomNowVoicingPairingCode() {
+  const alphabet = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  const raw = [...bytes].map((byte) => alphabet[byte % alphabet.length]).join("");
+  return `${raw.slice(0, 4)}-${raw.slice(4)}`;
+}
+
+function nowVoicingPairingUnavailable() {
+  return new HttpError(401, "pairing code is unavailable");
+}
+
+function nowVoicingPairingUrl(env, code) {
+  return `${env.PUBLIC_NOW_VOICING_CONTROL_URL || "https://langbang.org/api"}/${encodeURIComponent(code)}`;
+}
+
+function nowVoicingControlSecret(env) {
+  const secret = cleanString(env.NOW_VOICING_CONTROL_PEPPER);
+  if (!secret) throw new HttpError(503, "now voicing control is not configured");
+  return secret;
+}
+
+async function nowVoicingSecretDigest(env, value) {
+  return hmacSha256Hex(nowVoicingControlSecret(env), String(value));
+}
+
+async function createNowVoicingCapability(env, role, sessionId, expiresAt) {
+  const payload = base64UrlFromText(JSON.stringify({ v: 1, s: sessionId, r: role, e: Math.floor(new Date(expiresAt).getTime() / 1000), n: randomBase64Url(16) }));
+  const signature = await nowVoicingSecretDigest(env, `${role}.${payload}`);
+  return `lbv_${role === "device" ? "d" : "c"}_${payload}.${signature}`;
+}
+
+async function requireNowVoicingCapability(request, env, role) {
+  const token = nowVoicingCapabilityFromRequest(request, role);
+  const prefix = role === "device" ? "lbv_d_" : "lbv_c_";
+  if (!token.startsWith(prefix)) throw new HttpError(401, "now voicing control authorization required");
+  const packed = token.slice(prefix.length);
+  const dot = packed.lastIndexOf(".");
+  if (dot < 1) throw new HttpError(401, "now voicing control authorization required");
+  const payload = packed.slice(0, dot);
+  const signature = packed.slice(dot + 1);
+  const expected = await nowVoicingSecretDigest(env, `${role}.${payload}`);
+  if (!constantTimeStringEqual(signature, expected)) throw new HttpError(401, "now voicing control authorization required");
+  let decoded;
+  try {
+    decoded = JSON.parse(new TextDecoder().decode(base64UrlToBytes(payload)));
+  } catch (_) {
+    throw new HttpError(401, "now voicing control authorization required");
+  }
+  if (decoded?.v !== 1 || decoded?.r !== role || !isUuid(decoded?.s) || !Number.isFinite(decoded?.e) || decoded.e <= Math.floor(Date.now() / 1000)) {
+    throw new HttpError(401, "now voicing control authorization required");
+  }
+  const tokenHash = await sha256Hex(token);
+  const tokenColumn = role === "device" ? "device_token_hash" : "controller_token_hash";
+  const session = await env.DB.prepare(`
+    SELECT id FROM now_voicing_control_sessions
+    WHERE id = ? AND ${tokenColumn} = ?
+      AND revoked_at IS NULL AND expires_at > datetime('now')
+  `).bind(decoded.s, tokenHash).first();
+  if (!session) throw new HttpError(401, "now voicing control authorization required");
+  return { sessionId: decoded.s, expiresAt: decoded.e };
+}
+
+function nowVoicingCapabilityFromRequest(request, role) {
+  const bearer = (request.headers.get("Authorization") || "").match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  if (bearer) return bearer;
+  if (role !== "controller") return "";
+  return cookieValue(request, "__Host-lbv-control");
+}
+
+function nowVoicingControllerCookie(token, maxAgeMs) {
+  return `__Host-lbv-control=${token}; Max-Age=${Math.floor(maxAgeMs / 1000)}; Path=/; Secure; HttpOnly; SameSite=Lax`;
+}
+
+function cookieValue(request, name) {
+  const value = request.headers.get("Cookie") || "";
+  return value.split(/;\s*/).map((part) => part.split("=", 2)).find(([key]) => key === name)?.[1] || "";
+}
+
+function isUuid(value) {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function nowVoicingRoom(env, sessionId) {
+  if (!env.NOW_VOICING_CONTROL) throw new HttpError(503, "now voicing control is not configured");
+  return env.NOW_VOICING_CONTROL.get(env.NOW_VOICING_CONTROL.idFromName(sessionId));
+}
+
+async function nowVoicingRoomRequest(env, sessionId, path, body) {
+  const response = await nowVoicingRoom(env, sessionId).fetch(`https://now-voicing-control.internal${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new HttpError(response.status === 410 ? 410 : 503, data.error || "now voicing control unavailable");
+  return data;
+}
+
+async function readNowVoicingControlBody(request) {
+  const text = await request.text();
+  if (text.length > 16 * 1024) throw new HttpError(413, "request body is too large");
+  const type = (request.headers.get("Content-Type") || "").toLowerCase();
+  let body = {};
+  if (type.includes("application/x-www-form-urlencoded")) {
+    body = Object.fromEntries(new URLSearchParams(text));
+  } else if (text.trim()) {
+    try { body = JSON.parse(text); } catch (_) { throw new HttpError(400, "valid JSON body required"); }
+  }
+  Object.defineProperty(body, "__headers", { value: request.headers, enumerable: false });
+  return body;
+}
+
+function clientIpFromHeaders(headers) {
+  return headers?.get?.("CF-Connecting-IP") || headers?.get?.("X-Forwarded-For")?.split(",")[0]?.trim() || "unknown";
+}
+
+function nowVoicingJsonWithCookie(data, cookie) {
+  const response = json(data);
+  const headers = new Headers(response.headers);
+  headers.append("Set-Cookie", cookie);
+  return new Response(response.body, { status: response.status, headers });
 }
 
 async function userPhrases(request, env, user) {
@@ -3758,7 +4090,7 @@ function publicApiBase(env) {
 }
 
 function publicAgentDocsUrl(env) {
-  return env.PUBLIC_AGENT_DOCS_URL || "https://langbang.org/api";
+  return env.PUBLIC_AGENT_DOCS_URL || "https://langbang.org/agent";
 }
 
 function sourceCodeUrl(env) {
@@ -4191,6 +4523,172 @@ function analyticsAdminPage(env) {
     status: 200,
     headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders() },
   });
+}
+
+function nowVoicingControlPage(env, code = "") {
+  const normalized = (() => { try { return code ? normalizeNowVoicingCode(code) : ""; } catch (_) { return ""; } })();
+  const codeValue = normalized ? `${normalized.slice(0, 4)}-${normalized.slice(4)}` : "";
+  const notice = code && !normalized ? "That pairing code format is not valid. Ask the learner to start a fresh control session." : "";
+  return new Response(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LangBang Now Voicing Control</title>
+<style>
+  :root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#1f2933;background:#f7f4ee}body{margin:0}main{max-width:760px;margin:0 auto;padding:28px 20px 56px}header{background:#1f3d34;color:#fff;padding:26px 20px}header>div{max-width:760px;margin:auto}section{background:#fff;border:1px solid #e3ded3;border-radius:12px;padding:18px;margin:16px 0}h1,h2{margin:.1em 0 .5em}p{line-height:1.5}.muted{color:#687785}.warn{background:#fff9ed;border-color:#f3d199}.code{font:700 30px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em}label{display:block;font-weight:700;margin:10px 0 4px}input,select,textarea,button{font:inherit}input,select,textarea{width:100%;padding:10px;border:1px solid #b7c0c8;border-radius:7px}textarea{min-height:72px}button{margin-top:12px;padding:10px 14px;border:0;border-radius:7px;background:#1f3d34;color:#fff;font-weight:700;cursor:pointer}.row{display:flex;gap:10px;flex-wrap:wrap}.row form{margin:0}.row button{background:#536775}.danger{background:#9d263c}.small{font-size:.9rem}code{background:#f3f0ea;padding:2px 4px;border-radius:4px}
+</style></head><body><header><div><h1>LangBang Now Voicing</h1><p>Temporary, learner-approved control of the active Now Voicing screen.</p></div></header><main>
+<section class="warn"><h2>What this can do</h2><p>Show and play practice text on the active learner device. It cannot edit phrases, words, accounts, or LangBang content. A pairing code is single-use and expires quickly.</p>${notice ? `<p><b>${escapeHtml(notice)}</b></p>` : ""}</section>
+${normalized ? `<section><h2>Connect to this learner</h2><p class="code">${escapeHtml(codeValue)}</p><form method="post" action="/api/claim"><input type="hidden" name="code" value="${escapeHtml(codeValue)}"><button type="submit">Connect to Now Voicing</button></form></section>` : `<section><h2>Enter pairing code</h2><form method="post" action="/api/claim"><label for="code">Code shown in LangBang</label><input id="code" name="code" autocomplete="off" placeholder="5EK8-3G7M" required><button type="submit">Connect to Now Voicing</button></form></section>`}
+<section><h2>Control panel</h2><p class="muted small">After connecting, submit a phrase. The learner can stop the session at any time.</p><form method="post" action="/api/command"><input type="hidden" name="op" value="show"><label for="source">Source / cue</label><textarea id="source" name="source" placeholder="Where is the station?"></textarea><label for="target">Target / answer</label><textarea id="target" name="target" placeholder="Gdzie jest dworzec?"></textarea><label for="literal">Optional literal gloss</label><input id="literal" name="literal" placeholder="Where is station?"><label for="speaker">Speaker</label><select id="speaker" name="speaker"><option value="top">Speaker A</option><option value="bottom">Speaker B</option></select><label for="play">Playback</label><select id="play" name="play"><option value="none">Display only</option><option value="source">Play source</option><option value="target">Play target</option><option value="sequence">Play source then target</option></select><button type="submit">Show on LangBang</button></form><div class="row"><form method="post" action="/api/command"><input type="hidden" name="op" value="clear"><button type="submit">Clear</button></form><form method="post" action="/api/command"><input type="hidden" name="op" value="pause"><button type="submit">Pause</button></form><form method="post" action="/api/command"><input type="hidden" name="op" value="resume"><button type="submit">Resume</button></form><form method="post" action="/api/command"><input type="hidden" name="op" value="stop"><button class="danger" type="submit">Stop audio</button></form></div></section>
+<section class="small"><h2>For HTTP-capable assistants</h2><p>Claim with <code>POST /v1/now-voicing-control/claim</code>, then send <code>POST /v1/now-voicing-control/commands</code> using the returned bearer token. Use <code>source</code> and <code>target</code>; do not wait for server-side translation.</p></section>
+</main></body></html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...corsHeaders() } });
+}
+
+async function nowVoicingControlClaimForm(request, env) {
+  const result = await claimNowVoicingControlData(await readNowVoicingControlBody(request), env);
+  return new Response(null, { status: 303, headers: { "Location": "/api/control", "Set-Cookie": result.cookie, "Cache-Control": "no-store" } });
+}
+
+async function nowVoicingControlCommandForm(request, env) {
+  const result = await sendNowVoicingCommandData(request, env, await readNowVoicingControlBody(request));
+  return new Response(null, { status: 303, headers: { "Location": `/api/control?seq=${encodeURIComponent(result.seq)}`, "Cache-Control": "no-store" } });
+}
+
+export class NowVoicingControlRoom {
+  constructor(ctx, env) {
+    this.ctx = ctx;
+    this.env = env;
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/internal/init") return this.init(await request.json());
+    if (request.method === "POST" && url.pathname === "/internal/extend") return this.extend(await request.json());
+    if (request.method === "POST" && url.pathname === "/internal/revoke") return this.revoke(await request.json());
+    if (request.method === "POST" && url.pathname === "/internal/command") return this.command(await request.json());
+    if (url.pathname === "/v1/now-voicing-control/ws" && (request.headers.get("Upgrade") || "").toLowerCase() === "websocket") {
+      return this.connectDevice(request);
+    }
+    return json({ error: "not found" }, 404);
+  }
+
+  async init(input) {
+    const existing = await this.ctx.storage.get("control");
+    if (existing) return json({ ok: true, initialized: false });
+    const control = { sessionId: input.sessionId, instanceId: input.instanceId, expiresAt: input.expiresAt, revoked: false };
+    await this.ctx.storage.put({ control, seq: 0, replay: [], snapshot: null });
+    await this.ctx.storage.setAlarm(Date.parse(control.expiresAt));
+    return json({ ok: true, initialized: true });
+  }
+
+  async extend(input) {
+    const control = await this.liveControl();
+    if (!control) return json({ error: "control session is unavailable" }, 410);
+    control.expiresAt = input.expiresAt;
+    await this.ctx.storage.put("control", control);
+    await this.ctx.storage.setAlarm(Date.parse(control.expiresAt));
+    return json({ ok: true });
+  }
+
+  async revoke() {
+    const control = await this.ctx.storage.get("control");
+    if (control) {
+      control.revoked = true;
+      await this.ctx.storage.put("control", control);
+    }
+    this.closeDevices(4001, "control session ended");
+    return json({ ok: true });
+  }
+
+  async command(command) {
+    const control = await this.liveControl();
+    if (!control) return json({ error: "control session is unavailable" }, 410);
+    const seq = Number(await this.ctx.storage.get("seq") || 0) + 1;
+    const record = { type: "command", seq, ...command, sentAt: new Date().toISOString() };
+    const replay = [...(await this.ctx.storage.get("replay") || []), record].slice(-NOW_VOICING_MAX_REPLAY);
+    const values = { seq, replay };
+    if (command.op === "show" || command.op === "clear") values.snapshot = record;
+    await this.ctx.storage.put(values);
+    this.broadcast(record);
+    return json({ seq, commandId: command.commandId, connected: this.deviceSockets().length > 0 });
+  }
+
+  async connectDevice(request) {
+    const control = await this.liveControl();
+    if (!control) return json({ error: "control session is unavailable" }, 410);
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    const lastSeq = Math.max(0, Number(request.headers.get("X-LangBang-Control-Last-Seq") || 0) || 0);
+    this.ctx.acceptWebSocket(server, ["device"]);
+    server.serializeAttachment({ role: "device", lastSeq });
+    const seq = Number(await this.ctx.storage.get("seq") || 0);
+    const replay = (await this.ctx.storage.get("replay") || []).filter((item) => Number(item.seq) > lastSeq);
+    const snapshot = await this.ctx.storage.get("snapshot");
+    server.send(JSON.stringify({ type: "hello", sessionId: control.sessionId, seq, snapshot, replay }));
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async webSocketMessage(ws, message) {
+    let payload;
+    try { payload = JSON.parse(typeof message === "string" ? message : new TextDecoder().decode(message)); } catch (_) { return; }
+    if (payload?.type !== "ack") return;
+    const attachment = ws.deserializeAttachment() || { role: "device", lastSeq: 0 };
+    const seq = Math.max(Number(attachment.lastSeq || 0), Number(payload.seq || 0));
+    ws.serializeAttachment({ ...attachment, lastSeq: Number.isFinite(seq) ? Math.trunc(seq) : 0 });
+  }
+
+  webSocketClose(ws) {
+    ws.close(1000, "closed");
+  }
+
+  async alarm() {
+    const control = await this.ctx.storage.get("control");
+    if (control && Date.parse(control.expiresAt) <= Date.now()) {
+      control.revoked = true;
+      await this.ctx.storage.put("control", control);
+      this.closeDevices(4001, "control session expired");
+    }
+  }
+
+  async liveControl() {
+    const control = await this.ctx.storage.get("control");
+    if (!control || control.revoked || Date.parse(control.expiresAt) <= Date.now()) return null;
+    return control;
+  }
+
+  deviceSockets() {
+    return this.ctx.getWebSockets("device").filter((ws) => ws.readyState === 1);
+  }
+
+  broadcast(record) {
+    const text = JSON.stringify(record);
+    for (const ws of this.deviceSockets()) {
+      try { ws.send(text); } catch (_) { /* stale socket */ }
+    }
+  }
+
+  closeDevices(code, reason) {
+    for (const ws of this.ctx.getWebSockets("device")) {
+      try { ws.close(code, reason); } catch (_) { /* stale socket */ }
+    }
+  }
+}
+
+async function hmacSha256Hex(secret, input) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(input));
+  return [...new Uint8Array(signature)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function base64UrlFromText(value) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 async function sha1Hex(input) {

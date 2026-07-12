@@ -1,13 +1,19 @@
 package com.sponic.langbang.ui.external
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -18,19 +24,30 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.sponic.langbang.LangbangApplication
 import com.sponic.langbang.data.model.TokenPair
 import com.sponic.langbang.domain.ExternalNowVoicingBus
+import com.sponic.langbang.domain.ExternalNowVoicingCommandController
 import com.sponic.langbang.domain.ExternalNowVoicingState
 import com.sponic.langbang.domain.ExternalVoiceSection
 import com.sponic.langbang.domain.NowVoicing
 import com.sponic.langbang.domain.NowVoicingBus
 import com.sponic.langbang.domain.ensureCachedAudio
+import com.sponic.langbang.domain.playAudioAndAwait
 import com.sponic.langbang.domain.sourceAudioVoice
 import com.sponic.langbang.domain.targetAudioVoice
 import com.sponic.langbang.domain.targetSlowVoice
@@ -38,6 +55,9 @@ import com.sponic.langbang.ui.common.NowVoicingPanel
 import com.sponic.langbang.ui.common.StudyQueuePlayer
 import com.sponic.langbang.ui.settings.AgentApiCard
 import com.sponic.langbang.ui.theme.LbColors
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 
 /**
  * The phrase shown when the LLM screen is idle (info card dismissed, no LLM content yet).
@@ -65,9 +85,48 @@ private val LLM_IDLE_NOW_VOICING = NowVoicing(
 @Composable
 fun ExternalNowVoicingScreen(app: LangbangApplication) {
     val state by ExternalNowVoicingBus.state.collectAsState()
+    val control by app.nowVoicingControl.state.collectAsState()
+    val auth by app.authStore.state.collectAsState()
+    val scope = rememberCoroutineScope()
     val bottom = state.bottom
     val hasContent = state.top.hasContent() || bottom?.hasContent() == true
     var dismissed by rememberSaveable { mutableStateOf(false) }
+    var remotePlaybackJob by remember { mutableStateOf<Job?>(null) }
+
+    LaunchedEffect(app) {
+        ExternalNowVoicingCommandController.playbackRequests.collect { request ->
+            when (request.mode) {
+                "pause" -> app.audioPlayer.pause()
+                "resume" -> app.audioPlayer.resume()
+                "stop" -> {
+                    remotePlaybackJob?.cancel()
+                    remotePlaybackJob = null
+                    app.audioPlayer.stop()
+                }
+                else -> {
+                    remotePlaybackJob?.cancel()
+                    remotePlaybackJob = scope.launch {
+                        val source = app.sourceAudioVoice()
+                        val target = app.targetAudioVoice()
+                        when (request.mode) {
+                            "source" -> app.playAudioAndAwait(request.section.en, source.locale, source.voice)
+                            "target" -> app.playAudioAndAwait(request.section.pl, target.locale, target.voice)
+                            "sequence" -> {
+                                app.playAudioAndAwait(request.section.en, source.locale, source.voice)
+                                app.playAudioAndAwait(request.section.pl, target.locale, target.voice)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            remotePlaybackJob?.cancel()
+            app.audioPlayer.stop()
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -83,12 +142,8 @@ fun ExternalNowVoicingScreen(app: LangbangApplication) {
                         .fillMaxWidth()
                         .padding(24.dp)
                 ) {
-                    AgentApiCard(
-                        app = app,
-                        scope = rememberCoroutineScope(),
-                        context = LocalContext.current,
-                        onDismiss = { dismissed = true }
-                    )
+                    if (!control.active) NowVoicingControlCard(app = app, auth = auth, compact = false)
+                    AgentApiCard(app = app, scope = scope, context = LocalContext.current, onDismiss = { dismissed = true })
                 }
             }
             !hasContent -> IdleDemoPanel(app = app, modifier = Modifier.fillMaxSize())
@@ -124,6 +179,88 @@ fun ExternalNowVoicingScreen(app: LangbangApplication) {
                 state = state,
                 modifier = Modifier.fillMaxSize()
             )
+        }
+        if (control.active) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp)
+                    .widthIn(max = 360.dp)
+            ) {
+                NowVoicingControlCard(app = app, auth = auth, compact = true)
+            }
+        }
+    }
+}
+
+@Composable
+private fun NowVoicingControlCard(
+    app: LangbangApplication,
+    auth: com.sponic.langbang.cloud.AuthState,
+    compact: Boolean
+) {
+    val control by app.nowVoicingControl.state.collectAsState()
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var busy by remember { mutableStateOf(false) }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, LbColors.Line)
+    ) {
+        Column(
+            modifier = Modifier.padding(if (compact) 12.dp else 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("Live LLM control", fontWeight = FontWeight.ExtraBold, fontSize = if (compact) 13.sp else 16.sp)
+            if (!control.active) {
+                Text(
+                    if (auth.signedIn) "Create a one-hour display/playback session. The code never grants content or account access."
+                    else "Sign in to create a temporary pairing code.",
+                    fontSize = 11.sp,
+                    color = LbColors.TextMuted
+                )
+                Button(
+                    enabled = auth.signedIn && !busy,
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            try {
+                                app.nowVoicingControl.start(auth.sessionToken, app.cloudConfig.state.value.selectedInstanceId)
+                            } finally {
+                                busy = false
+                            }
+                        }
+                    }
+                ) { Text("Start LLM control") }
+            } else {
+                Text(control.code, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.ExtraBold, fontSize = if (compact) 18.sp else 24.sp)
+                Text(control.status, fontSize = 11.sp, color = LbColors.TextMuted)
+                if (!compact) Text(control.pairingUrl, fontSize = 11.sp, color = LbColors.TextMuted)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        enabled = !busy,
+                        onClick = {
+                            val clipboard = context.getSystemService(ClipboardManager::class.java)
+                            clipboard.setPrimaryClip(ClipData.newPlainText("LangBang LLM control", control.pairingUrl))
+                            Toast.makeText(context, "Pairing link copied", Toast.LENGTH_SHORT).show()
+                        }
+                    ) { Text(if (compact) "Copy" else "Copy pairing link", fontSize = 11.sp) }
+                    Button(
+                        enabled = !busy,
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                try {
+                                    app.nowVoicingControl.stop()
+                                } finally {
+                                    busy = false
+                                }
+                            }
+                        }
+                    ) { Text("Stop", fontSize = 11.sp) }
+                }
+            }
+            if (busy) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
         }
     }
 }

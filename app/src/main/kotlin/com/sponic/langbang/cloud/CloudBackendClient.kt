@@ -136,6 +136,37 @@ class CloudBackendClient(
         }
     }
 
+    suspend fun createNowVoicingControl(
+        sessionToken: String,
+        instanceId: String
+    ): Result<CloudNowVoicingControlResponse> = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = CloudNowVoicingControlRequest(instanceId = instanceId)
+            val body = post(
+                "/v1/me/now-voicing-control",
+                json.encodeToString(CloudNowVoicingControlRequest.serializer(), request),
+                bearerToken = sessionToken
+            )
+            json.decodeFromString(CloudNowVoicingControlResponse.serializer(), body)
+        }
+    }
+
+    suspend fun revokeNowVoicingControl(
+        sessionToken: String,
+        controlSessionId: String
+    ): Result<CloudNowVoicingControlRevokeResponse> = withContext(Dispatchers.IO) {
+        runCatching {
+            val encoded = URLEncoder.encode(controlSessionId, "UTF-8")
+            val body = write(
+                "DELETE",
+                "/v1/me/now-voicing-control/$encoded",
+                "{}",
+                bearerToken = sessionToken
+            )
+            json.decodeFromString(CloudNowVoicingControlRevokeResponse.serializer(), body)
+        }
+    }
+
     suspend fun fetchUserContent(
         sessionToken: String,
         instanceId: String
