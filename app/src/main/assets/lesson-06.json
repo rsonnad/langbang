@@ -37,5 +37,13 @@
     {"lemma": "karta kredytowa", "en": "credit card", "gender": "f", "nom": {"sg": "karta kredytowa", "pl": "karty kredytowe"}, "acc": {"sg": "kartę kredytową", "pl": "karty kredytowe"}, "gen": {"sg": "karty kredytowej", "pl": "kart kredytowych"}},
     {"lemma": "chłopak",    "en": "boyfriend",        "gender": "m", "nom": {"sg": "chłopak",    "pl": "chłopaki"},    "acc": {"sg": "chłopaka",   "pl": "chłopaków"},    "gen": {"sg": "chłopaka",   "pl": "chłopaków"}},
     {"lemma": "dziewczyna", "en": "girlfriend",       "gender": "f", "nom": {"sg": "dziewczyna", "pl": "dziewczyny"},  "acc": {"sg": "dziewczynę", "pl": "dziewczyny"},  "gen": {"sg": "dziewczyny", "pl": "dziewczyn"}}
+    ,
+    {"lemma":"czas","en":"time","gender":"m","nom":{"sg":"czas","pl":"czasy"},"acc":{"sg":"czas","pl":"czasy"},"gen":{"sg":"czasu","pl":"czasów"}},
+    {"lemma":"dzień","en":"day","gender":"m","nom":{"sg":"dzień","pl":"dni"},"acc":{"sg":"dzień","pl":"dni"},"gen":{"sg":"dnia","pl":"dni"}},
+    {"lemma":"rok","en":"year","gender":"m","nom":{"sg":"rok","pl":"lata"},"acc":{"sg":"rok","pl":"lata"},"gen":{"sg":"roku","pl":"lat"}},
+    {"lemma":"ręka","en":"hand","gender":"f","nom":{"sg":"ręka","pl":"ręce"},"acc":{"sg":"rękę","pl":"ręce"},"gen":{"sg":"ręki","pl":"rąk"}},
+    {"lemma":"głowa","en":"head","gender":"f","nom":{"sg":"głowa","pl":"głowy"},"acc":{"sg":"głowę","pl":"głowy"},"gen":{"sg":"głowy","pl":"głów"}},
+    {"lemma":"pieniądz","en":"coin / unit of currency","gender":"m","nom":{"sg":"pieniądz","pl":"pieniądze"},"acc":{"sg":"pieniądz","pl":"pieniądze"},"gen":{"sg":"pieniądza","pl":"pieniędzy"}},
+    {"lemma":"miejsce","en":"place","gender":"n","nom":{"sg":"miejsce","pl":"miejsca"},"acc":{"sg":"miejsce","pl":"miejsca"},"gen":{"sg":"miejsca","pl":"miejsc"}}
   ]
 }

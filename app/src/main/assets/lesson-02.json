@@ -45,7 +45,16 @@
     {"lemma": "budzić się","en": "to wake up",     "forms": {"1sg": "budzę się","2sg": "budzisz się","3sg": "budzi się","1pl": "budzimy się","2pl": "budzicie się","3pl": "budzą się"}, "past_forms": {"1sg":"budziłem się","2sg":"budziłeś się","3sg":"budził się","1pl":"budziliśmy się","2pl":"budziliście się","3pl":"budzili się"}},
     {"lemma": "wstawać","en": "to get up",     "forms": {"1sg": "wstaję","2sg": "wstajesz","3sg": "wstaje","1pl": "wstajemy","2pl": "wstajecie","3pl": "wstają"}, "past_forms": {"1sg":"wstawałem","2sg":"wstawałeś","3sg":"wstawał","1pl":"wstawaliśmy","2pl":"wstawaliście","3pl":"wstawali"}},
     {"lemma": "odpoczywać","en": "to rest",     "forms": {"1sg": "odpoczywam","2sg": "odpoczywasz","3sg": "odpoczywa","1pl": "odpoczywamy","2pl": "odpoczywacie","3pl": "odpoczywają"}, "past_forms": {"1sg":"odpoczywałem","2sg":"odpoczywałeś","3sg":"odpoczywał","1pl":"odpoczywaliśmy","2pl":"odpoczywaliście","3pl":"odpoczywali"}},
-    {"lemma": "oglądać","en": "to watch",     "forms": {"1sg": "oglądam","2sg": "oglądasz","3sg": "ogląda","1pl": "oglądamy","2pl": "oglądacie","3pl": "oglądają"}, "past_forms": {"1sg":"oglądałem","2sg":"oglądałeś","3sg":"oglądał","1pl":"oglądaliśmy","2pl":"oglądaliście","3pl":"oglądali"}}
+    {"lemma": "oglądać","en": "to watch",     "forms": {"1sg": "oglądam","2sg": "oglądasz","3sg": "ogląda","1pl": "oglądamy","2pl": "oglądacie","3pl": "oglądają"}, "past_forms": {"1sg":"oglądałem","2sg":"oglądałeś","3sg":"oglądał","1pl":"oglądaliśmy","2pl":"oglądaliście","3pl":"oglądali"}},
+    {"lemma":"potrzebować","en":"to need","forms":{"1sg":"potrzebuję","2sg":"potrzebujesz","3sg":"potrzebuje","1pl":"potrzebujemy","2pl":"potrzebujecie","3pl":"potrzebują"},"past_forms":{"1sg":"potrzebowałem","2sg":"potrzebowałeś","3sg":"potrzebował","1pl":"potrzebowaliśmy","2pl":"potrzebowaliście","3pl":"potrzebowali"}},
+    {"lemma":"szukać","en":"to look for","forms":{"1sg":"szukam","2sg":"szukasz","3sg":"szuka","1pl":"szukamy","2pl":"szukacie","3pl":"szukają"},"past_forms":{"1sg":"szukałem","2sg":"szukałeś","3sg":"szukał","1pl":"szukaliśmy","2pl":"szukaliście","3pl":"szukali"}},
+    {"lemma":"używać","en":"to use","forms":{"1sg":"używam","2sg":"używasz","3sg":"używa","1pl":"używamy","2pl":"używacie","3pl":"używają"},"past_forms":{"1sg":"używałem","2sg":"używałeś","3sg":"używał","1pl":"używaliśmy","2pl":"używaliście","3pl":"używali"}},
+    {"lemma":"zaczynać","en":"to start","forms":{"1sg":"zaczynam","2sg":"zaczynasz","3sg":"zaczyna","1pl":"zaczynamy","2pl":"zaczynacie","3pl":"zaczynają"},"past_forms":{"1sg":"zaczynałem","2sg":"zaczynałeś","3sg":"zaczynał","1pl":"zaczynaliśmy","2pl":"zaczynaliście","3pl":"zaczynali"}},
+    {"lemma":"kończyć","en":"to finish","forms":{"1sg":"kończę","2sg":"kończysz","3sg":"kończy","1pl":"kończymy","2pl":"kończycie","3pl":"kończą"},"past_forms":{"1sg":"kończyłem","2sg":"kończyłeś","3sg":"kończył","1pl":"kończyliśmy","2pl":"kończyliście","3pl":"kończyli"}},
+    {"lemma":"uczyć się","en":"to learn","forms":{"1sg":"uczę się","2sg":"uczysz się","3sg":"uczy się","1pl":"uczymy się","2pl":"uczycie się","3pl":"uczą się"},"past_forms":{"1sg":"uczyłem się","2sg":"uczyłeś się","3sg":"uczył się","1pl":"uczyliśmy się","2pl":"uczyliście się","3pl":"uczyli się"}},
+    {"lemma":"jeździć","en":"to travel / drive","forms":{"1sg":"jeżdżę","2sg":"jeździsz","3sg":"jeździ","1pl":"jeździmy","2pl":"jeździcie","3pl":"jeżdżą"},"past_forms":{"1sg":"jeździłem","2sg":"jeździłeś","3sg":"jeździł","1pl":"jeździliśmy","2pl":"jeździliście","3pl":"jeździli"}},
+    {"lemma":"słuchać","en":"to listen","forms":{"1sg":"słucham","2sg":"słuchasz","3sg":"słucha","1pl":"słuchamy","2pl":"słuchacie","3pl":"słuchają"},"past_forms":{"1sg":"słuchałem","2sg":"słuchałeś","3sg":"słuchał","1pl":"słuchaliśmy","2pl":"słuchaliście","3pl":"słuchali"}},
+    {"lemma":"rozmawiać","en":"to talk","forms":{"1sg":"rozmawiam","2sg":"rozmawiasz","3sg":"rozmawia","1pl":"rozmawiamy","2pl":"rozmawiacie","3pl":"rozmawiają"},"past_forms":{"1sg":"rozmawiałem","2sg":"rozmawiałeś","3sg":"rozmawiał","1pl":"rozmawialiśmy","2pl":"rozmawialiście","3pl":"rozmawiali"}}
   ],
   "pronouns": [
     {"lemma": "ja",  "en": "I",                  "case_forms": {"nom": "ja",  "acc": "mnie",  "dat": "mi"}},
@@ -92,6 +101,20 @@
     {"en": "We are at home",     "pl": "Jesteśmy w domu",  "focus": ["verb.present.1pl.być"]},
     {"en": "You drink tea",      "pl": "Pijesz herbatę",   "focus": ["verb.present.2sg.pić"]},
     {"en": "I read a book",      "pl": "Czytam książkę",   "focus": ["verb.present.1sg.czytać"]},
-    {"en": "She sleeps well",    "pl": "Ona śpi dobrze",   "focus": ["verb.present.3sg.spać"]}
+    {"en": "She sleeps well",    "pl": "Ona śpi dobrze",   "focus": ["verb.present.3sg.spać"]},
+    {"en":"I need help","pl":"Potrzebuję pomocy","focus":["verb.present.1sg.potrzebować"]},
+    {"en":"I am looking for the station","pl":"Szukam dworca","focus":["verb.present.1sg.szukać"]},
+    {"en":"I use this phone","pl":"Używam tego telefonu","focus":["verb.present.1sg.używać"]},
+    {"en":"I start work at nine","pl":"Zaczynam pracę o dziewiątej","focus":["verb.present.1sg.zaczynać"]},
+    {"en":"I finish work at five","pl":"Kończę pracę o piątej","focus":["verb.present.1sg.kończyć"]},
+    {"en":"We are learning Polish","pl":"Uczymy się polskiego","focus":["verb.present.1pl.uczyć się"]},
+    {"en":"I travel by bus","pl":"Jeżdżę autobusem","focus":["verb.present.1sg.jeździć"]},
+    {"en":"I listen to music","pl":"Słucham muzyki","focus":["verb.present.1sg.słuchać"]},
+    {"en":"We are talking now","pl":"Teraz rozmawiamy","focus":["verb.present.1pl.rozmawiać"]},
+    {"en":"Do you need anything?","pl":"Potrzebujesz czegoś?","focus":["verb.present.2sg.potrzebować"]},
+    {"en":"She is looking for her keys","pl":"Ona szuka swoich kluczy","focus":["verb.present.3sg.szukać"]},
+    {"en":"She uses the phone","pl":"Ona używa telefonu","focus":["verb.present.3sg.używać"]},
+    {"en":"She finishes work at eight","pl":"Ona kończy pracę o ósmej","focus":["verb.present.3sg.kończyć"]},
+    {"en":"They listen carefully","pl":"Oni uważnie słuchają","focus":["verb.present.3pl.słuchać"]}
   ]
 }

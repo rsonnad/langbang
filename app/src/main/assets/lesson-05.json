@@ -718,6 +718,35 @@
           ]
         }
       ]
+    },
+    {
+      "id": "everyday-essentials",
+      "title": "Everyday essentials",
+      "subtitle": "Short, high-frequency Polish for the situations learners meet every day.",
+      "sentences": [
+        {"pl":"Dzień dobry.","en":"Good morning / hello.","literal":"Day good."},
+        {"pl":"Do widzenia.","en":"Goodbye.","literal":"Until seeing."},
+        {"pl":"Proszę.","en":"Please / here you are.","literal":"Please."},
+        {"pl":"Dziękuję bardzo.","en":"Thank you very much.","literal":"I thank very."},
+        {"pl":"Przepraszam, nie rozumiem.","en":"Sorry, I do not understand.","literal":"I apologize, not I-understand."},
+        {"pl":"Czy mówi pan po angielsku?","en":"Do you speak English?","literal":"Whether speaks sir in English?"},
+        {"pl":"Gdzie jest toaleta?","en":"Where is the bathroom?","literal":"Where is bathroom?"},
+        {"pl":"Ile to kosztuje?","en":"How much does it cost?","literal":"How much this costs?"},
+        {"pl":"Poproszę kawę.","en":"A coffee, please.","literal":"I ask coffee."},
+        {"pl":"Poproszę rachunek.","en":"The bill, please.","literal":"I ask bill."},
+        {"pl":"Czy mogę zapłacić kartą?","en":"Can I pay by card?","literal":"Whether I-can pay card?"},
+        {"pl":"Gdzie jest najbliższy sklep?","en":"Where is the nearest shop?","literal":"Where is nearest shop?"},
+        {"pl":"Potrzebuję pomocy.","en":"I need help.","literal":"I-need help."},
+        {"pl":"Szukam przystanku autobusowego.","en":"I am looking for the bus stop.","literal":"I-look-for stop bus."},
+        {"pl":"O której godzinie?","en":"At what time?","literal":"At which hour?"},
+        {"pl":"Dzisiaj nie mam czasu.","en":"I do not have time today.","literal":"Today not I-have time."},
+        {"pl":"Spotkajmy się jutro.","en":"Let us meet tomorrow.","literal":"Let-us-meet self tomorrow."},
+        {"pl":"Zadzwonię później.","en":"I will call later.","literal":"I-will-call later."},
+        {"pl":"Jestem już w domu.","en":"I am home already.","literal":"I-am already in home."},
+        {"pl":"To jest bardzo dobre.","en":"This is very good.","literal":"This is very good."},
+        {"pl":"Nie ma problemu.","en":"No problem.","literal":"Not has problem."},
+        {"pl":"Miłego dnia!","en":"Have a nice day!","literal":"Nice day!"}
+      ]
     }
   ]
 }

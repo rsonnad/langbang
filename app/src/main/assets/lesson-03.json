@@ -66,5 +66,19 @@
     {"lemma": "uroczy",     "en": "lovely",          "nom": {"m": "uroczy",     "f": "urocza",     "n": "urocze",     "mp": "uroczy",   "other": "urocze"},     "acc": {"m": "uroczego",     "f": "uroczą",     "n": "urocze",     "mp": "uroczych",   "other": "urocze"}},
     {"lemma": "inspirujący","en": "inspiring",       "nom": {"m": "inspirujący","f": "inspirująca","n": "inspirujące","mp": "inspirujący","other": "inspirujące"},"acc": {"m": "inspirującego","f": "inspirującą","n": "inspirujące","mp": "inspirujących","other": "inspirujące"}},
     {"lemma": "błogi",      "en": "blissful",        "nom": {"m": "błogi",      "f": "błoga",      "n": "błogie",     "mp": "błodzy",   "other": "błogie"},     "acc": {"m": "błogiego",     "f": "błogą",      "n": "błogie",     "mp": "błogich",    "other": "błogie"}}
+    ,
+    {"lemma":"pierwszy","en":"first","nom":{"m":"pierwszy","f":"pierwsza","n":"pierwsze","mp":"pierwsi","other":"pierwsze"},"acc":{"m":"pierwszego","f":"pierwszą","n":"pierwsze","mp":"pierwszych","other":"pierwsze"}},
+    {"lemma":"ostatni","en":"last","nom":{"m":"ostatni","f":"ostatnia","n":"ostatnie","mp":"ostatni","other":"ostatnie"},"acc":{"m":"ostatniego","f":"ostatnią","n":"ostatnie","mp":"ostatnich","other":"ostatnie"}},
+    {"lemma":"każdy","en":"every","nom":{"m":"każdy","f":"każda","n":"każde","mp":"każdy","other":"każde"},"acc":{"m":"każdego","f":"każdą","n":"każde","mp":"każdych","other":"każde"}},
+    {"lemma":"inny","en":"other / different","nom":{"m":"inny","f":"inna","n":"inne","mp":"inni","other":"inne"},"acc":{"m":"innego","f":"inną","n":"inne","mp":"innych","other":"inne"}},
+    {"lemma":"potrzebny","en":"needed / necessary","nom":{"m":"potrzebny","f":"potrzebna","n":"potrzebne","mp":"potrzebni","other":"potrzebne"},"acc":{"m":"potrzebnego","f":"potrzebną","n":"potrzebne","mp":"potrzebnych","other":"potrzebne"}},
+    {"lemma":"możliwy","en":"possible","nom":{"m":"możliwy","f":"możliwa","n":"możliwe","mp":"możliwi","other":"możliwe"},"acc":{"m":"możliwego","f":"możliwą","n":"możliwe","mp":"możliwych","other":"możliwe"}},
+    {"lemma":"prawdziwy","en":"real / true","nom":{"m":"prawdziwy","f":"prawdziwa","n":"prawdziwe","mp":"prawdziwi","other":"prawdziwe"},"acc":{"m":"prawdziwego","f":"prawdziwą","n":"prawdziwe","mp":"prawdziwych","other":"prawdziwe"}},
+    {"lemma":"główny","en":"main","nom":{"m":"główny","f":"główna","n":"główne","mp":"główni","other":"główne"},"acc":{"m":"głównego","f":"główną","n":"główne","mp":"głównych","other":"główne"}},
+    {"lemma":"biały","en":"white","nom":{"m":"biały","f":"biała","n":"białe","mp":"biali","other":"białe"},"acc":{"m":"białego","f":"białą","n":"białe","mp":"białych","other":"białe"}},
+    {"lemma":"czarny","en":"black","nom":{"m":"czarny","f":"czarna","n":"czarne","mp":"czarni","other":"czarne"},"acc":{"m":"czarnego","f":"czarną","n":"czarne","mp":"czarnych","other":"czarne"}},
+    {"lemma":"czerwony","en":"red","nom":{"m":"czerwony","f":"czerwona","n":"czerwone","mp":"czerwoni","other":"czerwone"},"acc":{"m":"czerwonego","f":"czerwoną","n":"czerwone","mp":"czerwonych","other":"czerwone"}},
+    {"lemma":"zielony","en":"green","nom":{"m":"zielony","f":"zielona","n":"zielone","mp":"zieloni","other":"zielone"},"acc":{"m":"zielonego","f":"zieloną","n":"zielone","mp":"zielonych","other":"zielone"}},
+    {"lemma":"niebieski","en":"blue","nom":{"m":"niebieski","f":"niebieska","n":"niebieskie","mp":"niebiescy","other":"niebieskie"},"acc":{"m":"niebieskiego","f":"niebieską","n":"niebieskie","mp":"niebieskich","other":"niebieskie"}}
   ]
 }
