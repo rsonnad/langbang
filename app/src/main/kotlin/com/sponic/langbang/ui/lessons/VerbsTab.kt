@@ -1893,6 +1893,12 @@ private fun TopBar(
                             onCheckedChange = { state.updateIncludePronouns(it) }
                         )
                         PhraseCategoryToggle(
+                            label = "random",
+                            checked = state.randomOrder,
+                            enabled = !state.playing,
+                            onCheckedChange = { state.updateRandomOrder(it) }
+                        )
+                        PhraseCategoryToggle(
                             label = "helper",
                             checked = state.includeHelperVerb,
                             enabled = !state.playing,
