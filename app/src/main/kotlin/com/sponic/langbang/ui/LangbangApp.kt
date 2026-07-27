@@ -464,40 +464,18 @@ private fun AppHeader(
                         .padding(start = 4.dp, end = 13.dp)
                 ) {
                     Image(
-                        painter = painterResource(R.drawable.langbang_logo_square),
-                        contentDescription = label(labels, "app.title", "LangBangML"),
-                        modifier = Modifier.size(31.dp),
-                        contentScale = ContentScale.Fit
-                    )
-                    Image(
                         painter = painterResource(R.drawable.langbang_logo_wordmark),
-                        contentDescription = null,
+                        contentDescription = label(labels, "app.title", "LangBang"),
                         modifier = Modifier
-                            .padding(start = 7.dp)
-                            .width(108.dp)
-                            .height(32.dp),
-                        contentScale = ContentScale.Fit
+                            .height(22.dp),
+                        contentScale = ContentScale.FillHeight
                     )
-                    Surface(
-                        color = LbColors.Primary.copy(alpha = 0.18f),
-                        shape = RoundedCornerShape(6.dp),
-                        border = BorderStroke(1.dp, LbColors.Primary.copy(alpha = 0.5f)),
-                        modifier = Modifier.padding(start = 8.dp)
-                    ) {
-                        Text(
-                            languagePairBadge(),
-                            color = LbColors.AudioBright,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
                     Text(
-                        " v${BuildConfig.BUILD_NUMBER}",
+                        "${languagePairBadge()} v.${BuildConfig.BUILD_NUMBER}",
                         color = LbColors.OnDark2,
-                        fontSize = 9.sp,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(start = 5.dp, top = 1.dp)
+                        modifier = Modifier.padding(start = 8.dp)
                     )
                 }
                 Row(
