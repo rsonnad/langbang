@@ -575,6 +575,8 @@ struct PronunciationSection: View {
 struct VerbsSection: View {
     let bootstrap: CloudBootstrap
     @StateObject private var audio = AudioManager.shared
+    @AppStorage("verbs-random-order") private var randomOrder = false
+    @State private var shuffledLemmas: [String] = []
 
     var body: some View {
         let payload: VerbsPayload? = findLessonPayload(in: bootstrap, type: "verbs")
@@ -582,7 +584,25 @@ struct VerbsSection: View {
             VStack(alignment: .leading, spacing: 16) {
                 sectionHeader(title: "Verbs", summary: payload?.summary)
                 if let p = payload, !p.verbs.isEmpty {
-                    ForEach(p.verbs, id: \.lemma) { v in
+                    Button {
+                        randomOrder.toggle()
+                        if randomOrder {
+                            shuffledLemmas = p.verbs.map(\.lemma).shuffled()
+                        }
+                    } label: {
+                        Label("random", systemImage: randomOrder ? "checkmark.square.fill" : "square")
+                    }
+                    .buttonStyle(.plain)
+                        .onAppear {
+                            if randomOrder && shuffledLemmas.isEmpty {
+                                shuffledLemmas = p.verbs.map(\.lemma).shuffled()
+                            }
+                        }
+                    let order = Dictionary(uniqueKeysWithValues: shuffledLemmas.enumerated().map { ($1, $0) })
+                    let verbs = randomOrder
+                        ? p.verbs.sorted { order[$0.lemma, default: .max] < order[$1.lemma, default: .max] }
+                        : p.verbs
+                    ForEach(verbs, id: \.lemma) { v in
                         let reading = p.readings?[v.lemma]
                         Card {
                             VStack(alignment: .leading, spacing: 6) {
