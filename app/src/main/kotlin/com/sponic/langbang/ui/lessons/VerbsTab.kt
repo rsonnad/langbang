@@ -1916,12 +1916,6 @@ private fun TopBar(
                             enabled = !state.playing,
                             onCheckedChange = { state.updateIncludeNouns(it) }
                         )
-                        PhraseCategoryToggle(
-                            label = "random",
-                            checked = state.randomOrder,
-                            enabled = !state.playing,
-                            onCheckedChange = { state.updateRandomOrder(it) }
-                        )
                     }
                 }
                 if (showControls) {
@@ -1941,6 +1935,14 @@ private fun TopBar(
                                     state.playAllConjugations(allVerbs)
                                 }
                             }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        PhraseCategoryToggle(
+                            label = "random",
+                            checked = state.randomOrder,
+                            enabled = !state.playing,
+                            labelColor = LbColors.Audio,
+                            onCheckedChange = { state.updateRandomOrder(it) }
                         )
                         Spacer(Modifier.width(8.dp))
                         WordPlayLimitControl(
@@ -1979,6 +1981,7 @@ private fun PhraseCategoryToggle(
     label: String,
     checked: Boolean,
     enabled: Boolean,
+    labelColor: Color? = null,
     onCheckedChange: (Boolean) -> Unit
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1993,7 +1996,7 @@ private fun PhraseCategoryToggle(
             label,
             modifier = Modifier.clickable(enabled = enabled) { onCheckedChange(!checked) },
             fontSize = 11.sp,
-            color = if (enabled) LbColors.TextSecondary else LbColors.TextMuted
+            color = if (enabled) labelColor ?: LbColors.TextSecondary else LbColors.TextMuted
         )
     }
 }
