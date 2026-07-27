@@ -13,6 +13,10 @@
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
+    <permission
+        android:name="com.sponic.langbangtrans.permission.MIRROR_NOW_VOICING"
+        android:protectionLevel="signature" />
+
     <uses-feature
         android:name="android.hardware.bluetooth_le"
         android:required="true" />
@@ -36,7 +40,8 @@
 
         <service
             android:name=".BridgeService"
-            android:exported="false"
+            android:exported="true"
+            android:permission="com.sponic.langbangtrans.permission.MIRROR_NOW_VOICING"
             android:foregroundServiceType="microphone|connectedDevice" />
     </application>
 

@@ -26,6 +26,8 @@ import com.sponic.langbang.domain.AudioCache
 import com.sponic.langbang.domain.AudioPlayer
 import com.sponic.langbang.domain.BackupService
 import com.sponic.langbang.domain.NetworkMonitor
+import com.sponic.langbang.domain.NowVoicingBus
+import com.sponic.langbang.domain.NowVoicingGlassesMirror
 import com.sponic.langbang.domain.PrefetchService
 import com.sponic.langbang.domain.PrefetchWorker
 import com.sponic.langbang.domain.R2AudioDownloader
@@ -39,7 +41,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
@@ -94,6 +96,8 @@ class LangbangApplication : Application() {
         private set
     lateinit var analytics: ProductAnalytics
         private set
+    lateinit var glassesMirror: NowVoicingGlassesMirror
+        private set
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var languagePackDownload: Job? = null
@@ -127,6 +131,13 @@ class LangbangApplication : Application() {
             client = ProductAnalyticsClient(apiBase = BuildConfig.LANGBANGML_API_BASE),
             scope = appScope
         )
+        audioPrefs = AudioPrefsStore(this)
+        glassesMirror = NowVoicingGlassesMirror(this)
+        appScope.launch {
+            combine(NowVoicingBus.state, audioPrefs.mirrorNowVoicingToGlasses) { now, enabled ->
+                now to enabled
+            }.collect { (now, enabled) -> glassesMirror.publish(now, enabled) }
+        }
         lessonRepo = LessonRepository(this, cloudConfig, languagePacks)
         migrateSentenceCachesIfNeeded()
         network = NetworkMonitor(this)
@@ -136,7 +147,6 @@ class LangbangApplication : Application() {
         practicePrefs = PracticePrefsStore(this)
         starredPhrases = StarredPhrasesStore(this)
         phraseSync = PhraseSyncService(cloudBackend, authStore, lessonRepo, starredPhrases, cloudConfig)
-        audioPrefs = AudioPrefsStore(this)
         audioCache = AudioCache(this)
         audioPlayer = AudioPlayer()
         usage = UsageTracker(this)

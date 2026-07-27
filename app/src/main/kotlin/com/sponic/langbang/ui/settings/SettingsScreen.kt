@@ -147,6 +147,7 @@ fun SettingsScreen(app: LangbangApplication) {
                 onCopyKey = { copyToClipboard(context, "SSH public key", backup.publicKeyOpenSsh) }
             )
         }
+        G2GlassesCard(app = app)
     }
 }
 
@@ -1143,6 +1144,46 @@ private fun SlowAudioStyleCard(app: LangbangApplication) {
                 else "The language-pack download already includes this slow voice.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun G2GlassesCard(app: LangbangApplication) {
+    val enabled by app.audioPrefs.mirrorNowVoicingToGlasses.collectAsState()
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { app.audioPrefs.setMirrorNowVoicingToGlasses(!enabled) }
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SectionHeader("Even G2 glasses")
+                Text(
+                    if (enabled) {
+                        "Now Voicing is mirrored to connected G2 glasses while audio continues on this phone."
+                    } else {
+                        "Off. Enable to mirror the phrase currently being spoken to connected G2 glasses."
+                    },
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                Text(
+                    "Requires the LangBangTrans companion app and paired, awake Even G2 glasses.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+            }
+            Checkbox(
+                checked = enabled,
+                onCheckedChange = app.audioPrefs::setMirrorNowVoicingToGlasses
             )
         }
     }

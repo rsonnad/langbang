@@ -31,6 +31,18 @@ android {
     namespace = "com.sponic.langbangtrans"
     compileSdk = 36
 
+    // LangBang learning and this G2 companion communicate through a
+    // signature-level service permission. They must therefore use the same
+    // stable debug certificate for sideloaded builds as well as for releases.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("keystore/langbang-debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.sponic.langbangtrans"
         minSdk = 33

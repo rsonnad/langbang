@@ -289,7 +289,8 @@ private fun DrawScope.drawSyllableShadeBands(
     }
 }
 
-private fun englishPronunciationGuide(syllable: String): String {
+/** English-readable Polish pronunciation used by both the phone syllable labels and G2 HUD. */
+fun polishEnglishPronunciationGuideSegment(syllable: String): String {
     val s = syllable.lowercase()
     val out = StringBuilder()
     var i = 0
@@ -353,6 +354,19 @@ private fun englishPronunciationGuide(syllable: String): String {
     }
     return out.toString()
 }
+
+// Keep the original phone-renderer seam explicit; the tablet regression guard
+// checks this helper because removing it previously dropped the phonetic labels.
+private fun englishPronunciationGuide(syllable: String): String =
+    polishEnglishPronunciationGuideSegment(syllable)
+
+fun polishEnglishPronunciationGuide(text: String): String = text
+    .trim()
+    .split(Regex("\\s+"))
+    .filter { it.isNotBlank() }
+    .joinToString(" ") { word ->
+        polishSyllables(word).joinToString("-") { polishEnglishPronunciationGuideSegment(it) }
+    }
 
 private fun englishPronunciationGuideChar(c: Char): String = when (c) {
     'a' -> "ah"

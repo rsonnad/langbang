@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 class BridgeService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var runnerJob: kotlinx.coroutines.Job? = null
+    private var nowVoicingMirror: NowVoicingHudMirror? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -33,6 +34,8 @@ class BridgeService : Service() {
                 stopBridge()
                 return START_NOT_STICKY
             }
+            ACTION_MIRROR_NOW_VOICING -> mirrorNowVoicing(intent.getStringExtra(EXTRA_TEXT).orEmpty())
+            ACTION_CLEAR_NOW_VOICING_MIRROR -> clearNowVoicingMirror()
             ACTION_DISCOVER_G2 -> discoverG2()
             ACTION_PROBE_G2_CONNECT -> probeG2Connect()
             ACTION_SEND_TEST_TEXT -> sendTestText()
@@ -175,9 +178,43 @@ class BridgeService : Service() {
         }
     }
 
+    private fun mirrorNowVoicing(text: String) {
+        if (text.isBlank()) return
+        ensureForeground("Mirroring LangBang Now Voicing to G2 HUD")
+        nowVoicingMirror?.let {
+            it.update(text)
+            return
+        }
+        runnerJob?.cancel()
+        val mirror = NowVoicingHudMirror(applicationContext, BridgeConfig.fromBuildConfig().g2, text)
+        nowVoicingMirror = mirror
+        runnerJob = scope.launch {
+            try {
+                mirror.run()
+            } catch (cancellation: CancellationException) {
+                BridgeStatusBus.set("LangBang learning mirror stopped", running = false)
+            } catch (throwable: Throwable) {
+                BridgeStatusBus.set("LangBang learning mirror error", throwable.message ?: throwable::class.java.simpleName, running = false)
+            } finally {
+                if (nowVoicingMirror === mirror) nowVoicingMirror = null
+            }
+        }
+    }
+
+    private fun clearNowVoicingMirror() {
+        if (nowVoicingMirror == null) return
+        runnerJob?.cancel()
+        runnerJob = null
+        nowVoicingMirror = null
+        BridgeStatusBus.set("LangBang learning mirror stopped", running = false)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     private fun stopBridge() {
         runnerJob?.cancel()
         runnerJob = null
+        nowVoicingMirror = null
         BridgeStatusBus.set("Stopped", running = false)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -231,6 +268,8 @@ class BridgeService : Service() {
         const val ACTION_SEND_TEST_TEXT = "com.sponic.langbangtrans.SEND_TEST_TEXT"
         const val ACTION_MIC_TEST = "com.sponic.langbangtrans.MIC_TEST"
         const val ACTION_TRANSLATE_TEXT = "com.sponic.langbangtrans.TRANSLATE_TEXT"
+        const val ACTION_MIRROR_NOW_VOICING = "com.sponic.langbangtrans.MIRROR_NOW_VOICING"
+        const val ACTION_CLEAR_NOW_VOICING_MIRROR = "com.sponic.langbangtrans.CLEAR_NOW_VOICING_MIRROR"
         const val EXTRA_TEXT = "com.sponic.langbangtrans.extra.TEXT"
         private const val NOTIFICATION_ID = 4217
     }

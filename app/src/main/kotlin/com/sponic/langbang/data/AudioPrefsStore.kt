@@ -20,10 +20,22 @@ class AudioPrefsStore(context: Context) {
     private val _slowStyle = MutableStateFlow(loadSlowStyle())
     val slowStyle: StateFlow<SlowStyle> = _slowStyle
 
+    private val _mirrorNowVoicingToGlasses = MutableStateFlow(
+        prefs.getBoolean(KEY_MIRROR_NOW_VOICING_TO_GLASSES, false)
+    )
+    /** Explicit opt-in: the G2 bridge is never started during normal playback by default. */
+    val mirrorNowVoicingToGlasses: StateFlow<Boolean> = _mirrorNowVoicingToGlasses
+
     fun setSlowStyle(style: SlowStyle) {
         if (style == _slowStyle.value) return
         prefs.edit().putString(KEY_SLOW_STYLE, style.name).apply()
         _slowStyle.value = style
+    }
+
+    fun setMirrorNowVoicingToGlasses(enabled: Boolean) {
+        if (enabled == _mirrorNowVoicingToGlasses.value) return
+        prefs.edit().putBoolean(KEY_MIRROR_NOW_VOICING_TO_GLASSES, enabled).apply()
+        _mirrorNowVoicingToGlasses.value = enabled
     }
 
     /** Azure voice id for slow PL audio based on the current preference. */
@@ -49,6 +61,7 @@ class AudioPrefsStore(context: Context) {
 
     companion object {
         private const val KEY_SLOW_STYLE = "slow-style"
+        private const val KEY_MIRROR_NOW_VOICING_TO_GLASSES = "mirror-now-voicing-to-glasses"
     }
 }
 

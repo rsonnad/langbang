@@ -12,6 +12,7 @@ import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.Context
+import android.util.Log
 import com.sponic.langbangtrans.BridgeStatusBus
 import com.sponic.langbangtrans.G2Config
 import kotlinx.coroutines.CompletableDeferred
@@ -62,7 +63,7 @@ class G2HudLink(
     @Volatile
     private var lastText: String = ""
     @Volatile
-    private var lastHudWriteMs: Long = 0L
+    private var lastPageCreateMs: Long = 0L
 
     @SuppressLint("MissingPermission")
     private inner class Lens(val device: BluetoothDevice) {
@@ -75,6 +76,7 @@ class G2HudLink(
         var gatt: BluetoothGatt? = null
         var writeChar: BluetoothGattCharacteristic? = null
         var mtu: Int = 23
+        @Volatile var connected: Boolean = false
         val ready = CompletableDeferred<Boolean>()
         val authed = CompletableDeferred<Boolean>()
         val responses: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf<String>())
@@ -135,7 +137,6 @@ class G2HudLink(
         lastText = text
         if (writable.isEmpty()) return
         emitPayload(G2Service.EVEN_HUB, EvenHubProto.updateTextMessage(TEXT_CONTAINER_ID, text), true, writable)
-        lastHudWriteMs = System.currentTimeMillis()
     }
 
     /**
@@ -158,7 +159,7 @@ class G2HudLink(
             content = text,
         )
         emitPayload(G2Service.EVEN_HUB, EvenHubProto.createPageMessage(listOf(container), sync.nextMagic()), true, writable)
-        lastHudWriteMs = System.currentTimeMillis()
+        lastPageCreateMs = System.currentTimeMillis()
     }
 
     /**
@@ -170,11 +171,14 @@ class G2HudLink(
         while (currentCoroutineContext().isActive) {
             tick++
             if (writable.isNotEmpty()) {
-                // Timer/transcript updates normally keep text moving. Re-create the page only if no
-                // HUD write has happened recently; frequent page recreation flashes the G2's
-                // "connection lost" page between frames.
-                val staleHud = System.currentTimeMillis() - lastHudWriteMs > PAGE_REFRESH_MS
-                if (lastText.isNotEmpty() && staleHud) refreshPage(lastText)
+                if (writable.any { !it.connected }) {
+                    throw IllegalStateException("G2 lens disconnected")
+                }
+                // updateText changes content but does not extend the G2's ~13 second page dwell.
+                // Track page creation separately and re-arm before that deadline even while Now
+                // Voicing is sending frequent text updates.
+                val pageNeedsRearm = System.currentTimeMillis() - lastPageCreateMs >= PAGE_REFRESH_MS
+                if (lastText.isNotEmpty() && pageNeedsRearm) refreshPage(lastText)
                 emitPayload(G2Service.DEVICE_SETTINGS, DevSettingsProto.baseHeartbeat(sync.nextMagic()), false, writable)
                 if (tick % 2 == 1) {
                     emitPayload(G2Service.EVEN_HUB, EvenHubProto.heartbeatMessage(sync.nextMagic()), true, writable)
@@ -286,11 +290,15 @@ class G2HudLink(
         val callback = object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    lens.connected = true
+                    Log.i(TAG, "lens ${lens.side} connected status=$status")
                     lens.gatt = gatt
                     val requested = runCatching { gatt.requestMtu(247) }.getOrDefault(false)
                     runCatching { gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH) }
                     if (!requested) runCatching { gatt.discoverServices() }
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    lens.connected = false
+                    Log.w(TAG, "lens ${lens.side} disconnected status=$status")
                     if (!lens.ready.isCompleted) lens.ready.complete(false)
                 }
             }
@@ -406,7 +414,7 @@ class G2HudLink(
         sendPayload(G2Service.EVEN_HUB, createPage, true, lenses, "createPage", report)
         delay(STEP_DELAY_MS + 200)
         sendPayload(G2Service.EVEN_HUB, EvenHubProto.updateTextMessage(TEXT_CONTAINER_ID, text), true, lenses, "updateText", report)
-        lastHudWriteMs = System.currentTimeMillis()
+        lastPageCreateMs = System.currentTimeMillis()
         delay(STEP_DELAY_MS)
     }
 
@@ -474,8 +482,11 @@ class G2HudLink(
         private const val STEP_DELAY_MS = 200L
         private const val BLE_GAP_MS = 12L
         private const val HEARTBEAT_TICK_MS = 5_000L
-        private const val PAGE_REFRESH_MS = 12_000L
+        // runKeepAlive wakes every 5s, so an 8s threshold recreates at ~10s—safely
+        // before the glasses' observed ~13s page dwell expires.
+        private const val PAGE_REFRESH_MS = 8_000L
         private const val TEXT_CONTAINER_ID = 1
+        private const val TAG = "LBG2hud"
 
         private val COMMAND_WRITE_UUID: UUID = UUID.fromString("00002760-08c2-11e1-9073-0e8ac72e5401")
         private val COMMAND_NOTIFY_UUID: UUID = UUID.fromString("00002760-08c2-11e1-9073-0e8ac72e5402")
